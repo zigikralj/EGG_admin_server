@@ -1,0 +1,112 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Project {
+  id            String   @id @default(uuid())
+  name          String
+  clientId      String?
+  clientName    String
+  responsible   String?
+  responsibleId String?
+  type          String
+  start         String?
+  deadline      String?
+  progress      Int      @default(0)
+  done          Boolean  @default(false)
+  nextSample    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client        Client?  @relation(fields: [clientId], references: [id])
+  responsibleUser User?  @relation(fields: [responsibleId], references: [id])
+  reminders     Reminder[]
+}
+
+model Client {
+  id            String    @id @default(uuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String?
+  city          String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  projects      Project[]
+  reminders     Reminder[]
+}
+
+model User {
+  id          String           @id @default(uuid())
+  name        String
+  email       String?
+  password    String?
+  isApproved  Boolean          @default(true)
+  status      String           @default("APPROVED")
+  role        String           @default("User")
+  phone       String?
+  avatarUrl   String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  projects    Project[]
+  preferences UserPreference[]
+  reminders   Reminder[]
+}
+
+model UserPreference {
+  id        String   @id @default(uuid())
+  userId    String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+}
+
+model Service {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  group       String
+  frequency   Int      @default(0)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Reminder {
+  id            String   @id @default(uuid())
+  projectId     String?
+  projectName   String
+  clientId      String?
+  clientName    String
+  responsibleId String?
+  responsible   String?
+  status        String   @default("Pending")
+  notes         String?
+  dueDate       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  responsibleUser User?    @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
