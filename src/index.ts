@@ -63,6 +63,17 @@ function isProjectOwnerOrAdminManager(
 }
 
 // ----------------------------------------------------
+// HEALTH CHECK
+// ----------------------------------------------------
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({ message: 'Ekos Project Tracker API is running.' });
+});
+
+// ----------------------------------------------------
 // STATS & OVERVIEW
 // ----------------------------------------------------
 app.get('/api/projects/stats', async (req: Request, res: Response) => {
