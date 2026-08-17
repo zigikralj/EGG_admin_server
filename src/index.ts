@@ -1,11 +1,18 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 import { prisma } from './db';
 import { seed } from './seed';
 import { hashPassword, verifyPassword } from './authUtils';
 
-dotenv.config();
+const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
+if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
+  dotenv.config({ path: path.resolve(process.cwd(), envFile), override: true });
+} else {
+  dotenv.config({ override: true });
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -719,7 +726,7 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
     }
 
-    const { name, email, role, phone, avatarUrl, password, isApproved, status } = req.body;
+    const { name, email, role, phone, avatarUrl, password, currentPassword, isApproved, status } = req.body;
 
     const existingUser = await prisma.user.findUnique({ where: { id } });
     if (!existingUser) return res.status(404).json({ error: 'User not found' });
@@ -748,6 +755,11 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
     };
 
     if (password) {
+      if (isSelf && currentPassword !== undefined) {
+        if (!verifyPassword(currentPassword, existingUser.password)) {
+          return res.status(400).json({ error: 'Current password is incorrect' });
+        }
+      }
       updatedData.password = hashPassword(password);
     }
     if (isAdminOrManager(authUser.role)) {
@@ -1070,9 +1082,14 @@ app.put('/api/preferences/:key', async (req: Request, res: Response) => {
 
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  try {
-    await seed();
-  } catch (e) {
-    console.error('Error during auto-seed:', e);
+  if (process.env.ENABLE_SEED === 'true') {
+    try {
+      console.log('🌱 ENABLE_SEED=true detected. Running seed...');
+      await seed();
+    } catch (e) {
+      console.error('Error during auto-seed:', e);
+    }
+  } else {
+    console.log('ℹ️ Auto-seed skipped (ENABLE_SEED is not true). Database data preserved.');
   }
 });

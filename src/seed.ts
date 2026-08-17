@@ -1,5 +1,15 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 import { prisma } from './db';
 import { hashPassword } from './authUtils';
+
+const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
+if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
+  dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+} else {
+  dotenv.config();
+}
 
 function addMonths(dateStr: string, months: number): string {
   const d = new Date(dateStr);
@@ -72,7 +82,7 @@ export async function seed(force = false) {
     let existing = await prisma.user.findFirst({ where: { name: u.name } });
     if (!existing) {
       existing = await prisma.user.create({ data: u });
-    } else {
+    } else if (force) {
       existing = await prisma.user.update({
         where: { id: existing.id },
         data: { password: u.password, isApproved: u.isApproved, status: u.status, role: u.role, email: u.email, phone: u.phone },
