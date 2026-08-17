@@ -69,7 +69,8 @@ export async function seed(force = false) {
   // 2. Seed Users / Staff
   const defaultPasswordHash = hashPassword('password123');
   const initialUsers = [
-    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: 'Administrator', phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Zigi', email: 'zigi@ekosgreen.rs', role: 'Administrator', phone: '+381 36 311 099', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: 'Manager', phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
     { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: 'Manager', phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
     { name: 'Marija Petrović', email: 'marija@ekosgreen.rs', role: 'User', phone: '+381 36 311 102', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
     { name: 'Petar Marković', email: 'petar@ekosgreen.rs', role: 'User', phone: '+381 36 311 103', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
