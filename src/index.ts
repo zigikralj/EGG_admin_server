@@ -604,7 +604,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, phone, password, gender } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Full name is required.' });
     }
@@ -635,6 +635,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         email: email.trim(),
         phone: phone ? phone.trim() : null,
         password: hashedPassword,
+        gender: gender ? gender.trim() : null,
         isApproved: false,
         status: 'PENDING',
         role: 'User',
@@ -686,7 +687,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
     }
 
-    const { name, email, role, phone, password } = req.body;
+    const { name, email, role, phone, password, gender } = req.body;
     if (!name) return res.status(400).json({ error: 'User name is required' });
 
     const targetRole = role || 'User';
@@ -704,6 +705,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
         email,
         role: targetRole,
         phone,
+        gender: gender || null,
         password: hashedPassword,
         isApproved: true,
         status: 'APPROVED',
@@ -726,7 +728,7 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
     }
 
-    const { name, email, role, phone, avatarUrl, password, currentPassword, isApproved, status } = req.body;
+    const { name, email, role, phone, avatarUrl, password, currentPassword, isApproved, status, gender } = req.body;
 
     const existingUser = await prisma.user.findUnique({ where: { id } });
     if (!existingUser) return res.status(404).json({ error: 'User not found' });
@@ -751,6 +753,7 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
       email: email !== undefined ? email : existingUser.email,
       phone: phone !== undefined ? phone : existingUser.phone,
       avatarUrl: avatarUrl !== undefined ? avatarUrl : (existingUser as any).avatarUrl,
+      gender: gender !== undefined ? gender : (existingUser as any).gender,
       role: finalRole,
     };
 
