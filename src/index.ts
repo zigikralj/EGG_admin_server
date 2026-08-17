@@ -19,21 +19,50 @@ if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 
-const allowedOrigins = process.env.CORS_ORIGIN
+const envOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
-  : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173', 'http://localhost:4173'];
+  : [];
+
+const defaultDevOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://localhost:5000',
+];
+
+const isProduction = process.env.NODE_ENV === 'production';
+const allowedOrigins = [
+  ...envOrigins,
+  ...(!isProduction ? defaultDevOrigins : []),
+];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      // Allow non-browser requests with no origin header (server-to-server, curl, mobile apps)
+      if (!origin) return callback(null, true);
+
+      // If '*' is explicitly configured, allow all origins
+      if (allowedOrigins.includes('*')) return callback(null, true);
+
+      // Enforce strict origin whitelist check
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      return callback(new Error('Not allowed by CORS'));
+
+      console.warn(`[CORS Blocked] Origin: ${origin}`);
+      return callback(null, false);
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Id', 'Accept', 'Origin'],
   })
 );
 
