@@ -1,11 +1,13 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { prisma } from './db';
 import { seed } from './seed';
-import { hashPassword, verifyPassword } from './authUtils';
+import { hashPassword, verifyPassword, generateToken, verifyToken } from './authUtils';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -17,8 +19,36 @@ if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(helmet());
+
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173', 'http://localhost:4173'];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  })
+);
+
 app.use(express.json());
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 25,
+  message: { error: 'TOO_MANY_REQUESTS', message: 'Too many authentication requests from this IP, please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
 
 function addMonths(dateStr: string, months: number): string {
   const d = new Date(dateStr);
@@ -41,18 +71,25 @@ function isStale(p: { done: boolean; start: string | null }): boolean {
 }
 
 async function getAuthUser(req: Request) {
-  const userId = req.headers['x-user-id'] as string;
-  if (!userId) {
-    const adminUser = await prisma.user.findFirst({ where: { role: 'Administrator' } });
-    if (adminUser) return adminUser;
-    return { id: 'admin-fallback', name: 'Administrator', role: 'Administrator', email: null, phone: null };
+  // 1. Try Bearer JWT token in Authorization header
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    const payload = verifyToken(token);
+    if (payload && payload.userId) {
+      const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+      if (user) return user;
+    }
   }
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) {
-    return { id: userId, name: 'Unknown User', role: 'User', email: null, phone: null };
+  // 2. Fallback to X-User-Id header for transitional support
+  const userId = req.headers['x-user-id'] as string;
+  if (userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (user) return user;
   }
-  return user;
+
+  return null;
 }
 
 function isAdminOrManager(role: string): boolean {
@@ -68,6 +105,19 @@ function isProjectOwnerOrAdminManager(
   if (project.responsibleId && project.responsibleId === user.id) return true;
   return false;
 }
+
+// Global API authentication middleware
+app.use('/api', async (req: Request, res: Response, next: express.NextFunction) => {
+  if (req.path === '/auth/login' || req.path === '/auth/register') {
+    return next();
+  }
+  const authUser = await getAuthUser(req);
+  if (!authUser) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication required. Please log in.' });
+  }
+  (req as any).authUser = authUser;
+  next();
+});
 
 // ----------------------------------------------------
 // HEALTH CHECK
@@ -290,7 +340,7 @@ app.get('/api/projects', async (req: Request, res: Response) => {
 
 app.post('/api/projects', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample } = req.body;
 
     if (!name || (!clientId && !clientName) || !type) {
@@ -345,7 +395,7 @@ app.post('/api/projects', async (req: Request, res: Response) => {
 
 app.put('/api/projects/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     const id = req.params.id as string;
     const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample } = req.body;
 
@@ -403,7 +453,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
 
 app.patch('/api/projects/:id/toggle-done', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     const id = req.params.id as string;
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Project not found' });
@@ -428,7 +478,7 @@ app.patch('/api/projects/:id/toggle-done', async (req: Request, res: Response) =
 
 app.patch('/api/projects/:id/sample', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     const id = req.params.id as string;
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing || !existing.nextSample) {
@@ -456,7 +506,7 @@ app.patch('/api/projects/:id/sample', async (req: Request, res: Response) => {
 
 app.delete('/api/projects/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     const id = req.params.id as string;
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Project not found' });
@@ -489,7 +539,7 @@ app.get('/api/clients', async (req: Request, res: Response) => {
 
 app.post('/api/clients', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage clients.' });
     }
@@ -508,7 +558,7 @@ app.post('/api/clients', async (req: Request, res: Response) => {
 
 app.put('/api/clients/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage clients.' });
     }
@@ -527,7 +577,7 @@ app.put('/api/clients/:id', async (req: Request, res: Response) => {
 
 app.delete('/api/clients/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage clients.' });
     }
@@ -570,6 +620,15 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       if (!isValid) {
         return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email/username or password.' });
       }
+
+      // Automatically upgrade legacy PBKDF2 hash to bcrypt
+      if (!user.password.startsWith('$2')) {
+        const bcryptHash = hashPassword(password);
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { password: bcryptHash },
+        });
+      }
     }
 
     // Check approval status
@@ -594,8 +653,9 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       });
     }
 
+    const token = generateToken(user);
     const { password: _, ...userWithoutPassword } = user;
-    res.json({ user: userWithoutPassword });
+    res.json({ user: userWithoutPassword, token });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Failed to process login.' });
@@ -642,10 +702,12 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       },
     });
 
+    const token = generateToken(newUser);
     const { password: _, ...userWithoutPassword } = newUser;
     res.status(201).json({
       message: 'Registration submitted successfully! Your account is pending manager approval.',
       user: userWithoutPassword,
+      token,
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -656,10 +718,14 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 app.get('/api/auth/me', async (req: Request, res: Response) => {
   try {
     const authUser = await getAuthUser(req);
-    if (authUser && ((authUser as any).status === 'BLOCKED' || ((authUser as any).isApproved === false && (authUser as any).status !== 'PENDING'))) {
+    if (!authUser) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication required.' });
+    }
+    if ((authUser as any).status === 'BLOCKED' || ((authUser as any).isApproved === false && (authUser as any).status !== 'PENDING')) {
       return res.status(403).json({ error: 'ACCOUNT_BLOCKED', message: 'Contact administrator for more information.' });
     }
-    res.json(authUser);
+    const { password: _, ...userWithoutPassword } = authUser as any;
+    res.json(userWithoutPassword);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch current user' });
   }
@@ -682,7 +748,7 @@ app.get('/api/users', async (req: Request, res: Response) => {
 
 app.post('/api/users', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
     }
@@ -720,7 +786,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
 
 app.put('/api/users/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     const id = req.params.id as string;
     const isSelf = authUser.id === id;
 
@@ -788,7 +854,7 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
 
 app.post('/api/users/:id/approve', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can approve users.' });
     }
@@ -819,7 +885,7 @@ app.post('/api/users/:id/approve', async (req: Request, res: Response) => {
 
 app.post('/api/users/:id/reject', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can reject users.' });
     }
@@ -841,7 +907,7 @@ app.post('/api/users/:id/reject', async (req: Request, res: Response) => {
 
 app.delete('/api/users/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
     }
@@ -878,7 +944,7 @@ app.get('/api/services', async (req: Request, res: Response) => {
 
 app.post('/api/services', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
     }
@@ -903,7 +969,7 @@ app.post('/api/services', async (req: Request, res: Response) => {
 
 app.put('/api/services/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
     }
@@ -927,7 +993,7 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
 
 app.delete('/api/services/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
     }
@@ -956,7 +1022,7 @@ app.get('/api/categories', async (req: Request, res: Response) => {
 
 app.post('/api/categories', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage categories.' });
     }
@@ -986,7 +1052,7 @@ app.post('/api/categories', async (req: Request, res: Response) => {
 
 app.put('/api/categories/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage categories.' });
     }
@@ -1008,7 +1074,7 @@ app.put('/api/categories/:id', async (req: Request, res: Response) => {
 
 app.delete('/api/categories/:id', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
+    const authUser = (req as any).authUser;
     if (!isAdminOrManager(authUser.role)) {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage categories.' });
     }
@@ -1026,8 +1092,8 @@ app.delete('/api/categories/:id', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 app.get('/api/preferences', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
-    if (!authUser.id || authUser.id === 'admin-fallback') {
+    const authUser = (req as any).authUser;
+    if (!authUser || !authUser.id) {
       return res.json({});
     }
 
@@ -1051,8 +1117,8 @@ app.get('/api/preferences', async (req: Request, res: Response) => {
 
 app.put('/api/preferences/:key', async (req: Request, res: Response) => {
   try {
-    const authUser = await getAuthUser(req);
-    if (!authUser.id || authUser.id === 'admin-fallback') {
+    const authUser = (req as any).authUser;
+    if (!authUser || !authUser.id) {
       return res.status(400).json({ error: 'Valid user session required' });
     }
 
