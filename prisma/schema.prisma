@@ -85,10 +85,11 @@ model Service {
 
 model Reminder {
   id            String   @id @default(uuid())
+  title         String?
   projectId     String?
-  projectName   String
+  projectName   String?
   clientId      String?
-  clientName    String
+  clientName    String?
   responsibleId String?
   responsible   String?
   status        String   @default("Pending")

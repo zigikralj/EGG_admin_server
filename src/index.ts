@@ -211,6 +211,7 @@ app.get('/api/reminders', async (req: Request, res: Response) => {
       for (const p of sampleProjects) {
         await prisma.reminder.create({
           data: {
+            title: p.name,
             projectId: p.id,
             projectName: p.name,
             clientId: p.clientId,
@@ -233,8 +234,9 @@ app.get('/api/reminders', async (req: Request, res: Response) => {
 
     const filtered = reminders.filter(
       (r) =>
-        r.projectName.toLowerCase().includes(search) ||
-        r.clientName.toLowerCase().includes(search) ||
+        (r.title || '').toLowerCase().includes(search) ||
+        (r.projectName || '').toLowerCase().includes(search) ||
+        (r.clientName || '').toLowerCase().includes(search) ||
         (r.responsible || '').toLowerCase().includes(search) ||
         (r.status || '').toLowerCase().includes(search) ||
         (r.notes || '').toLowerCase().includes(search)
@@ -249,18 +251,20 @@ app.get('/api/reminders', async (req: Request, res: Response) => {
 
 app.post('/api/reminders', async (req: Request, res: Response) => {
   try {
-    const { projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate } = req.body;
+    const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate } = req.body;
 
-    if (!projectName || !clientName) {
-      return res.status(400).json({ error: 'Project name and Client name are required' });
+    const finalTitle = title || projectName;
+    if (!finalTitle) {
+      return res.status(400).json({ error: 'Reminder title or project name is required' });
     }
 
     const reminder = await prisma.reminder.create({
       data: {
+        title: finalTitle,
         projectId: projectId || null,
-        projectName,
+        projectName: projectName || null,
         clientId: clientId || null,
-        clientName,
+        clientName: clientName || null,
         responsibleId: responsibleId || null,
         responsible: responsible || null,
         status: status || 'Pending',
@@ -279,7 +283,7 @@ app.post('/api/reminders', async (req: Request, res: Response) => {
 app.put('/api/reminders/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate } = req.body;
+    const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate } = req.body;
 
     const existing = await prisma.reminder.findUnique({ where: { id } });
     if (!existing) {
@@ -289,10 +293,11 @@ app.put('/api/reminders/:id', async (req: Request, res: Response) => {
     const updated = await prisma.reminder.update({
       where: { id },
       data: {
+        title: title !== undefined ? (title || null) : existing.title,
         projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
-        projectName: projectName || existing.projectName,
+        projectName: projectName !== undefined ? (projectName || null) : existing.projectName,
         clientId: clientId !== undefined ? (clientId || null) : existing.clientId,
-        clientName: clientName || existing.clientName,
+        clientName: clientName !== undefined ? (clientName || null) : existing.clientName,
         responsibleId: responsibleId !== undefined ? (responsibleId || null) : existing.responsibleId,
         responsible: responsible !== undefined ? (responsible || null) : existing.responsible,
         status: status || existing.status,
