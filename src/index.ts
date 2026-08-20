@@ -135,6 +135,16 @@ function isProjectOwnerOrAdminManager(
   return false;
 }
 
+function handlePrismaError(res: Response, error: any, defaultMessage: string) {
+  if (error?.code === 'P2002') {
+    const targets = error?.meta?.target;
+    const targetStr = Array.isArray(targets) ? targets.join(', ') : targets ? String(targets) : 'field';
+    return res.status(400).json({ error: `A record with this ${targetStr} already exists.` });
+  }
+  console.error(defaultMessage, error);
+  return res.status(500).json({ error: defaultMessage });
+}
+
 // Global API authentication middleware
 app.use('/api', async (req: Request, res: Response, next: express.NextFunction) => {
   if (req.path === '/auth/login' || req.path === '/auth/register') {
@@ -275,8 +285,7 @@ app.post('/api/reminders', async (req: Request, res: Response) => {
 
     res.status(201).json(reminder);
   } catch (error) {
-    console.error('Error creating reminder:', error);
-    res.status(500).json({ error: 'Failed to create reminder' });
+    handlePrismaError(res, error, 'Failed to create reminder');
   }
 });
 
@@ -308,8 +317,7 @@ app.put('/api/reminders/:id', async (req: Request, res: Response) => {
 
     res.json(updated);
   } catch (error) {
-    console.error('Error updating reminder:', error);
-    res.status(500).json({ error: 'Failed to update reminder' });
+    handlePrismaError(res, error, 'Failed to update reminder');
   }
 });
 
@@ -423,7 +431,7 @@ app.post('/api/projects', async (req: Request, res: Response) => {
 
     res.status(201).json(project);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create project' });
+    handlePrismaError(res, error, 'Failed to create project');
   }
 });
 
@@ -481,7 +489,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
 
     res.json(updated);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update project' });
+    handlePrismaError(res, error, 'Failed to update project');
   }
 });
 
@@ -579,14 +587,28 @@ app.post('/api/clients', async (req: Request, res: Response) => {
     }
 
     const { name, contactPerson, email, phone, city } = req.body;
-    if (!name) return res.status(400).json({ error: 'Client name is required' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Client name is required' });
+
+    const trimmedName = name.trim();
+    const existing = await prisma.client.findFirst({
+      where: { name: { equals: trimmedName, mode: 'insensitive' } },
+    });
+    if (existing) {
+      return res.status(400).json({ error: 'A client with this name already exists' });
+    }
 
     const client = await prisma.client.create({
-      data: { name, contactPerson, email, phone, city },
+      data: {
+        name: trimmedName,
+        contactPerson: contactPerson ? contactPerson.trim() : null,
+        email: email ? email.trim() : null,
+        phone: phone ? phone.trim() : null,
+        city: city ? city.trim() : null,
+      },
     });
     res.status(201).json(client);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create client' });
+    handlePrismaError(res, error, 'Failed to create client');
   }
 });
 
@@ -599,13 +621,33 @@ app.put('/api/clients/:id', async (req: Request, res: Response) => {
 
     const id = req.params.id as string;
     const { name, contactPerson, email, phone, city } = req.body;
+
+    if (name && name.trim()) {
+      const trimmedName = name.trim();
+      const existing = await prisma.client.findFirst({
+        where: {
+          id: { not: id },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (existing) {
+        return res.status(400).json({ error: 'A client with this name already exists' });
+      }
+    }
+
     const updated = await prisma.client.update({
       where: { id },
-      data: { name, contactPerson, email, phone, city },
+      data: {
+        name: name ? name.trim() : undefined,
+        contactPerson: contactPerson !== undefined ? (contactPerson ? contactPerson.trim() : null) : undefined,
+        email: email !== undefined ? (email ? email.trim() : null) : undefined,
+        phone: phone !== undefined ? (phone ? phone.trim() : null) : undefined,
+        city: city !== undefined ? (city ? city.trim() : null) : undefined,
+      },
     });
     res.json(updated);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update client' });
+    handlePrismaError(res, error, 'Failed to update client');
   }
 });
 
@@ -744,8 +786,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       token,
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Failed to process registration.' });
+    handlePrismaError(res, error, 'Failed to process registration.');
   }
 });
 
@@ -788,7 +829,23 @@ app.post('/api/users', async (req: Request, res: Response) => {
     }
 
     const { name, email, role, phone, password, gender } = req.body;
-    if (!name) return res.status(400).json({ error: 'User name is required' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'User name is required' });
+
+    const trimmedName = name.trim();
+    const trimmedEmail = email && email.trim() ? email.trim() : null;
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { name: { equals: trimmedName, mode: 'insensitive' } },
+          ...(trimmedEmail ? [{ email: { equals: trimmedEmail, mode: 'insensitive' as const } }] : []),
+        ],
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'A user with this name or email already exists.' });
+    }
 
     const targetRole = role || 'User';
 
@@ -801,11 +858,11 @@ app.post('/api/users', async (req: Request, res: Response) => {
 
     const user = await prisma.user.create({
       data: {
-        name,
-        email,
+        name: trimmedName,
+        email: trimmedEmail,
         role: targetRole,
-        phone,
-        gender: gender || null,
+        phone: phone ? phone.trim() : null,
+        gender: gender ? gender.trim() : null,
         password: hashedPassword,
         isApproved: true,
         status: 'APPROVED',
@@ -814,7 +871,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
     const { password: _, ...userWithoutPassword } = user;
     res.status(201).json(userWithoutPassword);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create user' });
+    handlePrismaError(res, error, 'Failed to create user');
   }
 });
 
@@ -848,10 +905,28 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
       }
     }
 
+    const trimmedName = name !== undefined ? name.trim() : undefined;
+    const trimmedEmail = email !== undefined ? (email ? email.trim() : null) : undefined;
+
+    if ((trimmedName && trimmedName !== existingUser.name) || (trimmedEmail !== undefined && trimmedEmail !== existingUser.email)) {
+      const duplicate = await prisma.user.findFirst({
+        where: {
+          id: { not: id },
+          OR: [
+            ...(trimmedName ? [{ name: { equals: trimmedName, mode: 'insensitive' as const } }] : []),
+            ...(trimmedEmail ? [{ email: { equals: trimmedEmail, mode: 'insensitive' as const } }] : []),
+          ],
+        },
+      });
+      if (duplicate) {
+        return res.status(400).json({ error: 'A user with this name or email already exists.' });
+      }
+    }
+
     const updatedData: any = {
-      name: name !== undefined ? name : existingUser.name,
-      email: email !== undefined ? email : existingUser.email,
-      phone: phone !== undefined ? phone : existingUser.phone,
+      name: trimmedName !== undefined ? trimmedName : existingUser.name,
+      email: trimmedEmail !== undefined ? trimmedEmail : existingUser.email,
+      phone: phone !== undefined ? (phone ? phone.trim() : null) : existingUser.phone,
       avatarUrl: avatarUrl !== undefined ? avatarUrl : (existingUser as any).avatarUrl,
       gender: gender !== undefined ? gender : (existingUser as any).gender,
       role: finalRole,
@@ -882,7 +957,7 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
     const { password: _, ...userWithoutPassword } = updated;
     res.json(userWithoutPassword);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update user' });
+    handlePrismaError(res, error, 'Failed to update user');
   }
 });
 
@@ -986,10 +1061,28 @@ app.post('/api/services', async (req: Request, res: Response) => {
     const { code, name, group, frequency, description } = req.body;
     if (!code || !name) return res.status(400).json({ error: 'Code and Name are required' });
 
+    const formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
+    const trimmedName = name.trim();
+
+    const existing = await prisma.service.findFirst({
+      where: {
+        OR: [
+          { code: formattedCode },
+          { name: { equals: trimmedName, mode: 'insensitive' } },
+        ],
+      },
+    });
+    if (existing) {
+      if (existing.code === formattedCode) {
+        return res.status(400).json({ error: 'A service with this code already exists' });
+      }
+      return res.status(400).json({ error: 'A service with this name already exists' });
+    }
+
     const service = await prisma.service.create({
       data: {
-        code,
-        name,
+        code: formattedCode,
+        name: trimmedName,
         group: group || 'grp-legal',
         frequency: Number(frequency) || 0,
         description: description ? description.trim() : null,
@@ -997,7 +1090,7 @@ app.post('/api/services', async (req: Request, res: Response) => {
     });
     res.status(201).json(service);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create service' });
+    handlePrismaError(res, error, 'Failed to create service');
   }
 });
 
@@ -1010,10 +1103,24 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
 
     const id = req.params.id as string;
     const { name, group, frequency, description } = req.body;
+
+    if (name && name.trim()) {
+      const trimmedName = name.trim();
+      const existing = await prisma.service.findFirst({
+        where: {
+          id: { not: id },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (existing) {
+        return res.status(400).json({ error: 'A service with this name already exists' });
+      }
+    }
+
     const updated = await prisma.service.update({
       where: { id },
       data: {
-        name,
+        name: name ? name.trim() : undefined,
         group,
         frequency: Number(frequency) || 0,
         description: description ? description.trim() : null,
@@ -1021,7 +1128,7 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
     });
     res.json(updated);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update service' });
+    handlePrismaError(res, error, 'Failed to update service');
   }
 });
 
@@ -1065,22 +1172,33 @@ app.post('/api/categories', async (req: Request, res: Response) => {
     if (!code || !name) return res.status(400).json({ error: 'Code and Name are required' });
 
     const formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
+    const trimmedName = name.trim();
 
-    const existing = await prisma.category.findUnique({ where: { code: formattedCode } });
+    const existing = await prisma.category.findFirst({
+      where: {
+        OR: [
+          { code: formattedCode },
+          { name: { equals: trimmedName, mode: 'insensitive' } },
+        ],
+      },
+    });
     if (existing) {
-      return res.status(400).json({ error: 'Category code already exists' });
+      if (existing.code === formattedCode) {
+        return res.status(400).json({ error: 'A category with this code already exists' });
+      }
+      return res.status(400).json({ error: 'A category with this name already exists' });
     }
 
     const category = await prisma.category.create({
       data: {
         code: formattedCode,
-        name: name.trim(),
+        name: trimmedName,
         description: description ? description.trim() : null,
       },
     });
     res.status(201).json(category);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create category' });
+    handlePrismaError(res, error, 'Failed to create category');
   }
 });
 
@@ -1093,6 +1211,20 @@ app.put('/api/categories/:id', async (req: Request, res: Response) => {
 
     const id = req.params.id as string;
     const { name, description } = req.body;
+
+    if (name && name.trim()) {
+      const trimmedName = name.trim();
+      const existing = await prisma.category.findFirst({
+        where: {
+          id: { not: id },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (existing) {
+        return res.status(400).json({ error: 'A category with this name already exists' });
+      }
+    }
+
     const updated = await prisma.category.update({
       where: { id },
       data: {
@@ -1102,7 +1234,7 @@ app.put('/api/categories/:id', async (req: Request, res: Response) => {
     });
     res.json(updated);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update category' });
+    handlePrismaError(res, error, 'Failed to update category');
   }
 });
 
