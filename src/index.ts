@@ -16,6 +16,10 @@ if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
   dotenv.config({ override: true });
 }
 
+// Active online tracking and force-logout revocation maps
+const userActivityMap = new Map<string, number>();
+const userForceLogoutMap = new Map<string, number>();
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -106,18 +110,32 @@ async function getAuthUser(req: Request) {
     const token = authHeader.substring(7).trim();
     const payload = verifyToken(token);
     if (!payload || !payload.userId) {
-      // Token is expired or invalid
+      return null;
+    }
+    const forceLogoutAt = userForceLogoutMap.get(payload.userId);
+    const tokenIatMs = (payload as any).iat ? (payload as any).iat * 1000 : 0;
+    if (forceLogoutAt && tokenIatMs && tokenIatMs < forceLogoutAt) {
       return null;
     }
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    if (user) {
+      userActivityMap.set(user.id, Date.now());
+    }
     return user || null;
   }
 
   // 2. Fallback to X-User-Id header for transitional support only if no Authorization header provided
   const userId = req.headers['x-user-id'] as string;
   if (userId) {
+    const forceLogoutAt = userForceLogoutMap.get(userId);
+    if (forceLogoutAt && Date.now() - forceLogoutAt < 5000) {
+      return null;
+    }
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user) return user;
+    if (user) {
+      userActivityMap.set(user.id, Date.now());
+      return user;
+    }
   }
 
   return null;
@@ -385,7 +403,7 @@ app.get('/api/projects', async (req: Request, res: Response) => {
 app.post('/api/projects', async (req: Request, res: Response) => {
   try {
     const authUser = (req as any).authUser;
-    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample } = req.body;
+    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample, notes } = req.body;
 
     if (!name || (!clientId && !clientName) || !type) {
       return res.status(400).json({ error: 'Name, client, and type are required' });
@@ -428,6 +446,7 @@ app.post('/api/projects', async (req: Request, res: Response) => {
         progress: progVal,
         done: isDone,
         nextSample: computedNextSample,
+        notes: notes || null,
       },
     });
 
@@ -441,7 +460,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
   try {
     const authUser = (req as any).authUser;
     const id = req.params.id as string;
-    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample } = req.body;
+    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample, notes } = req.body;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Project not found' });
@@ -486,6 +505,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
         progress: progVal,
         done: isDone,
         nextSample: computedNextSample,
+        notes: notes !== undefined ? (notes || null) : existing.notes,
       },
     });
 
@@ -731,6 +751,8 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       });
     }
 
+    userForceLogoutMap.delete(user.id);
+    userActivityMap.set(user.id, Date.now());
     const token = generateToken(user);
     const { password: _, ...userWithoutPassword } = user;
     res.json({ user: userWithoutPassword, token, expiresIn: SESSION_DURATION_SECONDS });
@@ -816,12 +838,45 @@ app.get('/api/users', async (req: Request, res: Response) => {
     const users = await prisma.user.findMany({
       orderBy: { name: 'asc' },
     });
-    const sanitizedUsers = users.map(({ password, ...rest }) => rest);
+    const now = Date.now();
+    const sanitizedUsers = users.map(({ password, ...rest }) => {
+      const lastActive = userActivityMap.get(rest.id);
+      const isOnline = Boolean(lastActive && (now - lastActive) < 45000);
+      return {
+        ...rest,
+        isOnline,
+        lastActiveAt: lastActive ? new Date(lastActive).toISOString() : null,
+      };
+    });
     res.json(sanitizedUsers);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
+
+app.post('/api/users/:id/force-logout', async (req: Request, res: Response) => {
+  try {
+    const authUser = (req as any).authUser;
+    if (!isAdminOrManager(authUser.role)) {
+      return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can force log out users.' });
+    }
+
+    const targetId = req.params.id as string;
+    const targetUser = await prisma.user.findUnique({ where: { id: targetId } });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    userForceLogoutMap.set(targetId, Date.now());
+    userActivityMap.delete(targetId);
+
+    res.json({ success: true, message: `User ${targetUser.name} has been forced to log out.` });
+  } catch (error) {
+    console.error('Error force logging out user:', error);
+    res.status(500).json({ error: 'Failed to force log out user' });
+  }
+});
+
 
 app.post('/api/users', async (req: Request, res: Response) => {
   try {
