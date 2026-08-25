@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import { prisma } from './db';
 import { seed } from './seed';
-import { hashPassword, verifyPassword, generateToken, verifyToken } from './authUtils';
+import { hashPassword, verifyPassword, generateToken, verifyToken, SESSION_DURATION_SECONDS } from './authUtils';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -105,13 +105,15 @@ async function getAuthUser(req: Request) {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7).trim();
     const payload = verifyToken(token);
-    if (payload && payload.userId) {
-      const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-      if (user) return user;
+    if (!payload || !payload.userId) {
+      // Token is expired or invalid
+      return null;
     }
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    return user || null;
   }
 
-  // 2. Fallback to X-User-Id header for transitional support
+  // 2. Fallback to X-User-Id header for transitional support only if no Authorization header provided
   const userId = req.headers['x-user-id'] as string;
   if (userId) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -731,7 +733,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
     const token = generateToken(user);
     const { password: _, ...userWithoutPassword } = user;
-    res.json({ user: userWithoutPassword, token });
+    res.json({ user: userWithoutPassword, token, expiresIn: SESSION_DURATION_SECONDS });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Failed to process login.' });
