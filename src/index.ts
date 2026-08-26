@@ -199,6 +199,7 @@ app.get('/api/projects/stats', async (req: Request, res: Response) => {
     const usersCount = await prisma.user.count();
     const servicesCount = await prisma.service.count();
     const categoriesCount = await prisma.category.count();
+    const invoicesCount = await prisma.invoice.count();
 
     const active = projects.filter((p) => !p.done).length;
     const done = projects.filter((p) => p.done).length;
@@ -216,6 +217,7 @@ app.get('/api/projects/stats', async (req: Request, res: Response) => {
       usersCount,
       servicesCount,
       categoriesCount,
+      invoicesCount,
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch project stats' });
@@ -1307,6 +1309,308 @@ app.delete('/api/categories/:id', async (req: Request, res: Response) => {
     res.json({ message: 'Category deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete category' });
+  }
+});
+
+
+// ----------------------------------------------------
+// INVOICES CRUD
+// ----------------------------------------------------
+app.get('/api/invoices', async (req: Request, res: Response) => {
+  try {
+    const search = ((req.query.search as string) || '').trim().toLowerCase();
+    const status = (req.query.status as string) || '';
+    const clientId = (req.query.clientId as string) || '';
+    const projectId = (req.query.projectId as string) || '';
+
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
+    if (clientId) {
+      where.clientId = clientId;
+    }
+    if (projectId) {
+      where.projectId = projectId;
+    }
+
+    let invoices = await prisma.invoice.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    if (search) {
+      invoices = invoices.filter((inv) => {
+        const invNum = (inv.invoiceNumber || '').toLowerCase();
+        const cName = (inv.clientName || inv.client?.name || '').toLowerCase();
+        const pName = (inv.projectName || inv.project?.name || '').toLowerCase();
+        const st = (inv.status || '').toLowerCase();
+        const notes = (inv.notes || '').toLowerCase();
+        const itemsText = inv.items.map((i) => i.description.toLowerCase()).join(' ');
+        return (
+          invNum.includes(search) ||
+          cName.includes(search) ||
+          pName.includes(search) ||
+          st.includes(search) ||
+          notes.includes(search) ||
+          itemsText.includes(search)
+        );
+      });
+    }
+
+    res.json(invoices);
+  } catch (error) {
+    console.error('Error fetching invoices:', error);
+    res.status(500).json({ error: 'Failed to fetch invoices' });
+  }
+});
+
+app.get('/api/invoices/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    res.json(invoice);
+  } catch (error) {
+    console.error('Error fetching invoice:', error);
+    res.status(500).json({ error: 'Failed to fetch invoice' });
+  }
+});
+
+app.post('/api/invoices', async (req: Request, res: Response) => {
+  try {
+    const {
+      invoiceNumber,
+      dateCreated,
+      dueDate,
+      paymentDate,
+      clientId,
+      clientName,
+      projectId,
+      projectName,
+      status,
+      notes,
+      currency,
+      items,
+    } = req.body;
+
+    if (!invoiceNumber || !String(invoiceNumber).trim()) {
+      return res.status(400).json({ error: 'Invoice number is required' });
+    }
+
+    let resolvedClientName = clientName || null;
+    if (clientId && !resolvedClientName) {
+      const c = await prisma.client.findUnique({ where: { id: clientId } });
+      if (c) resolvedClientName = c.name;
+    }
+
+    let resolvedProjectName = projectName || null;
+    if (projectId && !resolvedProjectName) {
+      const p = await prisma.project.findUnique({ where: { id: projectId } });
+      if (p) resolvedProjectName = p.name;
+    }
+
+    const itemsData = Array.isArray(items)
+      ? items.map((item: any) => ({
+          description: String(item.description || '').trim(),
+          quantity: Number(item.quantity) || 1,
+          unitPrice: Number(item.unitPrice) || 0,
+          currency: item.currency || currency || 'RSD',
+        }))
+      : [];
+
+    const computedTotal = itemsData.reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0);
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: String(invoiceNumber).trim(),
+        dateCreated: dateCreated || new Date().toISOString().slice(0, 10),
+        dueDate: dueDate || null,
+        paymentDate: paymentDate || null,
+        clientId: clientId || null,
+        clientName: resolvedClientName,
+        projectId: projectId || null,
+        projectName: resolvedProjectName,
+        status: status || 'Draft',
+        notes: notes || null,
+        totalAmount: computedTotal,
+        currency: currency || (itemsData.length > 0 ? itemsData[0].currency : 'RSD'),
+        items: {
+          create: itemsData,
+        },
+      },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    res.status(201).json(invoice);
+  } catch (error) {
+    handlePrismaError(res, error, 'Failed to create invoice');
+  }
+});
+
+app.put('/api/invoices/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const {
+      invoiceNumber,
+      dateCreated,
+      dueDate,
+      paymentDate,
+      clientId,
+      clientName,
+      projectId,
+      projectName,
+      status,
+      notes,
+      currency,
+      items,
+    } = req.body;
+
+    const existing = await prisma.invoice.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    let resolvedClientName = clientName !== undefined ? clientName : existing.clientName;
+    if (clientId && clientId !== existing.clientId && !clientName) {
+      const c = await prisma.client.findUnique({ where: { id: clientId } });
+      if (c) resolvedClientName = c.name;
+    }
+
+    let resolvedProjectName = projectName !== undefined ? projectName : existing.projectName;
+    if (projectId && projectId !== existing.projectId && !projectName) {
+      const p = await prisma.project.findUnique({ where: { id: projectId } });
+      if (p) resolvedProjectName = p.name;
+    }
+
+    let itemsData: any[] | null = null;
+    let computedTotal = existing.totalAmount;
+
+    if (Array.isArray(items)) {
+      itemsData = items.map((item: any) => ({
+        description: String(item.description || '').trim(),
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.unitPrice) || 0,
+        currency: item.currency || currency || existing.currency || 'RSD',
+      }));
+      computedTotal = itemsData.reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0);
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (itemsData !== null) {
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+        if (itemsData.length > 0) {
+          await tx.invoiceItem.createMany({
+            data: itemsData.map((item) => ({
+              invoiceId: id,
+              ...item,
+            })),
+          });
+        }
+      }
+
+      return tx.invoice.update({
+        where: { id },
+        data: {
+          invoiceNumber: invoiceNumber !== undefined ? String(invoiceNumber).trim() : existing.invoiceNumber,
+          dateCreated: dateCreated !== undefined ? (dateCreated || null) : existing.dateCreated,
+          dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
+          paymentDate: paymentDate !== undefined ? (paymentDate || null) : existing.paymentDate,
+          clientId: clientId !== undefined ? (clientId || null) : existing.clientId,
+          clientName: resolvedClientName,
+          projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
+          projectName: resolvedProjectName,
+          status: status || existing.status,
+          notes: notes !== undefined ? (notes || null) : existing.notes,
+          totalAmount: computedTotal,
+          currency: currency !== undefined ? (currency || 'RSD') : existing.currency,
+        },
+        include: {
+          client: true,
+          project: true,
+          items: true,
+        },
+      });
+    });
+
+    res.json(updated);
+  } catch (error) {
+    handlePrismaError(res, error, 'Failed to update invoice');
+  }
+});
+
+app.patch('/api/invoices/:id/status', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const { status, paymentDate } = req.body;
+
+    const existing = await prisma.invoice.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const newStatus = status || existing.status;
+    let resolvedPaymentDate = paymentDate !== undefined ? paymentDate : existing.paymentDate;
+    if (newStatus === 'Paid' && !resolvedPaymentDate) {
+      resolvedPaymentDate = new Date().toISOString().slice(0, 10);
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id },
+      data: {
+        status: newStatus,
+        paymentDate: resolvedPaymentDate,
+      },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Error updating invoice status:', error);
+    res.status(500).json({ error: 'Failed to update invoice status' });
+  }
+});
+
+app.delete('/api/invoices/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const existing = await prisma.invoice.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    await prisma.invoice.delete({ where: { id } });
+    res.json({ message: 'Invoice deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting invoice:', error);
+    res.status(500).json({ error: 'Failed to delete invoice' });
   }
 });
 
