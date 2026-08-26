@@ -8,6 +8,7 @@ import fs from 'fs';
 import { prisma } from './db';
 import { seed } from './seed';
 import { hashPassword, verifyPassword, generateToken, verifyToken, SESSION_DURATION_SECONDS } from './authUtils';
+import { UserRole, isAdminOrManager } from './types';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -139,10 +140,6 @@ async function getAuthUser(req: Request) {
   }
 
   return null;
-}
-
-function isAdminOrManager(role: string): boolean {
-  return role === 'Administrator' || role === 'Manager';
 }
 
 function isProjectOwnerOrAdminManager(
@@ -421,7 +418,7 @@ app.post('/api/projects', async (req: Request, res: Response) => {
     let finalResponsible = responsible || authUser.name;
     let finalResponsibleId: string | null = authUser.id;
 
-    if (authUser.role === 'User') {
+    if (authUser.role === UserRole.USER) {
       finalResponsible = authUser.name;
       finalResponsibleId = authUser.id;
     } else if (responsible) {
@@ -480,7 +477,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
     let finalResponsible = responsible || existing.responsible;
     let finalResponsibleId = existing.responsibleId;
 
-    if (authUser.role === 'User') {
+    if (authUser.role === UserRole.USER) {
       finalResponsible = authUser.name;
       finalResponsibleId = authUser.id;
     } else if (responsible) {
@@ -800,7 +797,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         gender: gender ? gender.trim() : null,
         isApproved: false,
         status: 'PENDING',
-        role: 'User',
+        role: UserRole.USER,
       },
     });
 
@@ -906,10 +903,10 @@ app.post('/api/users', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'A user with this name or email already exists.' });
     }
 
-    const targetRole = role || 'User';
+    const targetRole = role || UserRole.USER;
 
     // Manager cannot create an Administrator account
-    if (authUser.role === 'Manager' && targetRole === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && targetRole === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
     }
 
@@ -955,11 +952,11 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
     }
 
     // Manager cannot edit an Administrator account or upgrade someone to Administrator
-    if (authUser.role === 'Manager') {
-      if (existingUser.role === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER) {
+      if (existingUser.role === UserRole.ADMINISTRATOR) {
         return res.status(403).json({ error: 'Permission denied. Managers cannot modify Administrator accounts.' });
       }
-      if (finalRole === 'Administrator') {
+      if (finalRole === UserRole.ADMINISTRATOR) {
         return res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
       }
     }
@@ -1029,9 +1026,9 @@ app.post('/api/users/:id/approve', async (req: Request, res: Response) => {
 
     const id = req.params.id as string;
     const { role } = req.body;
-    const targetRole = role || 'User';
+    const targetRole = role || UserRole.USER;
 
-    if (authUser.role === 'Manager' && targetRole === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && targetRole === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
     }
 
@@ -1062,7 +1059,7 @@ app.post('/api/users/:id/reject', async (req: Request, res: Response) => {
     const existingUser = await prisma.user.findUnique({ where: { id } });
     if (!existingUser) return res.status(404).json({ error: 'User not found' });
 
-    if (authUser.role === 'Manager' && existingUser.role === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && existingUser.role === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied.' });
     }
 
@@ -1085,7 +1082,7 @@ app.delete('/api/users/:id', async (req: Request, res: Response) => {
     if (!existingUser) return res.status(404).json({ error: 'User not found' });
 
     // Manager cannot delete an Administrator account
-    if (authUser.role === 'Manager' && existingUser.role === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && existingUser.role === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied. Managers cannot delete Administrator accounts.' });
     }
 

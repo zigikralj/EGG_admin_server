@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { UserRole } from './types';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ekos_jwt_secret_key_change_in_production_2026';
 export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '9h';
@@ -43,13 +44,13 @@ export function verifyPassword(password: string, hashedPassword?: string | null)
 
 export interface JwtPayload {
   userId: string;
-  role: string;
+  role: UserRole | string;
 }
 
 /**
  * Generates a signed JWT token for a user.
  */
-export function generateToken(user: { id: string; role: string }, expiresIn: string | number = JWT_EXPIRES_IN): string {
+export function generateToken(user: { id: string; role: UserRole | string }, expiresIn: string | number = JWT_EXPIRES_IN): string {
   const options: jwt.SignOptions = { expiresIn: expiresIn as any };
   return jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, options);
 }

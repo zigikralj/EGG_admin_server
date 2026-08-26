@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { prisma } from './db';
 import { hashPassword } from './authUtils';
+import { UserRole } from './types';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -69,13 +70,14 @@ export async function seed(force = false) {
   // 2. Seed Users / Staff
   const defaultPasswordHash = hashPassword('password123');
   const initialUsers = [
-    { name: 'Zigi', email: 'zigi@ekosgreen.rs', role: 'Administrator', phone: '+381 36 311 099', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: 'Manager', phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: 'Manager', phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Marija Petrović', email: 'marija@ekosgreen.rs', role: 'User', phone: '+381 36 311 102', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Petar Marković', email: 'petar@ekosgreen.rs', role: 'User', phone: '+381 36 311 103', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Jovana Nikolić', email: 'jovana@ekosgreen.rs', role: 'User', phone: '+381 36 311 104', password: defaultPasswordHash, isApproved: false, status: 'BLOCKED' },
-    { name: 'Marko Simić', email: 'marko@ekosgreen.rs', role: 'User', phone: '+381 36 311 105', password: defaultPasswordHash, isApproved: false, status: 'PENDING' },
+    { name: 'Zigi', email: 'zigi@ekosgreen.rs', role: UserRole.ADMINISTRATOR, phone: '+381 36 311 099', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Marija Petrović', email: 'marija@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 102', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Petar Marković', email: 'petar@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 103', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Katarina Popović', email: 'katarina@ekosgreen.rs', role: UserRole.ACCOUNTANT, phone: '+381 36 311 106', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
+    { name: 'Jovana Nikolić', email: 'jovana@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 104', password: defaultPasswordHash, isApproved: false, status: 'BLOCKED' },
+    { name: 'Marko Simić', email: 'marko@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 105', password: defaultPasswordHash, isApproved: false, status: 'PENDING' },
   ];
 
   const createdUsers: Record<string, string> = {};
