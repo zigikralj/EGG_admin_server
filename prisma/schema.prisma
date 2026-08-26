@@ -27,6 +27,7 @@ model Project {
   client        Client?  @relation(fields: [clientId], references: [id])
   responsibleUser User?  @relation(fields: [responsibleId], references: [id])
   reminders     Reminder[]
+  invoices      Invoice[]
 }
 
 model Client {
@@ -40,6 +41,7 @@ model Client {
   updatedAt     DateTime  @updatedAt
   projects      Project[]
   reminders     Reminder[]
+  invoices      Invoice[]
 }
 
 model User {
@@ -113,3 +115,37 @@ model Category {
   updatedAt   DateTime @updatedAt
 }
 
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNumber String        @unique
+  dateCreated   String?
+  dueDate       String?
+  paymentDate   String?
+  clientId      String?
+  clientName    String?
+  projectId     String?
+  projectName   String?
+  status        String        @default("Draft")
+  notes         String?
+  totalAmount   Float?        @default(0)
+  currency      String?       @default("RSD")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  project       Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items         InvoiceItem[]
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  description String
+  quantity    Float    @default(1)
+  unitPrice   Float    @default(0)
+  currency    String   @default("RSD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
