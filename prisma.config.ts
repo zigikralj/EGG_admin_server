@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { defineConfig, env } from 'prisma/config';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -9,11 +10,9 @@ if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
   dotenv.config({ override: true });
 }
 
-import { Pool } from 'pg';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-
-export const prisma = new PrismaClient({ adapter });
+export default defineConfig({
+  schema: './prisma/schema.prisma',
+  datasource: {
+    url: env('DATABASE_URL'),
+  },
+});
