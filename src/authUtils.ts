@@ -1,9 +1,11 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { UserRole } from './types';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ekos_jwt_secret_key_change_in_production_2026';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '9h';
+export const SESSION_DURATION_SECONDS = 9 * 60 * 60; // 9 hours (32400 seconds)
 
 /**
  * Hashes a plaintext password using bcrypt.
@@ -42,14 +44,14 @@ export function verifyPassword(password: string, hashedPassword?: string | null)
 
 export interface JwtPayload {
   userId: string;
-  role: string;
+  role: UserRole | string;
 }
 
 /**
  * Generates a signed JWT token for a user.
  */
-export function generateToken(user: { id: string; role: string }): string {
-  const options: jwt.SignOptions = { expiresIn: '7d' };
+export function generateToken(user: { id: string; role: UserRole | string }, expiresIn: string | number = JWT_EXPIRES_IN): string {
+  const options: jwt.SignOptions = { expiresIn: expiresIn as any };
   return jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, options);
 }
 

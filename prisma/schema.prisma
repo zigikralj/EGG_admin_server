@@ -20,12 +20,14 @@ model Project {
   progress      Int      @default(0)
   done          Boolean  @default(false)
   nextSample    String?
+  notes         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   client        Client?  @relation(fields: [clientId], references: [id])
   responsibleUser User?  @relation(fields: [responsibleId], references: [id])
   reminders     Reminder[]
+  invoices      Invoice[]
 }
 
 model Client {
@@ -39,6 +41,7 @@ model Client {
   updatedAt     DateTime  @updatedAt
   projects      Project[]
   reminders     Reminder[]
+  invoices      Invoice[]
 }
 
 model User {
@@ -112,3 +115,56 @@ model Category {
   updatedAt   DateTime @updatedAt
 }
 
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNumber String        @unique
+  dateCreated   String?
+  dueDate       String?
+  paymentDate   String?
+  clientId      String?
+  clientName    String?
+  projectId     String?
+  projectName   String?
+  status        String        @default("Draft")
+  notes         String?
+  totalAmount   Float?        @default(0)
+  currency      String?       @default("RSD")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  project       Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items         InvoiceItem[]
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  description String
+  quantity    Float    @default(1)
+  unitPrice   Float    @default(0)
+  currency    String   @default("RSD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+
+model CompanyInfo {
+  id                 String   @id @default("default")
+  name               String   @default("EKOS GREEN GROUP")
+  legalName          String   @default("EKOS GREEN GROUP DOO Kraljevo")
+  registrationNumber String   @default("21823759")
+  municipality       String   @default("KRALJEVO")
+  city               String   @default("KRALJEVO")
+  streetAddress      String   @default("HEROJA MARIČIĆA 18")
+  postalCode         String   @default("36000")
+  postOffice         String   @default("KRALJEVO")
+  email              String   @default("office@ekosgroup.rs")
+  taxId              String   @default("113207057")
+  activityCode       String   @default("7490 - Ostale stručne, naučne i tehničke delatnosti")
+  bankAccounts       String[] @default(["325-9500700212451-35", "205-0000000547461-12", "205-0070100584938-90", "325-9601700087442-40", "325-9500700218732-10", "205-0000000525461-52"])
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}

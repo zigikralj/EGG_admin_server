@@ -7,7 +7,8 @@ import path from 'path';
 import fs from 'fs';
 import { prisma } from './db';
 import { seed } from './seed';
-import { hashPassword, verifyPassword, generateToken, verifyToken } from './authUtils';
+import { hashPassword, verifyPassword, generateToken, verifyToken, SESSION_DURATION_SECONDS } from './authUtils';
+import { UserRole, isAdminOrManager } from './types';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -15,6 +16,10 @@ if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
 } else {
   dotenv.config({ override: true });
 }
+
+// Active online tracking and force-logout revocation maps
+const userActivityMap = new Map<string, number>();
+const userForceLogoutMap = new Map<string, number>();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -105,24 +110,36 @@ async function getAuthUser(req: Request) {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7).trim();
     const payload = verifyToken(token);
-    if (payload && payload.userId) {
-      const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-      if (user) return user;
+    if (!payload || !payload.userId) {
+      return null;
+    }
+    const forceLogoutAt = userForceLogoutMap.get(payload.userId);
+    const tokenIatMs = (payload as any).iat ? (payload as any).iat * 1000 : 0;
+    if (forceLogoutAt && tokenIatMs && tokenIatMs < forceLogoutAt) {
+      return null;
+    }
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    if (user) {
+      userActivityMap.set(user.id, Date.now());
+    }
+    return user || null;
+  }
+
+  // 2. Fallback to X-User-Id header for transitional support only if no Authorization header provided
+  const userId = req.headers['x-user-id'] as string;
+  if (userId) {
+    const forceLogoutAt = userForceLogoutMap.get(userId);
+    if (forceLogoutAt && Date.now() - forceLogoutAt < 5000) {
+      return null;
+    }
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (user) {
+      userActivityMap.set(user.id, Date.now());
+      return user;
     }
   }
 
-  // 2. Fallback to X-User-Id header for transitional support
-  const userId = req.headers['x-user-id'] as string;
-  if (userId) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user) return user;
-  }
-
   return null;
-}
-
-function isAdminOrManager(role: string): boolean {
-  return role === 'Administrator' || role === 'Manager';
 }
 
 function isProjectOwnerOrAdminManager(
@@ -179,6 +196,7 @@ app.get('/api/projects/stats', async (req: Request, res: Response) => {
     const usersCount = await prisma.user.count();
     const servicesCount = await prisma.service.count();
     const categoriesCount = await prisma.category.count();
+    const invoicesCount = await prisma.invoice.count();
 
     const active = projects.filter((p) => !p.done).length;
     const done = projects.filter((p) => p.done).length;
@@ -196,6 +214,7 @@ app.get('/api/projects/stats', async (req: Request, res: Response) => {
       usersCount,
       servicesCount,
       categoriesCount,
+      invoicesCount,
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch project stats' });
@@ -383,7 +402,7 @@ app.get('/api/projects', async (req: Request, res: Response) => {
 app.post('/api/projects', async (req: Request, res: Response) => {
   try {
     const authUser = (req as any).authUser;
-    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample } = req.body;
+    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample, notes } = req.body;
 
     if (!name || (!clientId && !clientName) || !type) {
       return res.status(400).json({ error: 'Name, client, and type are required' });
@@ -399,7 +418,7 @@ app.post('/api/projects', async (req: Request, res: Response) => {
     let finalResponsible = responsible || authUser.name;
     let finalResponsibleId: string | null = authUser.id;
 
-    if (authUser.role === 'User') {
+    if (authUser.role === UserRole.USER) {
       finalResponsible = authUser.name;
       finalResponsibleId = authUser.id;
     } else if (responsible) {
@@ -426,6 +445,7 @@ app.post('/api/projects', async (req: Request, res: Response) => {
         progress: progVal,
         done: isDone,
         nextSample: computedNextSample,
+        notes: notes || null,
       },
     });
 
@@ -439,7 +459,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
   try {
     const authUser = (req as any).authUser;
     const id = req.params.id as string;
-    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample } = req.body;
+    const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample, notes } = req.body;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Project not found' });
@@ -457,7 +477,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
     let finalResponsible = responsible || existing.responsible;
     let finalResponsibleId = existing.responsibleId;
 
-    if (authUser.role === 'User') {
+    if (authUser.role === UserRole.USER) {
       finalResponsible = authUser.name;
       finalResponsibleId = authUser.id;
     } else if (responsible) {
@@ -484,6 +504,7 @@ app.put('/api/projects/:id', async (req: Request, res: Response) => {
         progress: progVal,
         done: isDone,
         nextSample: computedNextSample,
+        notes: notes !== undefined ? (notes || null) : existing.notes,
       },
     });
 
@@ -729,9 +750,11 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       });
     }
 
+    userForceLogoutMap.delete(user.id);
+    userActivityMap.set(user.id, Date.now());
     const token = generateToken(user);
     const { password: _, ...userWithoutPassword } = user;
-    res.json({ user: userWithoutPassword, token });
+    res.json({ user: userWithoutPassword, token, expiresIn: SESSION_DURATION_SECONDS });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Failed to process login.' });
@@ -774,7 +797,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         gender: gender ? gender.trim() : null,
         isApproved: false,
         status: 'PENDING',
-        role: 'User',
+        role: UserRole.USER,
       },
     });
 
@@ -814,12 +837,45 @@ app.get('/api/users', async (req: Request, res: Response) => {
     const users = await prisma.user.findMany({
       orderBy: { name: 'asc' },
     });
-    const sanitizedUsers = users.map(({ password, ...rest }) => rest);
+    const now = Date.now();
+    const sanitizedUsers = users.map(({ password, ...rest }) => {
+      const lastActive = userActivityMap.get(rest.id);
+      const isOnline = Boolean(lastActive && (now - lastActive) < 45000);
+      return {
+        ...rest,
+        isOnline,
+        lastActiveAt: lastActive ? new Date(lastActive).toISOString() : null,
+      };
+    });
     res.json(sanitizedUsers);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
+
+app.post('/api/users/:id/force-logout', async (req: Request, res: Response) => {
+  try {
+    const authUser = (req as any).authUser;
+    if (!isAdminOrManager(authUser.role)) {
+      return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can force log out users.' });
+    }
+
+    const targetId = req.params.id as string;
+    const targetUser = await prisma.user.findUnique({ where: { id: targetId } });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    userForceLogoutMap.set(targetId, Date.now());
+    userActivityMap.delete(targetId);
+
+    res.json({ success: true, message: `User ${targetUser.name} has been forced to log out.` });
+  } catch (error) {
+    console.error('Error force logging out user:', error);
+    res.status(500).json({ error: 'Failed to force log out user' });
+  }
+});
+
 
 app.post('/api/users', async (req: Request, res: Response) => {
   try {
@@ -847,10 +903,10 @@ app.post('/api/users', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'A user with this name or email already exists.' });
     }
 
-    const targetRole = role || 'User';
+    const targetRole = role || UserRole.USER;
 
     // Manager cannot create an Administrator account
-    if (authUser.role === 'Manager' && targetRole === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && targetRole === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
     }
 
@@ -896,11 +952,11 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
     }
 
     // Manager cannot edit an Administrator account or upgrade someone to Administrator
-    if (authUser.role === 'Manager') {
-      if (existingUser.role === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER) {
+      if (existingUser.role === UserRole.ADMINISTRATOR) {
         return res.status(403).json({ error: 'Permission denied. Managers cannot modify Administrator accounts.' });
       }
-      if (finalRole === 'Administrator') {
+      if (finalRole === UserRole.ADMINISTRATOR) {
         return res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
       }
     }
@@ -970,9 +1026,9 @@ app.post('/api/users/:id/approve', async (req: Request, res: Response) => {
 
     const id = req.params.id as string;
     const { role } = req.body;
-    const targetRole = role || 'User';
+    const targetRole = role || UserRole.USER;
 
-    if (authUser.role === 'Manager' && targetRole === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && targetRole === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
     }
 
@@ -1003,7 +1059,7 @@ app.post('/api/users/:id/reject', async (req: Request, res: Response) => {
     const existingUser = await prisma.user.findUnique({ where: { id } });
     if (!existingUser) return res.status(404).json({ error: 'User not found' });
 
-    if (authUser.role === 'Manager' && existingUser.role === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && existingUser.role === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied.' });
     }
 
@@ -1026,7 +1082,7 @@ app.delete('/api/users/:id', async (req: Request, res: Response) => {
     if (!existingUser) return res.status(404).json({ error: 'User not found' });
 
     // Manager cannot delete an Administrator account
-    if (authUser.role === 'Manager' && existingUser.role === 'Administrator') {
+    if (authUser.role === UserRole.MANAGER && existingUser.role === UserRole.ADMINISTRATOR) {
       return res.status(403).json({ error: 'Permission denied. Managers cannot delete Administrator accounts.' });
     }
 
@@ -1253,9 +1309,404 @@ app.delete('/api/categories/:id', async (req: Request, res: Response) => {
   }
 });
 
+
+// ----------------------------------------------------
+// INVOICES CRUD
+// ----------------------------------------------------
+app.get('/api/invoices', async (req: Request, res: Response) => {
+  try {
+    const search = ((req.query.search as string) || '').trim().toLowerCase();
+    const status = (req.query.status as string) || '';
+    const clientId = (req.query.clientId as string) || '';
+    const projectId = (req.query.projectId as string) || '';
+
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
+    if (clientId) {
+      where.clientId = clientId;
+    }
+    if (projectId) {
+      where.projectId = projectId;
+    }
+
+    let invoices = await prisma.invoice.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    if (search) {
+      invoices = invoices.filter((inv) => {
+        const invNum = (inv.invoiceNumber || '').toLowerCase();
+        const cName = (inv.clientName || inv.client?.name || '').toLowerCase();
+        const pName = (inv.projectName || inv.project?.name || '').toLowerCase();
+        const st = (inv.status || '').toLowerCase();
+        const notes = (inv.notes || '').toLowerCase();
+        const itemsText = inv.items.map((i) => i.description.toLowerCase()).join(' ');
+        return (
+          invNum.includes(search) ||
+          cName.includes(search) ||
+          pName.includes(search) ||
+          st.includes(search) ||
+          notes.includes(search) ||
+          itemsText.includes(search)
+        );
+      });
+    }
+
+    res.json(invoices);
+  } catch (error) {
+    console.error('Error fetching invoices:', error);
+    res.status(500).json({ error: 'Failed to fetch invoices' });
+  }
+});
+
+app.get('/api/invoices/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    res.json(invoice);
+  } catch (error) {
+    console.error('Error fetching invoice:', error);
+    res.status(500).json({ error: 'Failed to fetch invoice' });
+  }
+});
+
+app.post('/api/invoices', async (req: Request, res: Response) => {
+  try {
+    const {
+      invoiceNumber,
+      dateCreated,
+      dueDate,
+      paymentDate,
+      clientId,
+      clientName,
+      projectId,
+      projectName,
+      status,
+      notes,
+      currency,
+      items,
+    } = req.body;
+
+    if (!invoiceNumber || !String(invoiceNumber).trim()) {
+      return res.status(400).json({ error: 'Invoice number is required' });
+    }
+
+    let resolvedClientName = clientName || null;
+    if (clientId && !resolvedClientName) {
+      const c = await prisma.client.findUnique({ where: { id: clientId } });
+      if (c) resolvedClientName = c.name;
+    }
+
+    let resolvedProjectName = projectName || null;
+    if (projectId && !resolvedProjectName) {
+      const p = await prisma.project.findUnique({ where: { id: projectId } });
+      if (p) resolvedProjectName = p.name;
+    }
+
+    const itemsData = Array.isArray(items)
+      ? items.map((item: any) => ({
+          description: String(item.description || '').trim(),
+          quantity: Number(item.quantity) || 1,
+          unitPrice: Number(item.unitPrice) || 0,
+          currency: item.currency || currency || 'RSD',
+        }))
+      : [];
+
+    const computedTotal = itemsData.reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0);
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: String(invoiceNumber).trim(),
+        dateCreated: dateCreated || new Date().toISOString().slice(0, 10),
+        dueDate: dueDate || null,
+        paymentDate: paymentDate || null,
+        clientId: clientId || null,
+        clientName: resolvedClientName,
+        projectId: projectId || null,
+        projectName: resolvedProjectName,
+        status: status || 'Draft',
+        notes: notes || null,
+        totalAmount: computedTotal,
+        currency: currency || (itemsData.length > 0 ? itemsData[0].currency : 'RSD'),
+        items: {
+          create: itemsData,
+        },
+      },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    res.status(201).json(invoice);
+  } catch (error) {
+    handlePrismaError(res, error, 'Failed to create invoice');
+  }
+});
+
+app.put('/api/invoices/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const {
+      invoiceNumber,
+      dateCreated,
+      dueDate,
+      paymentDate,
+      clientId,
+      clientName,
+      projectId,
+      projectName,
+      status,
+      notes,
+      currency,
+      items,
+    } = req.body;
+
+    const existing = await prisma.invoice.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    let resolvedClientName = clientName !== undefined ? clientName : existing.clientName;
+    if (clientId && clientId !== existing.clientId && !clientName) {
+      const c = await prisma.client.findUnique({ where: { id: clientId } });
+      if (c) resolvedClientName = c.name;
+    }
+
+    let resolvedProjectName = projectName !== undefined ? projectName : existing.projectName;
+    if (projectId && projectId !== existing.projectId && !projectName) {
+      const p = await prisma.project.findUnique({ where: { id: projectId } });
+      if (p) resolvedProjectName = p.name;
+    }
+
+    let itemsData: any[] | null = null;
+    let computedTotal = existing.totalAmount;
+
+    if (Array.isArray(items)) {
+      itemsData = items.map((item: any) => ({
+        description: String(item.description || '').trim(),
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.unitPrice) || 0,
+        currency: item.currency || currency || existing.currency || 'RSD',
+      }));
+      computedTotal = itemsData.reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0);
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (itemsData !== null) {
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+        if (itemsData.length > 0) {
+          await tx.invoiceItem.createMany({
+            data: itemsData.map((item) => ({
+              invoiceId: id,
+              ...item,
+            })),
+          });
+        }
+      }
+
+      return tx.invoice.update({
+        where: { id },
+        data: {
+          invoiceNumber: invoiceNumber !== undefined ? String(invoiceNumber).trim() : existing.invoiceNumber,
+          dateCreated: dateCreated !== undefined ? (dateCreated || null) : existing.dateCreated,
+          dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
+          paymentDate: paymentDate !== undefined ? (paymentDate || null) : existing.paymentDate,
+          clientId: clientId !== undefined ? (clientId || null) : existing.clientId,
+          clientName: resolvedClientName,
+          projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
+          projectName: resolvedProjectName,
+          status: status || existing.status,
+          notes: notes !== undefined ? (notes || null) : existing.notes,
+          totalAmount: computedTotal,
+          currency: currency !== undefined ? (currency || 'RSD') : existing.currency,
+        },
+        include: {
+          client: true,
+          project: true,
+          items: true,
+        },
+      });
+    });
+
+    res.json(updated);
+  } catch (error) {
+    handlePrismaError(res, error, 'Failed to update invoice');
+  }
+});
+
+app.patch('/api/invoices/:id/status', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const { status, paymentDate } = req.body;
+
+    const existing = await prisma.invoice.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const newStatus = status || existing.status;
+    let resolvedPaymentDate = paymentDate !== undefined ? paymentDate : existing.paymentDate;
+    if (newStatus === 'Paid' && !resolvedPaymentDate) {
+      resolvedPaymentDate = new Date().toISOString().slice(0, 10);
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id },
+      data: {
+        status: newStatus,
+        paymentDate: resolvedPaymentDate,
+      },
+      include: {
+        client: true,
+        project: true,
+        items: true,
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Error updating invoice status:', error);
+    res.status(500).json({ error: 'Failed to update invoice status' });
+  }
+});
+
+app.delete('/api/invoices/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const existing = await prisma.invoice.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    await prisma.invoice.delete({ where: { id } });
+    res.json({ message: 'Invoice deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting invoice:', error);
+    res.status(500).json({ error: 'Failed to delete invoice' });
+  }
+});
+
 // ----------------------------------------------------
 // USER PREFERENCES
 // ----------------------------------------------------
+
+// ==================== COMPANY INFO ROUTES ====================
+app.get('/api/company-info', async (req: Request, res: Response) => {
+  try {
+    let info = await prisma.companyInfo.findUnique({ where: { id: 'default' } });
+    if (!info) {
+      info = await prisma.companyInfo.create({
+        data: {
+          id: 'default',
+          name: 'EKOS GREEN GROUP',
+          legalName: 'EKOS GREEN GROUP DOO Kraljevo',
+          registrationNumber: '21823759',
+          municipality: 'KRALJEVO',
+          city: 'KRALJEVO',
+          streetAddress: 'HEROJA MARIČIĆA 18',
+          postalCode: '36000',
+          postOffice: 'KRALJEVO',
+          email: 'office@ekosgroup.rs',
+          taxId: '113207057',
+          activityCode: '7490 - Ostale stručne, naučne i tehničke delatnosti',
+          bankAccounts: [
+            '325-9500700212451-35',
+            '205-0000000547461-12',
+            '205-0070100584938-90',
+            '325-9601700087442-40',
+            '325-9500700218732-10',
+            '205-0000000525461-52',
+          ],
+        },
+      });
+    }
+    res.json(info);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch company info' });
+  }
+});
+
+app.put('/api/company-info', async (req: Request, res: Response) => {
+  try {
+    const {
+      name,
+      legalName,
+      registrationNumber,
+      municipality,
+      city,
+      streetAddress,
+      postalCode,
+      postOffice,
+      email,
+      taxId,
+      activityCode,
+      bankAccounts,
+    } = req.body;
+
+    const info = await prisma.companyInfo.upsert({
+      where: { id: 'default' },
+      create: {
+        id: 'default',
+        name: name || 'EKOS GREEN GROUP',
+        legalName: legalName || 'EKOS GREEN GROUP DOO Kraljevo',
+        registrationNumber: registrationNumber || '21823759',
+        municipality: municipality || 'KRALJEVO',
+        city: city || 'KRALJEVO',
+        streetAddress: streetAddress || 'HEROJA MARIČIĆA 18',
+        postalCode: postalCode || '36000',
+        postOffice: postOffice || 'KRALJEVO',
+        email: email || 'office@ekosgroup.rs',
+        taxId: taxId || '113207057',
+        activityCode: activityCode || '7490 - Ostale stručne, naučne i tehničke delatnosti',
+        bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : [],
+      },
+      update: {
+        name,
+        legalName,
+        registrationNumber,
+        municipality,
+        city,
+        streetAddress,
+        postalCode,
+        postOffice,
+        email,
+        taxId,
+        activityCode,
+        bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : [],
+      },
+    });
+
+    res.json(info);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to update company info' });
+  }
+});
+
 app.get('/api/preferences', async (req: Request, res: Response) => {
   try {
     const authUser = (req as any).authUser;
