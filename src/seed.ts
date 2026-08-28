@@ -96,7 +96,7 @@ export async function seed(force = false) {
     createdUsers[existing.name] = existing.id;
   }
 
-  // 3. Seed Clients (at least 14 distinct clients across Serbia)
+  // 3. Seed Clients (at least 29 distinct clients across Serbia including waste management clients)
   const initialClients = [
     { name: 'Grad Kraljevo – Gradska uprava', contactPerson: 'Marko Nikolić', email: 'poverenik@kraljevo.rs', phone: '+381 36 300 300', city: 'Kraljevo' },
     { name: 'EcoRecycling d.o.o.', contactPerson: 'Milan Radić', email: 'office@ekoreciklaza.rs', phone: '+381 11 200 400', city: 'Čačak' },
@@ -112,6 +112,22 @@ export async function seed(force = false) {
     { name: 'Tehno-Plast d.o.o.', contactPerson: 'Bojan Mitrović', email: 'info@tehnoplast-vb.rs', phone: '+381 36 612 300', city: 'Vrnjačka Banja' },
     { name: 'Balkan Petroleum Services', contactPerson: 'Nikola Radovanović', email: 'safety@balkanpetroleum.rs', phone: '+381 11 789 550', city: 'Beograd' },
     { name: 'Vojvodina Agrar d.o.o.', contactPerson: 'Stefan Lazarević', email: 'agro.kontrola@vojvodina-agrar.rs', phone: '+381 21 690 120', city: 'Novi Sad' },
+    // Clients from Waste Disposal tracking table
+    { name: 'Grammer Automotive d.o.o.', contactPerson: 'Marko Nikolić', email: 'office@grammer.rs', phone: '+381 18 500 100', city: 'Aleksinac' },
+    { name: 'Adient Seating d.o.o.', contactPerson: 'Milan Petrović', email: 'info@adient.rs', phone: '+381 15 890 200', city: 'Loznica' },
+    { name: 'Coreso d.o.o.', contactPerson: 'Ana Jovanović', email: 'kontakt@coreso.rs', phone: '+381 34 300 400', city: 'Kragujevac' },
+    { name: 'Eurotay d.o.o.', contactPerson: 'Hakan Özdemir', email: 'office@eurotay.rs', phone: '+381 36 390 100', city: 'Kraljevo' },
+    { name: 'Falke Serbia d.o.o.', contactPerson: 'Snežana Ilić', email: 'serbia@falke.com', phone: '+381 16 200 300', city: 'Leskovac' },
+    { name: 'PS Fashion Design d.o.o.', contactPerson: 'Jelena Popović', email: 'info@psfashion.rs', phone: '+381 32 300 500', city: 'Čačak' },
+    { name: 'IMI Niš d.o.o.', contactPerson: 'Dragan Stojanović', email: 'serbia.office@global-imi.com', phone: '+381 18 415 500', city: 'Niš' },
+    { name: 'Goodyear Tires d.o.o.', contactPerson: 'Bojan Radović', email: 'office@goodyear.rs', phone: '+381 11 310 800', city: 'Kruševac' },
+    { name: 'IGB Automotive Inđija d.o.o.', contactPerson: 'Zoran Lukić', email: 'office@igb-automotive.rs', phone: '+381 22 560 700', city: 'Inđija' },
+    { name: 'IGB Automotive Lazarevac d.o.o.', contactPerson: 'Igor Simić', email: 'lazarevac@igb-automotive.rs', phone: '+381 11 812 300', city: 'Lazarevac' },
+    { name: 'Feka Automotive d.o.o. Ćuprija', contactPerson: 'Miloš Đorđević', email: 'cuprija@feka.rs', phone: '+381 35 870 100', city: 'Ćuprija' },
+    { name: 'Moja Soba d.o.o.', contactPerson: 'Nenad Kostić', email: 'info@mojasoba.rs', phone: '+381 36 350 200', city: 'Kraljevo' },
+    { name: 'Win Metal d.o.o.', contactPerson: 'Aleksandar Vasić', email: 'office@winmetal.rs', phone: '+381 36 380 400', city: 'Kraljevo' },
+    { name: 'Healthcare Europe d.o.o.', contactPerson: 'Svetlana Marković', email: 'office@healthcare-europe.com', phone: '+381 22 470 500', city: 'Ruma' },
+    { name: 'Italtex d.o.o.', contactPerson: 'Roberto Rossi', email: 'office@italtex.rs', phone: '+381 11 220 600', city: 'Beograd' },
   ];
 
   const clientMap: Record<string, { id: string; name: string }> = {};
@@ -123,8 +139,33 @@ export async function seed(force = false) {
     clientMap[c.name] = { id: existing.id, name: existing.name };
   }
 
+  // Also index shorthand aliases from tracking sheet
+  const TABLE_CLIENT_ALIASES: Record<string, string> = {
+    'GRAMMER': 'Grammer Automotive d.o.o.',
+    'ADIENT': 'Adient Seating d.o.o.',
+    'CORESO': 'Coreso d.o.o.',
+    'EUROTAY': 'Eurotay d.o.o.',
+    'FALKE': 'Falke Serbia d.o.o.',
+    'PS FASHION': 'PS Fashion Design d.o.o.',
+    'IMI NIŠ': 'IMI Niš d.o.o.',
+    'GOOD YEAR': 'Goodyear Tires d.o.o.',
+    'IGB INĐIJA': 'IGB Automotive Inđija d.o.o.',
+    'IGB LAZAREVAC': 'IGB Automotive Lazarevac d.o.o.',
+    'FEKA ĆUPRIJA': 'Feka Automotive d.o.o. Ćuprija',
+    'MOJA SOBA': 'Moja Soba d.o.o.',
+    'WIN METAL': 'Win Metal d.o.o.',
+    'HEALTHCARE': 'Healthcare Europe d.o.o.',
+    'ITALTEX': 'Italtex d.o.o.',
+  };
+  for (const [alias, fullName] of Object.entries(TABLE_CLIENT_ALIASES)) {
+    if (clientMap[fullName]) {
+      clientMap[alias] = clientMap[fullName];
+    }
+  }
+
   if (force) {
-    // Delete existing items, invoices, reminders, and projects to re-populate cleanly
+    // Delete existing providedServices, items, invoices, reminders, and projects to re-populate cleanly
+    await prisma.providedService.deleteMany();
     await prisma.reminder.deleteMany();
     await prisma.invoiceItem.deleteMany();
     await prisma.invoice.deleteMany();
@@ -1655,6 +1696,161 @@ export async function seed(force = false) {
     console.log(`✅ Seeded ${mockInvoices.length} invoices across 14 clients.`);
   }
 
+  // 6. Seed Provided Services (Waste Disposal)
+  const wasteDisposalService = await prisma.service.findUnique({ where: { code: 'waste-disposal' } });
+  
+  if (wasteDisposalService) {
+    // Custom data model definition for waste disposal (Količina u kg)
+    const customModelsObj = {
+      [wasteDisposalService.id]: [
+        { id: 'kolicina_kg', name: 'Količina', type: 'number', unit: 'kg', required: true },
+        { id: 'vrsta_otpada', name: 'Vrsta otpada', type: 'text', required: false },
+      ],
+    };
+
+    // Save custom data model preference for admin users
+    for (const u of Object.values(createdUsers)) {
+      await prisma.userPreference.upsert({
+        where: {
+          userId_key: {
+            userId: u,
+            key: 'custom_data_models',
+          },
+        },
+        create: {
+          userId: u,
+          key: 'custom_data_models',
+          value: JSON.stringify(customModelsObj),
+        },
+        update: {
+          value: JSON.stringify(customModelsObj),
+        },
+      });
+    }
+
+    const providedServicesCount = await prisma.providedService.count();
+    if (force || providedServicesCount === 0) {
+      // 1. August 2026 exact data from the user table
+      const augustWasteRecords = [
+        // 05.08.2026
+        { date: '2026-08-05', clientKey: 'IMI NIŠ', kg: 1700, wasteType: 'Elektronski i ambalažni otpad', location: 'Niš - Industrijska zona', price: 42500, status: 'Completed', notes: 'Preuzimanje i zbrinjavanje industrijskog otpada (1.700 kg)' },
+        { date: '2026-08-05', clientKey: 'IGB LAZAREVAC', kg: 9680, wasteType: 'Ambalažni i tehnološki otpad', location: 'Lazarevac', price: 212960, status: 'Completed', notes: 'Zbrinjavanje tehnološkog i ambalažnog otpada (9.680 kg)' },
+        // 06.08.2026
+        { date: '2026-08-06', clientKey: 'CORESO', kg: 6720, wasteType: 'Industrijski kompozitni otpad', location: 'Kragujevac', price: 154560, status: 'Completed', notes: 'Redovno zbrinjavanje industrijskog otpada (6.720 kg)' },
+        // 10.08.2026
+        { date: '2026-08-10', clientKey: 'FEKA ĆUPRIJA', kg: 5760, wasteType: 'Plastični i tehnološki otpad', location: 'Ćuprija', price: 138240, status: 'Completed', notes: 'Preuzimanje tehnološkog plastičnog otpada (5.760 kg)' },
+        { date: '2026-08-10', clientKey: 'MOJA SOBA', kg: 1120, wasteType: 'Drvni i kartonski otpad', location: 'Kraljevo', price: 28000, status: 'Completed', notes: 'Zbrinjavanje drvnih ostataka i ambalaže (1.120 kg)' },
+        // 11.08.2026
+        { date: '2026-08-11', clientKey: 'CORESO', kg: 6600, wasteType: 'Industrijski kompozitni otpad', location: 'Kragujevac', price: 151800, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (6.600 kg)' },
+        { date: '2026-08-11', clientKey: 'IGB LAZAREVAC', kg: 9480, wasteType: 'Tehnološki otpad grejača i ambalaža', location: 'Lazarevac', price: 208560, status: 'Completed', notes: 'Zbrinjavanje tehnološkog otpada (9.480 kg)' },
+        // 12.08.2026
+        { date: '2026-08-12', clientKey: 'EUROTAY', kg: 8960, wasteType: 'Tekstilni i industrijski otpad', location: 'Kraljevo', price: 197120, status: 'Completed', notes: 'Preuzimanje i tretman tekstilnog otpada (8.960 kg)' },
+        { date: '2026-08-12', clientKey: 'ITALTEX', kg: 7380, wasteType: 'Tekstilni ostaci i repromaterijal', location: 'Beograd', price: 169740, status: 'Completed', notes: 'Zbrinjavanje tekstilnog otpada (7.380 kg)' },
+        // 13.08.2026
+        { date: '2026-08-13', clientKey: 'GRAMMER', kg: 12600, wasteType: 'Poliuretanska pena i sintetika', location: 'Aleksinac', price: 277200, status: 'Completed', notes: 'Zbrinjavanje automobilske pene i presvlaka (12.600 kg)' },
+        { date: '2026-08-13', clientKey: 'CORESO', kg: 8260, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 189980, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (8.260 kg)' },
+        // 17.08.2026
+        { date: '2026-08-17', clientKey: 'CORESO', kg: 7460, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 171580, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (7.460 kg)' },
+        // 18.08.2026
+        { date: '2026-08-18', clientKey: 'IMI NIŠ', kg: 1080, wasteType: 'Elektronski otpad i ambalaža', location: 'Niš - Industrijska zona', price: 27000, status: 'Completed', notes: 'Zbrinjavanje ambalažnog i elektro otpada (1.080 kg)' },
+        { date: '2026-08-18', clientKey: 'IGB LAZAREVAC', kg: 9680, wasteType: 'Tehnološki i izolacioni otpad', location: 'Lazarevac', price: 212960, status: 'Completed', notes: 'Zbrinjavanje tehnološkog otpada (9.680 kg)' },
+        { date: '2026-08-18', clientKey: 'MOJA SOBA', kg: 1000, wasteType: 'Drvni ostaci i karton', location: 'Kraljevo', price: 25000, status: 'Completed', notes: 'Zbrinjavanje drvnog i kartonskog otpada (1.000 kg)' },
+        { date: '2026-08-18', clientKey: 'WIN METAL', kg: 2080, wasteType: 'Metalni opiljci i sekundarne sirovine', location: 'Kraljevo', price: 52000, status: 'Completed', notes: 'Zbrinjavanje metalnog otpada (2.080 kg)' },
+        // 19.08.2026
+        { date: '2026-08-19', clientKey: 'CORESO', kg: 7120, wasteType: 'Industrijski kompozitni otpad', location: 'Kragujevac', price: 163760, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (7.120 kg)' },
+        { date: '2026-08-19', clientKey: 'WIN METAL', kg: 2260, wasteType: 'Metalni opiljci i lim', location: 'Kraljevo', price: 56500, status: 'Completed', notes: 'Zbrinjavanje metalnog otpada (2.260 kg)' },
+        // 21.08.2026
+        { date: '2026-08-21', clientKey: 'GRAMMER', kg: 8680, wasteType: 'Sintetički i ambalažni otpad', location: 'Aleksinac', price: 199640, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (8.680 kg)' },
+        { date: '2026-08-21', clientKey: 'CORESO', kg: 7120, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 163760, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (7.120 kg)' },
+        // 25.08.2026
+        { date: '2026-08-25', clientKey: 'CORESO', kg: 5900, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 135700, status: 'Completed', notes: 'Zbrinjavanje industrijskog otpada (5.900 kg)' },
+        // 26.08.2026
+        { date: '2026-08-26', clientKey: 'IGB LAZAREVAC', kg: 9720, wasteType: 'Tehnološki otpad i ambalaža', location: 'Lazarevac', price: 213840, status: 'Completed', notes: 'Zbrinjavanje tehnološkog otpada (9.720 kg)' },
+        // Planned services for end of August / September 2026
+        { date: '2026-08-28', clientKey: 'ADIENT', kg: 4500, wasteType: 'Tekstilni i sunđerasti otpad', location: 'Loznica', price: 103500, status: 'Planned', notes: 'Planirano zbrinjavanje sunđera i tapacirunga' },
+        { date: '2026-08-29', clientKey: 'FALKE', kg: 3800, wasteType: 'Tekstilni ostaci', location: 'Leskovac', price: 87400, status: 'Planned', notes: 'Planirano zbrinjavanje tekstilnog otpada' },
+        { date: '2026-08-30', clientKey: 'GOOD YEAR', kg: 6200, wasteType: 'Gumeni i industrijski otpad', location: 'Kruševac', price: 142600, status: 'Planned', notes: 'Planirano zbrinjavanje industrijske gume' },
+        { date: '2026-08-31', clientKey: 'IGB INĐIJA', kg: 8500, wasteType: 'Tehnološki otpad i ambalaža', location: 'Inđija', price: 187000, status: 'Planned', notes: 'Planirano zbrinjavanje tehnološkog otpada' },
+        { date: '2026-09-01', clientKey: 'HEALTHCARE', kg: 5100, wasteType: 'Poliuretanski ostaci', location: 'Ruma', price: 117300, status: 'Planned', notes: 'Planirano zbrinjavanje poliuretanske pene' },
+        { date: '2026-09-02', clientKey: 'PS FASHION', kg: 2400, wasteType: 'Tekstilni i kartonski otpad', location: 'Čačak', price: 55200, status: 'Planned', notes: 'Planirano zbrinjavanje tekstila i kartona' },
+      ];
+
+      // 2. Historical Monthly Waste Records (Sept 2025 - July 2026) for trend chart richness
+      const historicalWasteRecords = [
+        // Sept 2025
+        { date: '2025-09-12', clientKey: 'GRAMMER', kg: 11400, wasteType: 'Poliuretanska pena', location: 'Aleksinac', price: 250800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2025-09-24', clientKey: 'IGB LAZAREVAC', kg: 9200, wasteType: 'Tehnološki otpad', location: 'Lazarevac', price: 202400, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2025-09-28', clientKey: 'CORESO', kg: 6500, wasteType: 'Industrijski kompozit', location: 'Kragujevac', price: 149500, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // Oct 2025
+        { date: '2025-10-10', clientKey: 'EUROTAY', kg: 8400, wasteType: 'Tekstilni otpad', location: 'Kraljevo', price: 184800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2025-10-22', clientKey: 'FEKA ĆUPRIJA', kg: 5200, wasteType: 'Plastični otpad', location: 'Ćuprija', price: 124800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // Nov 2025
+        { date: '2025-11-08', clientKey: 'IGB LAZAREVAC', kg: 9500, wasteType: 'Tehnološki otpad', location: 'Lazarevac', price: 209000, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2025-11-19', clientKey: 'GRAMMER', kg: 12100, wasteType: 'Pena i sintetika', location: 'Aleksinac', price: 266200, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2025-11-26', clientKey: 'WIN METAL', kg: 2150, wasteType: 'Metalni opiljci', location: 'Kraljevo', price: 53750, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // Dec 2025
+        { date: '2025-12-05', clientKey: 'CORESO', kg: 7200, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 165600, status: 'Completed', notes: 'Zbrinjavanje pre inventara' },
+        { date: '2025-12-18', clientKey: 'ITALTEX', kg: 6900, wasteType: 'Tekstilni otpad', location: 'Beograd', price: 158700, status: 'Completed', notes: 'Krajogodišnje zbrinjavanje' },
+        { date: '2025-12-22', clientKey: 'IMI NIŠ', kg: 1450, wasteType: 'Elektro otpad', location: 'Niš', price: 36250, status: 'Completed', notes: 'Godišnje čišćenje pogona' },
+        // Jan 2026
+        { date: '2026-01-14', clientKey: 'IGB LAZAREVAC', kg: 8900, wasteType: 'Tehnološki otpad', location: 'Lazarevac', price: 195800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-01-28', clientKey: 'GRAMMER', kg: 10800, wasteType: 'Poliuretanski otpad', location: 'Aleksinac', price: 237600, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // Feb 2026
+        { date: '2026-02-11', clientKey: 'EUROTAY', kg: 8700, wasteType: 'Tekstilni otpad', location: 'Kraljevo', price: 191400, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-02-20', clientKey: 'FEKA ĆUPRIJA', kg: 5400, wasteType: 'Plastični otpad', location: 'Ćuprija', price: 129600, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // Mar 2026
+        { date: '2026-03-09', clientKey: 'CORESO', kg: 7600, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 174800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-03-18', clientKey: 'IGB LAZAREVAC', kg: 9400, wasteType: 'Tehnološki otpad', location: 'Lazarevac', price: 206800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-03-25', clientKey: 'MOJA SOBA', kg: 1050, wasteType: 'Drvni otpad', location: 'Kraljevo', price: 26250, status: 'Completed', notes: 'Kvartalno zbrinjavanje' },
+        // Apr 2026
+        { date: '2026-04-08', clientKey: 'GRAMMER', kg: 12300, wasteType: 'Pena i tekstil', location: 'Aleksinac', price: 270600, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-04-16', clientKey: 'WIN METAL', kg: 2300, wasteType: 'Metalni otpad', location: 'Kraljevo', price: 57500, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-04-24', clientKey: 'ITALTEX', kg: 7100, wasteType: 'Tekstilni otpad', location: 'Beograd', price: 163300, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // May 2026
+        { date: '2026-05-12', clientKey: 'CORESO', kg: 6800, wasteType: 'Industrijski kompozit', location: 'Kragujevac', price: 156400, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-05-21', clientKey: 'IGB LAZAREVAC', kg: 9600, wasteType: 'Tehnološki otpad', location: 'Lazarevac', price: 211200, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-05-29', clientKey: 'IMI NIŠ', kg: 1200, wasteType: 'Elektro otpad', location: 'Niš', price: 30000, status: 'Completed', notes: 'Preuzimanje ambalaže i otpada' },
+        // Jun 2026
+        { date: '2026-06-10', clientKey: 'GRAMMER', kg: 11900, wasteType: 'Poliuretan', location: 'Aleksinac', price: 261800, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-06-18', clientKey: 'EUROTAY', kg: 8800, wasteType: 'Tekstilni otpad', location: 'Kraljevo', price: 193600, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-06-25', clientKey: 'FEKA ĆUPRIJA', kg: 5600, wasteType: 'Plastični otpad', location: 'Ćuprija', price: 134400, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        // Jul 2026
+        { date: '2026-07-08', clientKey: 'CORESO', kg: 7300, wasteType: 'Industrijski otpad', location: 'Kragujevac', price: 167900, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-07-16', clientKey: 'IGB LAZAREVAC', kg: 9550, wasteType: 'Tehnološki otpad', location: 'Lazarevac', price: 210100, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+        { date: '2026-07-23', clientKey: 'WIN METAL', kg: 2180, wasteType: 'Metalni opiljci', location: 'Kraljevo', price: 54500, status: 'Completed', notes: 'Redovno mesečno zbrinjavanje' },
+      ];
+
+      const allWasteRecords = [...historicalWasteRecords, ...augustWasteRecords];
+
+      for (const rec of allWasteRecords) {
+        const client = clientMap[rec.clientKey];
+        if (!client) continue;
+
+        await prisma.providedService.create({
+          data: {
+            serviceId: wasteDisposalService.id,
+            clientId: client.id,
+            status: rec.status,
+            location: rec.location,
+            scheduledDate: rec.date,
+            completionDate: rec.status === 'Completed' ? rec.date : null,
+            price: rec.price,
+            currency: 'RSD',
+            notes: rec.notes,
+            customData: {
+              kolicina_kg: rec.kg,
+              vrsta_otpada: rec.wasteType,
+            },
+            createdAt: new Date(`${rec.date}T09:00:00.000Z`),
+            updatedAt: new Date(`${rec.date}T10:30:00.000Z`),
+          },
+        });
+      }
+
+      console.log(`✅ Seeded ${allWasteRecords.length} waste disposal provided services (${augustWasteRecords.length} August records + ${historicalWasteRecords.length} historical).`);
+    }
+  }
+
   
   // Seed CompanyInfo (Serbian Latin)
   const defaultCompanyInfo = {
@@ -1696,13 +1892,17 @@ export async function seed(force = false) {
   const finalReminderCount = await prisma.reminder.count();
   const finalInvoiceCount = await prisma.invoice.count();
   const finalClientCount = await prisma.client.count();
+  const finalProvidedServicesCount = await prisma.providedService.count();
 
-  console.log(`🎉 Seed completed successfully: ${finalClientCount} clients, ${finalProjectCount} projects, ${finalReminderCount} reminders, ${finalInvoiceCount} invoices.`);
+  console.log(`🎉 Seed completed successfully: ${finalClientCount} clients, ${finalProjectCount} projects, ${finalReminderCount} reminders, ${finalInvoiceCount} invoices, ${finalProvidedServicesCount} provided services.`);
 }
 
 if (require.main === module) {
   seed(true)
-    .then(() => prisma.$disconnect())
+    .then(() => {
+      prisma.$disconnect();
+      process.exit(0);
+    })
     .catch((e) => {
       console.error(e);
       prisma.$disconnect();
