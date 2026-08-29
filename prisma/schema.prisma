@@ -83,6 +83,7 @@ model Service {
   group       String
   frequency   Int      @default(0)
   description String?
+  customDataModel Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   providedServices ProvidedService[]
