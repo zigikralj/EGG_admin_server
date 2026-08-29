@@ -1116,7 +1116,7 @@ app.post('/api/services', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
     }
 
-    const { code, name, group, frequency, description } = req.body;
+    const { code, name, group, frequency, description, customDataModel } = req.body;
     if (!code || !name) return res.status(400).json({ error: 'Code and Name are required' });
 
     const formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
@@ -1144,6 +1144,7 @@ app.post('/api/services', async (req: Request, res: Response) => {
         group: group || 'grp-legal',
         frequency: Number(frequency) || 0,
         description: description ? description.trim() : null,
+        customDataModel: customDataModel !== undefined ? customDataModel : null,
       },
     });
     res.status(201).json(service);
@@ -1160,7 +1161,7 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
     }
 
     const id = req.params.id as string;
-    const { name, group, frequency, description } = req.body;
+    const { name, group, frequency, description, customDataModel } = req.body;
 
     if (name && name.trim()) {
       const trimmedName = name.trim();
@@ -1182,6 +1183,7 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
         group,
         frequency: Number(frequency) || 0,
         description: description ? description.trim() : null,
+        customDataModel: customDataModel !== undefined ? customDataModel : undefined,
       },
     });
     res.json(updated);

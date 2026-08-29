@@ -1700,33 +1700,16 @@ export async function seed(force = false) {
   const wasteDisposalService = await prisma.service.findUnique({ where: { code: 'waste-disposal' } });
   
   if (wasteDisposalService) {
-    // Custom data model definition for waste disposal (Količina u kg)
-    const customModelsObj = {
-      [wasteDisposalService.id]: [
-        { id: 'kolicina_kg', name: 'Količina', type: 'number', unit: 'kg', required: true },
-        { id: 'vrsta_otpada', name: 'Vrsta otpada', type: 'text', required: false },
-      ],
-    };
+    // Custom data model definition for waste disposal directly on Service
+    const customModels = [
+      { id: 'kolicina_kg', name: 'Količina', type: 'number', unit: 'kg', required: true },
+      { id: 'vrsta_otpada', name: 'Vrsta otpada', type: 'text', required: false },
+    ];
 
-    // Save custom data model preference for admin users
-    for (const u of Object.values(createdUsers)) {
-      await prisma.userPreference.upsert({
-        where: {
-          userId_key: {
-            userId: u,
-            key: 'custom_data_models',
-          },
-        },
-        create: {
-          userId: u,
-          key: 'custom_data_models',
-          value: JSON.stringify(customModelsObj),
-        },
-        update: {
-          value: JSON.stringify(customModelsObj),
-        },
-      });
-    }
+    await prisma.service.update({
+      where: { id: wasteDisposalService.id },
+      data: { customDataModel: customModels },
+    });
 
     const providedServicesCount = await prisma.providedService.count();
     if (force || providedServicesCount === 0) {
