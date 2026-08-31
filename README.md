@@ -9,9 +9,14 @@ Backend API server for Ekos Green Group Project Tracker built with Express, Type
    npm install
    ```
 
-2. Push database schema (requires PostgreSQL database running, e.g. via Docker):
+2. Run database migrations (requires PostgreSQL running locally, e.g. via Docker or Podman):
    ```bash
-   npm run db:push
+   npm run migrate:deploy
+   ```
+
+   To create a new migration after editing `prisma/schema.prisma`:
+   ```bash
+   npm run migrate:dev -- --name <migration_name>
    ```
 
 3. Start development server:
@@ -38,7 +43,7 @@ This repository includes continuous deployment setup for [Render](https://render
 4. Render will auto-detect `render.yaml` with the following configuration:
    - **Environment**: `Node`
    - **Build Command**: `npm install && npm run build`
-   - **Start Command**: `npx prisma db push && npm run start`
+   - **Start Command**: `npx prisma migrate deploy && node dist/index.js`
    - **Health Check Path**: `/health`
 5. In Render Web Service settings, set the environment variable:
    - `DATABASE_URL`: Your production PostgreSQL database connection string.
