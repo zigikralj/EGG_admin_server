@@ -28,6 +28,11 @@ model Project {
   reminders     Reminder[]
   invoices      Invoice[]
   providedServices ProvidedService[]
+
+  @@index([clientId])
+  @@index([responsibleId])
+  @@index([done])
+  @@index([type])
 }
 
 model Client {
@@ -48,7 +53,7 @@ model Client {
 model User {
   id          String           @id @default(uuid())
   name        String
-  email       String?
+  email       String?          @unique
   password    String?
   isApproved  Boolean          @default(true)
   status      String           @default("APPROVED")
@@ -74,6 +79,7 @@ model UserPreference {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, key])
+  @@index([userId])
 }
 
 model Service {
@@ -107,6 +113,11 @@ model Reminder {
   project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
   responsibleUser User?    @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([clientId])
+  @@index([responsibleId])
+  @@index([status])
 }
 
 model Category {
@@ -139,6 +150,10 @@ model Invoice {
   project       Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
   items         InvoiceItem[]
   providedServices ProvidedService[]
+
+  @@index([clientId])
+  @@index([projectId])
+  @@index([status])
 }
 
 model InvoiceItem {
@@ -152,6 +167,8 @@ model InvoiceItem {
   updatedAt   DateTime @updatedAt
 
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
 }
 
 model ProvidedService {
@@ -175,6 +192,12 @@ model ProvidedService {
   client         Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
   project        Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   invoice        Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([serviceId])
+  @@index([clientId])
+  @@index([projectId])
+  @@index([invoiceId])
+  @@index([status])
 }
 
 
