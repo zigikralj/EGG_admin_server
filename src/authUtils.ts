@@ -3,7 +3,14 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserRole } from './types';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'ekos_jwt_secret_key_change_in_production_2026';
+const JWT_SECRET_ENV = process.env.JWT_SECRET;
+if (!JWT_SECRET_ENV) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: JWT_SECRET environment variable is required in production');
+  }
+  console.warn('⚠️ JWT_SECRET not set — using development fallback. DO NOT use in production.');
+}
+const JWT_SECRET = JWT_SECRET_ENV || 'dev_only_secret_not_for_production';
 export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '9h';
 export const SESSION_DURATION_SECONDS = 9 * 60 * 60; // 9 hours (32400 seconds)
 
@@ -66,3 +73,24 @@ export function verifyToken(token: string): JwtPayload | null {
   }
 }
 
+
+// Generates a temporary 12-character secure password for admin-created users
+export function generateTempPassword(length = 12): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghjkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%&*';
+  const all = upper + lower + digits + symbols;
+  // Guarantee at least one of each category
+  let password = [
+    upper[crypto.randomInt(upper.length)],
+    lower[crypto.randomInt(lower.length)],
+    digits[crypto.randomInt(digits.length)],
+    symbols[crypto.randomInt(symbols.length)],
+  ];
+  for (let i = password.length; i < length; i++) {
+    password.push(all[crypto.randomInt(all.length)]);
+  }
+  // Shuffle
+  return password.sort(() => crypto.randomInt(3) - 1).join('');
+}
