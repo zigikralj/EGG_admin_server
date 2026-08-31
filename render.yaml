@@ -3,11 +3,13 @@ services:
     name: ekos-project-tracker-api
     env: node
     buildCommand: npm install && npm run build
-    startCommand: npx prisma db push && node dist/index.js
+    startCommand: npx prisma migrate deploy && node dist/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
         sync: false
+      - key: JWT_SECRET
+        generateValue: true
 
