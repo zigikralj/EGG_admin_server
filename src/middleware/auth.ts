@@ -58,9 +58,30 @@ export async function getAuthUser(req: Request): Promise<User | null> {
       : 0;
     if (forceLogoutAt && tokenIatMs && tokenIatMs < forceLogoutAt) return null;
 
-    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-    if (user) userActivityMap.set(user.id, Date.now());
-    return user ?? null;
+    // Check if Administrator or Manager is switching user (impersonation / preview)
+    const xUserId = req.headers["x-user-id"] as string;
+    const authDbUser = await prisma.user.findUnique({ where: { id: payload.userId } });
+
+    if (authDbUser && xUserId && xUserId !== payload.userId) {
+      if (authDbUser.role === "Administrator" || authDbUser.role === "Manager") {
+        const impersonatedUser = await prisma.user.findUnique({ where: { id: xUserId } });
+        if (impersonatedUser && impersonatedUser.isApproved && impersonatedUser.status !== "BLOCKED") {
+          userActivityMap.set(impersonatedUser.id, Date.now());
+          return impersonatedUser;
+        }
+      }
+    }
+
+    if (authDbUser) userActivityMap.set(authDbUser.id, Date.now());
+    return authDbUser ?? null;
+  }
+
+  // Fallback X-User-Id
+  const fallbackXUserId = req.headers["x-user-id"] as string;
+  if (fallbackXUserId) {
+    const fallbackUser = await prisma.user.findUnique({ where: { id: fallbackXUserId } });
+    if (fallbackUser) userActivityMap.set(fallbackUser.id, Date.now());
+    return fallbackUser ?? null;
   }
 
   return null;

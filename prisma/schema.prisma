@@ -26,6 +26,7 @@ model Project {
   client        Client?  @relation(fields: [clientId], references: [id])
   responsibleUser User?  @relation(fields: [responsibleId], references: [id])
   reminders     Reminder[]
+  notifications Notification[]
   invoices      Invoice[]
   providedServices ProvidedService[]
 
@@ -66,6 +67,7 @@ model User {
   projects    Project[]
   preferences UserPreference[]
   reminders   Reminder[]
+  notifications Notification[]
 }
 
 model UserPreference {
@@ -217,4 +219,27 @@ model CompanyInfo {
   bankAccounts       String[] @default(["325-9500700212451-35", "205-0000000547461-12", "205-0070100584938-90", "325-9601700087442-40", "325-9500700218732-10", "205-0000000525461-52"])
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   @default("MENTION")
+  title       String
+  message     String
+  read        Boolean  @default(false)
+  link        String?
+  projectId   String?
+  authorId    String?
+  authorName  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@index([projectId])
 }

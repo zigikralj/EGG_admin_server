@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { Project } from '@prisma/client';
 import { UserRole } from '../types';
 import { addMonths } from '../helpers/dateUtils';
+import { handleProjectNotesMentions } from '../helpers/mentionHelper';
 
 const router = Router();
 
@@ -102,6 +103,10 @@ router.post('/', asyncHandler(async (req, res) => {
     },
   });
 
+  if (project.notes) {
+    await handleProjectNotesMentions(project.id, project.name, project.notes, null, authUser);
+  }
+
   res.status(201).json(project);
 }));
 
@@ -161,6 +166,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
       notes: notes !== undefined ? (notes || null) : existing.notes,
     },
   });
+
+  if (updated.notes) {
+    await handleProjectNotesMentions(updated.id, updated.name, updated.notes, existing.notes, authUser);
+  }
 
   res.json(updated);
 }));
