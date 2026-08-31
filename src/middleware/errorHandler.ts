@@ -57,6 +57,6 @@ export function errorHandler(
 
   // Generic server error
   const message = prismaError?.message || 'An unexpected error occurred.';
-  console.error(`[${req.method}] ${req.path}`, error);
+  console.error('[%s] %s', req.method, req.path, error);
   res.status(500).json({ error: message });
 }

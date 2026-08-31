@@ -32,6 +32,6 @@ export function handlePrismaError(
     return;
   }
 
-  console.error(defaultMessage, error);
+  console.error('%s', defaultMessage, error);
   res.status(500).json({ error: defaultMessage });
 }
