@@ -197,6 +197,7 @@ app.get('/api/projects/stats', async (req: Request, res: Response) => {
     const servicesCount = await prisma.service.count();
     const categoriesCount = await prisma.category.count();
     const invoicesCount = await prisma.invoice.count();
+    const providedServicesCount = await prisma.providedService.count();
 
     const active = projects.filter((p) => !p.done).length;
     const done = projects.filter((p) => p.done).length;
@@ -215,6 +216,7 @@ app.get('/api/projects/stats', async (req: Request, res: Response) => {
       servicesCount,
       categoriesCount,
       invoicesCount,
+      providedServicesCount,
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch project stats' });
@@ -1114,7 +1116,7 @@ app.post('/api/services', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
     }
 
-    const { code, name, group, frequency, description } = req.body;
+    const { code, name, group, frequency, description, customDataModel } = req.body;
     if (!code || !name) return res.status(400).json({ error: 'Code and Name are required' });
 
     const formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
@@ -1142,6 +1144,7 @@ app.post('/api/services', async (req: Request, res: Response) => {
         group: group || 'grp-legal',
         frequency: Number(frequency) || 0,
         description: description ? description.trim() : null,
+        customDataModel: customDataModel !== undefined ? customDataModel : null,
       },
     });
     res.status(201).json(service);
@@ -1158,7 +1161,7 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
     }
 
     const id = req.params.id as string;
-    const { name, group, frequency, description } = req.body;
+    const { name, group, frequency, description, customDataModel } = req.body;
 
     if (name && name.trim()) {
       const trimmedName = name.trim();
@@ -1180,6 +1183,7 @@ app.put('/api/services/:id', async (req: Request, res: Response) => {
         group,
         frequency: Number(frequency) || 0,
         description: description ? description.trim() : null,
+        customDataModel: customDataModel !== undefined ? customDataModel : undefined,
       },
     });
     res.json(updated);
@@ -1608,6 +1612,266 @@ app.delete('/api/invoices/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting invoice:', error);
     res.status(500).json({ error: 'Failed to delete invoice' });
+  }
+});
+
+// ----------------------------------------------------
+// PROVIDED SERVICES CRUD
+// ----------------------------------------------------
+app.get('/api/provided-services', async (req: Request, res: Response) => {
+  try {
+    const search = ((req.query.search as string) || '').trim().toLowerCase();
+    const status = (req.query.status as string) || '';
+    const clientId = (req.query.clientId as string) || '';
+    const projectId = (req.query.projectId as string) || '';
+    const serviceId = (req.query.serviceId as string) || '';
+    const invoiceId = (req.query.invoiceId as string) || '';
+
+    const where: any = {};
+    if (status) where.status = status;
+    if (clientId) where.clientId = clientId;
+    if (projectId) where.projectId = projectId;
+    if (serviceId) where.serviceId = serviceId;
+    if (invoiceId) where.invoiceId = invoiceId;
+
+    let items = await prisma.providedService.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        service: true,
+        client: true,
+        project: true,
+        invoice: true,
+      },
+    });
+
+    if (search) {
+      items = items.filter((item) => {
+        const sName = (item.service?.name || '').toLowerCase();
+        const cName = (item.client?.name || '').toLowerCase();
+        const pName = (item.project?.name || '').toLowerCase();
+        const invNum = (item.invoice?.invoiceNumber || '').toLowerCase();
+        const loc = (item.location || '').toLowerCase();
+        const st = (item.status || '').toLowerCase();
+        const notes = (item.notes || '').toLowerCase();
+        const customDataStr = item.customData ? JSON.stringify(item.customData).toLowerCase() : '';
+        return (
+          sName.includes(search) ||
+          cName.includes(search) ||
+          pName.includes(search) ||
+          invNum.includes(search) ||
+          loc.includes(search) ||
+          st.includes(search) ||
+          notes.includes(search) ||
+          customDataStr.includes(search)
+        );
+      });
+    }
+
+    res.json(items);
+  } catch (error) {
+    console.error('Error fetching provided services:', error);
+    res.status(500).json({ error: 'Failed to fetch provided services' });
+  }
+});
+
+app.get('/api/provided-services/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const item = await prisma.providedService.findUnique({
+      where: { id },
+      include: {
+        service: true,
+        client: true,
+        project: true,
+        invoice: true,
+      },
+    });
+
+    if (!item) {
+      return res.status(404).json({ error: 'Provided service not found' });
+    }
+
+    res.json(item);
+  } catch (error) {
+    console.error('Error fetching provided service:', error);
+    res.status(500).json({ error: 'Failed to fetch provided service' });
+  }
+});
+
+app.post('/api/provided-services', async (req: Request, res: Response) => {
+  try {
+    const {
+      serviceId,
+      clientId,
+      projectId,
+      invoiceId,
+      status,
+      location,
+      scheduledDate,
+      completionDate,
+      price,
+      currency,
+      notes,
+      customData,
+    } = req.body;
+
+    if (!serviceId || !String(serviceId).trim()) {
+      return res.status(400).json({ error: 'Service is required' });
+    }
+    if (!clientId || !String(clientId).trim()) {
+      return res.status(400).json({ error: 'Client is required' });
+    }
+
+    // Verify service exists
+    const serviceExists = await prisma.service.findUnique({ where: { id: serviceId } });
+    if (!serviceExists) {
+      return res.status(400).json({ error: 'Selected service does not exist' });
+    }
+
+    // Verify client exists
+    const clientExists = await prisma.client.findUnique({ where: { id: clientId } });
+    if (!clientExists) {
+      return res.status(400).json({ error: 'Selected client does not exist' });
+    }
+
+    if (projectId) {
+      const projectExists = await prisma.project.findUnique({ where: { id: projectId } });
+      if (!projectExists) {
+        return res.status(400).json({ error: 'Selected project does not exist' });
+      }
+    }
+
+    if (invoiceId) {
+      const invoiceExists = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+      if (!invoiceExists) {
+        return res.status(400).json({ error: 'Selected invoice does not exist' });
+      }
+    }
+
+    const providedService = await prisma.providedService.create({
+      data: {
+        serviceId,
+        clientId,
+        projectId: projectId || null,
+        invoiceId: invoiceId || null,
+        status: status || 'Planned',
+        location: location ? String(location).trim() : null,
+        scheduledDate: scheduledDate || null,
+        completionDate: completionDate || null,
+        price: price !== undefined && price !== null ? Number(price) : 0,
+        currency: currency || 'RSD',
+        notes: notes ? String(notes).trim() : null,
+        customData: customData !== undefined ? customData : null,
+      },
+      include: {
+        service: true,
+        client: true,
+        project: true,
+        invoice: true,
+      },
+    });
+
+    res.status(201).json(providedService);
+  } catch (error) {
+    handlePrismaError(res, error, 'Failed to create provided service');
+  }
+});
+
+app.put('/api/provided-services/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const existing = await prisma.providedService.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Provided service not found' });
+    }
+
+    const {
+      serviceId,
+      clientId,
+      projectId,
+      invoiceId,
+      status,
+      location,
+      scheduledDate,
+      completionDate,
+      price,
+      currency,
+      notes,
+      customData,
+    } = req.body;
+
+    if (serviceId && serviceId !== existing.serviceId) {
+      const serviceExists = await prisma.service.findUnique({ where: { id: serviceId } });
+      if (!serviceExists) {
+        return res.status(400).json({ error: 'Selected service does not exist' });
+      }
+    }
+
+    if (clientId && clientId !== existing.clientId) {
+      const clientExists = await prisma.client.findUnique({ where: { id: clientId } });
+      if (!clientExists) {
+        return res.status(400).json({ error: 'Selected client does not exist' });
+      }
+    }
+
+    if (projectId && projectId !== existing.projectId) {
+      const projectExists = await prisma.project.findUnique({ where: { id: projectId } });
+      if (!projectExists) {
+        return res.status(400).json({ error: 'Selected project does not exist' });
+      }
+    }
+
+    if (invoiceId && invoiceId !== existing.invoiceId) {
+      const invoiceExists = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+      if (!invoiceExists) {
+        return res.status(400).json({ error: 'Selected invoice does not exist' });
+      }
+    }
+
+    const updated = await prisma.providedService.update({
+      where: { id },
+      data: {
+        serviceId: serviceId !== undefined ? serviceId : existing.serviceId,
+        clientId: clientId !== undefined ? clientId : existing.clientId,
+        projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
+        invoiceId: invoiceId !== undefined ? (invoiceId || null) : existing.invoiceId,
+        status: status !== undefined ? status : existing.status,
+        location: location !== undefined ? (location ? String(location).trim() : null) : existing.location,
+        scheduledDate: scheduledDate !== undefined ? (scheduledDate || null) : existing.scheduledDate,
+        completionDate: completionDate !== undefined ? (completionDate || null) : existing.completionDate,
+        price: price !== undefined && price !== null ? Number(price) : existing.price,
+        currency: currency !== undefined ? currency : existing.currency,
+        notes: notes !== undefined ? (notes ? String(notes).trim() : null) : existing.notes,
+        customData: customData !== undefined ? customData : existing.customData,
+      },
+      include: {
+        service: true,
+        client: true,
+        project: true,
+        invoice: true,
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    handlePrismaError(res, error, 'Failed to update provided service');
+  }
+});
+
+app.delete('/api/provided-services/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const existing = await prisma.providedService.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Provided service not found' });
+    }
+
+    await prisma.providedService.delete({ where: { id } });
+    res.json({ message: 'Provided service deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting provided service:', error);
+    res.status(500).json({ error: 'Failed to delete provided service' });
   }
 });
 

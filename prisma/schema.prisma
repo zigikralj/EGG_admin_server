@@ -27,6 +27,7 @@ model Project {
   responsibleUser User?  @relation(fields: [responsibleId], references: [id])
   reminders     Reminder[]
   invoices      Invoice[]
+  providedServices ProvidedService[]
 }
 
 model Client {
@@ -41,6 +42,7 @@ model Client {
   projects      Project[]
   reminders     Reminder[]
   invoices      Invoice[]
+  providedServices ProvidedService[]
 }
 
 model User {
@@ -81,8 +83,10 @@ model Service {
   group       String
   frequency   Int      @default(0)
   description String?
+  customDataModel Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  providedServices ProvidedService[]
 }
 
 model Reminder {
@@ -134,6 +138,7 @@ model Invoice {
   client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
   project       Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
   items         InvoiceItem[]
+  providedServices ProvidedService[]
 }
 
 model InvoiceItem {
@@ -147,6 +152,29 @@ model InvoiceItem {
   updatedAt   DateTime @updatedAt
 
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model ProvidedService {
+  id             String    @id @default(uuid())
+  serviceId      String
+  clientId       String
+  projectId      String?
+  invoiceId      String?
+  status         String    @default("Planned")
+  location       String?
+  scheduledDate  String?
+  completionDate String?
+  price          Float?    @default(0)
+  currency       String?   @default("RSD")
+  notes          String?
+  customData     Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  service        Service   @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  client         Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  invoice        Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 }
 
 
