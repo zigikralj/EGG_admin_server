@@ -18,7 +18,10 @@
     "db:import-clients": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importClientsCsv.ts",
     "db:import-clients:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importClientsCsv.ts",
     "db:import-waste": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importWasteDisposalExcel.ts",
-    "db:import-waste:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importWasteDisposalExcel.ts"
+    "db:import-waste:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importWasteDisposalExcel.ts",
+    "release:patch": "npm version patch && git push && git push --tags",
+    "release:minor": "npm version minor && git push && git push --tags",
+    "release:major": "npm version major && git push && git push --tags"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
