@@ -43,6 +43,8 @@ jobs:
         run: |
           node -e '
             const fs = require("fs");
+            const { execSync } = require("child_process");
+            
             const eventName = process.env.EVENT_NAME;
             const dispatchBump = process.env.DISPATCH_BUMP;
             const prTitle = process.env.PR_TITLE || "";
@@ -87,7 +89,7 @@ jobs:
             } else {
               // Analyze PR title using Conventional Commits
               const title = prTitle.trim();
-              if (title.includes("BREAKING CHANGE") || /^[a-z]+(\(.*\))?!:/.test(title)) {
+              if (title.includes("BREAKING CHANGE") || /^[a-z]+(\([^)]*\))?!:/.test(title)) {
                 bump = "major";
               } else if (/^feat(\([^)]*\))?:/i.test(title)) {
                 bump = "minor";
@@ -106,22 +108,38 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
 
-      - name: Bump Version & Update Changelog
+      - name: Calculate New Version & Prepare Tag
         if: steps.determine_bump.outputs.skip == 'false'
         id: bump
         run: |
           node -e '
             const fs = require("fs");
+            const { execSync } = require("child_process");
+            
             const bumpType = process.env.BUMP_TYPE;
             const prTitle = process.env.PR_TITLE || "Manual Release";
             const prNumber = process.env.PR_NUMBER || "";
             const prAuthor = process.env.PR_AUTHOR || "maintainer";
-            const prUrl = process.env.PR_URL || "";
             
-            // 1. Read package.json
-            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const oldVersion = pkg.version || "1.0.0";
-            const parts = oldVersion.split(".").map(Number);
+            // 1. Determine latest version from git tags or package.json
+            let baseVersion = "1.0.0";
+            try {
+              const tags = execSync("git tag -l \"v*\" --sort=-v:refname", { encoding: "utf8" })
+                .split("\n")
+                .map(t => t.trim().replace(/^v/, ""))
+                .filter(Boolean);
+              if (tags.length > 0) {
+                baseVersion = tags[0];
+              } else {
+                const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+                baseVersion = pkg.version || "1.0.0";
+              }
+            } catch (e) {
+              const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              baseVersion = pkg.version || "1.0.0";
+            }
+            
+            const parts = baseVersion.split(".").map(Number);
             let [major, minor, patch] = parts;
             if (isNaN(major)) major = 1;
             if (isNaN(minor)) minor = 0;
@@ -139,43 +157,12 @@ jobs:
             }
             
             const newVersion = [major, minor, patch].join(".");
-            pkg.version = newVersion;
-            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n", "utf8");
-            
-            // 2. Update package-lock.json if exists
-            if (fs.existsSync("package-lock.json")) {
-              try {
-                const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
-                lock.version = newVersion;
-                if (lock.packages && lock.packages[""]) {
-                  lock.packages[""].version = newVersion;
-                }
-                fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n", "utf8");
-              } catch (e) {
-                console.log("Error updating package-lock.json:", e.message);
-              }
-            }
-            
-            // 3. Update CHANGELOG.md
-            const today = new Date().toISOString().split("T")[0];
             const prReference = prNumber ? " (#" + prNumber + ")" : "";
             const authorReference = prAuthor ? " by @" + prAuthor : "";
             const releaseNotes = "- " + prTitle + prReference + authorReference;
             
-            let existingChangelog = "";
-            if (fs.existsSync("CHANGELOG.md")) {
-              existingChangelog = fs.readFileSync("CHANGELOG.md", "utf8");
-            } else {
-              existingChangelog = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n";
-            }
-            
-            const newEntry = "\n## [v" + newVersion + "] - " + today + "\n\n" + releaseNotes + "\n";
-            const updatedChangelog = existingChangelog.replace("# Changelog\n", "# Changelog\n" + newEntry);
-            fs.writeFileSync("CHANGELOG.md", updatedChangelog, "utf8");
-            
-            console.log("Bumped version from " + oldVersion + " to " + newVersion);
+            console.log("Bumped from v" + baseVersion + " to v" + newVersion);
             fs.appendFileSync(process.env.GITHUB_OUTPUT, "new_version=" + newVersion + "\n");
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, "old_version=" + oldVersion + "\n");
             fs.appendFileSync(process.env.GITHUB_OUTPUT, "release_notes=" + releaseNotes + "\n");
           '
         env:
@@ -183,17 +170,14 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
 
-      - name: Commit, Tag and Push
+      - name: Create and Push Git Tag
         if: steps.determine_bump.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json CHANGELOG.md
-          git commit -m "chore(release): v${{ steps.bump.outputs.new_version }}"
           git tag -a "v${{ steps.bump.outputs.new_version }}" -m "Release v${{ steps.bump.outputs.new_version }}"
-          git push origin main --follow-tags
+          git push origin "v${{ steps.bump.outputs.new_version }}"
 
       - name: Create GitHub Release
         if: steps.determine_bump.outputs.skip == 'false'
