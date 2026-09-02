@@ -1,0 +1,205 @@
+name: Bump Version on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  bump-version:
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Determine Version Bump Type
+        id: determine_bump
+        run: |
+          node -e '
+            const fs = require("fs");
+            const eventName = process.env.EVENT_NAME;
+            const dispatchBump = process.env.DISPATCH_BUMP;
+            const prTitle = process.env.PR_TITLE || "";
+            const prLabelsJson = process.env.PR_LABELS || "[]";
+            
+            if (eventName === "workflow_dispatch") {
+              console.log("Bump type from dispatch:", dispatchBump);
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, "bump_type=" + dispatchBump + "\n");
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, "skip=false\n");
+              process.exit(0);
+            }
+            
+            let labels = [];
+            try {
+              labels = JSON.parse(prLabelsJson).map(l => (typeof l === "string" ? l : l.name).toLowerCase());
+            } catch (e) {
+              console.log("Error parsing labels:", e.message);
+            }
+            
+            console.log("PR Labels:", labels);
+            console.log("PR Title:", prTitle);
+            
+            // Check for skip indicators
+            if (
+              labels.includes("no-release") ||
+              labels.includes("skip-release") ||
+              prTitle.toLowerCase().startsWith("chore(release)") ||
+              prTitle.toLowerCase().includes("[skip release]")
+            ) {
+              console.log("Skipping version bump as requested.");
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, "skip=true\n");
+              process.exit(0);
+            }
+            
+            let bump = "patch";
+            if (labels.includes("release:major") || labels.includes("major")) {
+              bump = "major";
+            } else if (labels.includes("release:minor") || labels.includes("minor")) {
+              bump = "minor";
+            } else if (labels.includes("release:patch") || labels.includes("patch")) {
+              bump = "patch";
+            } else {
+              // Analyze PR title using Conventional Commits
+              const title = prTitle.trim();
+              if (title.includes("BREAKING CHANGE") || /^[a-z]+(\(.*\))?!:/.test(title)) {
+                bump = "major";
+              } else if (/^feat(\([^)]*\))?:/i.test(title)) {
+                bump = "minor";
+              } else {
+                bump = "patch";
+              }
+            }
+            
+            console.log("Determined bump type:", bump);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "bump_type=" + bump + "\n");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "skip=false\n");
+          '
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_BUMP: ${{ github.event.inputs.bump_type }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+
+      - name: Bump Version & Update Changelog
+        if: steps.determine_bump.outputs.skip == 'false'
+        id: bump
+        run: |
+          node -e '
+            const fs = require("fs");
+            const bumpType = process.env.BUMP_TYPE;
+            const prTitle = process.env.PR_TITLE || "Manual Release";
+            const prNumber = process.env.PR_NUMBER || "";
+            const prAuthor = process.env.PR_AUTHOR || "maintainer";
+            const prUrl = process.env.PR_URL || "";
+            
+            // 1. Read package.json
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const oldVersion = pkg.version || "1.0.0";
+            const parts = oldVersion.split(".").map(Number);
+            let [major, minor, patch] = parts;
+            if (isNaN(major)) major = 1;
+            if (isNaN(minor)) minor = 0;
+            if (isNaN(patch)) patch = 0;
+            
+            if (bumpType === "major") {
+              major += 1;
+              minor = 0;
+              patch = 0;
+            } else if (bumpType === "minor") {
+              minor += 1;
+              patch = 0;
+            } else {
+              patch += 1;
+            }
+            
+            const newVersion = [major, minor, patch].join(".");
+            pkg.version = newVersion;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n", "utf8");
+            
+            // 2. Update package-lock.json if exists
+            if (fs.existsSync("package-lock.json")) {
+              try {
+                const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+                lock.version = newVersion;
+                if (lock.packages && lock.packages[""]) {
+                  lock.packages[""].version = newVersion;
+                }
+                fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n", "utf8");
+              } catch (e) {
+                console.log("Error updating package-lock.json:", e.message);
+              }
+            }
+            
+            // 3. Update CHANGELOG.md
+            const today = new Date().toISOString().split("T")[0];
+            const prReference = prNumber ? " (#" + prNumber + ")" : "";
+            const authorReference = prAuthor ? " by @" + prAuthor : "";
+            const releaseNotes = "- " + prTitle + prReference + authorReference;
+            
+            let existingChangelog = "";
+            if (fs.existsSync("CHANGELOG.md")) {
+              existingChangelog = fs.readFileSync("CHANGELOG.md", "utf8");
+            } else {
+              existingChangelog = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n";
+            }
+            
+            const newEntry = "\n## [v" + newVersion + "] - " + today + "\n\n" + releaseNotes + "\n";
+            const updatedChangelog = existingChangelog.replace("# Changelog\n", "# Changelog\n" + newEntry);
+            fs.writeFileSync("CHANGELOG.md", updatedChangelog, "utf8");
+            
+            console.log("Bumped version from " + oldVersion + " to " + newVersion);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "new_version=" + newVersion + "\n");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "old_version=" + oldVersion + "\n");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "release_notes=" + releaseNotes + "\n");
+          '
+        env:
+          BUMP_TYPE: ${{ steps.determine_bump.outputs.bump_type }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
+      - name: Commit, Tag and Push
+        if: steps.determine_bump.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore(release): v${{ steps.bump.outputs.new_version }}"
+          git tag -a "v${{ steps.bump.outputs.new_version }}" -m "Release v${{ steps.bump.outputs.new_version }}"
+          git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        if: steps.determine_bump.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.bump.outputs.new_version }}" \
+            --title "v${{ steps.bump.outputs.new_version }}" \
+            --notes "${{ steps.bump.outputs.release_notes }}"

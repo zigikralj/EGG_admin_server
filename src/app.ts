@@ -15,6 +15,7 @@ import providedServicesRoutes from './routes/providedServices.routes';
 import preferencesRoutes from './routes/preferences.routes';
 import companyInfoRoutes from './routes/companyInfo.routes';
 import statsRoutes from './routes/stats.routes';
+import notificationsRoutes from './routes/notifications.routes';
 
 // Import rate limiters (currently defined in index.ts or authUtils, let's assume we need to import or recreate them)
 import rateLimit from 'express-rate-limit';
@@ -46,7 +47,12 @@ export function createApp() {
 
   // Health check
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      version: process.env.npm_package_version || '1.0.0',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    });
   });
 
   app.get('/', (_req, res) => {
@@ -70,6 +76,7 @@ export function createApp() {
   app.use('/api/provided-services', providedServicesRoutes);
   app.use('/api/preferences', preferencesRoutes);
   app.use('/api/company-info', companyInfoRoutes);
+  app.use('/api/notifications', notificationsRoutes);
 
   // Handle undefined routes
   app.use((req, res) => {
