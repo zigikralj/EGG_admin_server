@@ -130,6 +130,8 @@ const where = search ? {
 
 ## Database Schema Quick Reference
 
+> See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for full ERD, field constraints, cascade rules, and domain walkthroughs.
+
 ### Core Business Entities
 - **Project** — central entity. Links to Client, User (responsible), has Reminders, Invoices, ProvidedServices
 - **Client** — company clients. Has ClientExtraData for permit linking

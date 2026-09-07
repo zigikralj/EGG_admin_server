@@ -6,7 +6,8 @@ Backend API server for Ekos Green Group Project Tracker built with Express 5, Ty
 
 | Document | Description |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full server architecture — tech stack, project structure, database schema (with ERD), auth system, middleware pipeline, deployment, CI/CD, and coding conventions |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full server architecture — tech stack, project structure, database schema, auth system, middleware pipeline, deployment, CI/CD, and coding conventions |
+| [`docs/DATA_RELATIONSHIP_MODEL.md`](docs/DATA_RELATIONSHIP_MODEL.md) | Complete data relationship model — full Mermaid ERD, field specs for all 16 models, foreign keys, cascade rules, and domain walkthroughs |
 | [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | Complete REST API reference — all 15 route groups, endpoints, request/response formats, auth requirements, and error codes |
 | [`docs/AI_CONTEXT.md`](docs/AI_CONTEXT.md) | AI assistant quick-start guide — file maps, key patterns, schema overview, commands, and known gotchas for fast codebase orientation |
 | [`VERSIONING.md`](VERSIONING.md) | Semver strategy and automated PR-driven release workflow |

@@ -267,6 +267,8 @@ All routes follow a consistent pattern:
 
 ## Data Models (Prisma Schema)
 
+> **Detailed Model Specification:** See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for a comprehensive field-by-field breakdown of all 16 entities, foreign key constraints, cascade rules, indices, and domain patterns.
+
 ### Entity Relationship Diagram
 
 ```mermaid
