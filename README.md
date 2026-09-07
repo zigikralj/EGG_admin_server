@@ -1,15 +1,34 @@
 # Ekos Project Tracker API Server
 
-Backend API server for Ekos Green Group Project Tracker built with Express, TypeScript, and Prisma.
+Backend API server for Ekos Green Group Project Tracker built with Express 5, TypeScript, Prisma, and PostgreSQL.
 
-## Local Development
+## 📖 Documentation
+
+| Document | Description |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full server architecture — tech stack, project structure, database schema (with ERD), auth system, middleware pipeline, deployment, CI/CD, and coding conventions |
+| [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | Complete REST API reference — all 15 route groups, endpoints, request/response formats, auth requirements, and error codes |
+| [`docs/AI_CONTEXT.md`](docs/AI_CONTEXT.md) | AI assistant quick-start guide — file maps, key patterns, schema overview, commands, and known gotchas for fast codebase orientation |
+| [`VERSIONING.md`](VERSIONING.md) | Semver strategy and automated PR-driven release workflow |
+| [`SECURITY.md`](SECURITY.md) | Security policy, vulnerability reporting, and secrets hygiene |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history |
+
+---
+
+## Quick Start
 
 1. Install dependencies:
    ```bash
    npm install
    ```
 
-2. Run database migrations (requires PostgreSQL running locally, e.g. via Docker or Podman):
+2. Copy environment config:
+   ```bash
+   cp .env.example .env.localhost
+   # Edit .env.localhost with your local PostgreSQL connection string
+   ```
+
+3. Run database migrations (requires PostgreSQL running locally):
    ```bash
    npm run migrate:deploy
    ```
@@ -19,12 +38,13 @@ Backend API server for Ekos Green Group Project Tracker built with Express, Type
    npm run migrate:dev -- --name <migration_name>
    ```
 
-3. Start development server:
+4. Start development server:
    ```bash
-   npm run dev
+   npm run dev          # uses .env
+   npm run dev:local    # uses .env.localhost
    ```
 
-4. Build for production:
+5. Build for production:
    ```bash
    npm run build
    ```
