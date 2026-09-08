@@ -23,11 +23,11 @@ model Project {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  client        Client?  @relation(fields: [clientId], references: [id])
-  responsibleUser User?  @relation(fields: [responsibleId], references: [id])
-  reminders     Reminder[]
-  notifications Notification[]
-  invoices      Invoice[]
+  client           Client?           @relation(fields: [clientId], references: [id])
+  responsibleUser  User?             @relation(fields: [responsibleId], references: [id])
+  reminders        Reminder[]
+  notifications    Notification[]
+  invoices         Invoice[]
   providedServices ProvidedService[]
 
   @@index([clientId])
@@ -37,36 +37,37 @@ model Project {
 }
 
 model Client {
-  id            String    @id @default(uuid())
-  name          String
-  contactPerson String?
-  email         String?
-  phone         String?
-  city          String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  projects      Project[]
-  reminders     Reminder[]
-  invoices      Invoice[]
+  id               String            @id @default(uuid())
+  name             String
+  contactPerson    String?
+  email            String?
+  phone            String?
+  city             String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  projects         Project[]
+  reminders        Reminder[]
+  invoices         Invoice[]
   providedServices ProvidedService[]
+  extraData        ClientExtraData?
 }
 
 model User {
-  id          String           @id @default(uuid())
-  name        String
-  email       String?          @unique
-  password    String?
-  isApproved  Boolean          @default(true)
-  status      String           @default("APPROVED")
-  role        String           @default("User")
-  phone       String?
-  avatarUrl   String?
-  gender      String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  projects    Project[]
-  preferences UserPreference[]
-  reminders   Reminder[]
+  id            String           @id @default(uuid())
+  name          String
+  email         String?          @unique
+  password      String?
+  isApproved    Boolean          @default(true)
+  status        String           @default("APPROVED")
+  role          String           @default("User")
+  phone         String?
+  avatarUrl     String?
+  gender        String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  projects      Project[]
+  preferences   UserPreference[]
+  reminders     Reminder[]
   notifications Notification[]
 }
 
@@ -85,15 +86,15 @@ model UserPreference {
 }
 
 model Service {
-  id          String   @id @default(uuid())
-  code        String   @unique
-  name        String
-  group       String
-  frequency   Int      @default(0)
-  description String?
-  customDataModel Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String            @id @default(uuid())
+  code             String            @unique
+  name             String
+  group            String
+  frequency        Int               @default(0)
+  description      String?
+  customDataModel  Json?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
   providedServices ProvidedService[]
 }
 
@@ -109,17 +110,21 @@ model Reminder {
   status        String   @default("Pending")
   notes         String?
   dueDate       String?
+  permitId      String?
+  permitNumber  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
   responsibleUser User?    @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
+  permit          Permit?  @relation(fields: [permitId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([clientId])
   @@index([responsibleId])
   @@index([status])
+  @@index([permitId])
 }
 
 model Category {
@@ -132,8 +137,8 @@ model Category {
 }
 
 model Invoice {
-  id            String        @id @default(uuid())
-  invoiceNumber String        @unique
+  id            String   @id @default(uuid())
+  invoiceNumber String   @unique
   dateCreated   String?
   dueDate       String?
   paymentDate   String?
@@ -141,16 +146,16 @@ model Invoice {
   clientName    String?
   projectId     String?
   projectName   String?
-  status        String        @default("Draft")
+  status        String   @default("Draft")
   notes         String?
-  totalAmount   Float?        @default(0)
-  currency      String?       @default("RSD")
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  totalAmount   Float?   @default(0)
+  currency      String?  @default("RSD")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  project       Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  items         InvoiceItem[]
+  client           Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items            InvoiceItem[]
   providedServices ProvidedService[]
 
   @@index([clientId])
@@ -168,32 +173,32 @@ model InvoiceItem {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
 }
 
 model ProvidedService {
-  id             String    @id @default(uuid())
+  id             String   @id @default(uuid())
   serviceId      String
   clientId       String
   projectId      String?
   invoiceId      String?
-  status         String    @default("Planned")
+  status         String   @default("Planned")
   location       String?
   scheduledDate  String?
   completionDate String?
-  price          Float?    @default(0)
-  currency       String?   @default("RSD")
+  price          Float?   @default(0)
+  currency       String?  @default("RSD")
   notes          String?
   customData     Json?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  service        Service   @relation(fields: [serviceId], references: [id], onDelete: Restrict)
-  client         Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  project        Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  invoice        Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  service Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  client  Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 
   @@index([serviceId])
   @@index([clientId])
@@ -201,7 +206,6 @@ model ProvidedService {
   @@index([invoiceId])
   @@index([status])
 }
-
 
 model CompanyInfo {
   id                 String   @id @default("default")
@@ -222,24 +226,84 @@ model CompanyInfo {
 }
 
 model Notification {
-  id          String   @id @default(uuid())
-  userId      String
-  type        String   @default("MENTION")
-  title       String
-  message     String
-  read        Boolean  @default(false)
-  link        String?
-  projectId   String?
-  authorId    String?
-  authorName  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  userId     String
+  type       String   @default("MENTION")
+  title      String
+  message    String
+  read       Boolean  @default(false)
+  link       String?
+  projectId  String?
+  authorId   String?
+  authorName String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([read])
   @@index([createdAt])
   @@index([projectId])
+}
+
+model ClientExtraData {
+  id        String   @id @default(uuid())
+  clientId  String   @unique
+  permitId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  client Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  permit Permit? @relation(fields: [permitId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([permitId])
+}
+
+model Permit {
+  id           String   @id @default(uuid())
+  permitNumber String
+  startDate    String?
+  endDate      String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  reminders       Reminder[]
+  clientExtraData ClientExtraData[]
+  permitWastes    PermitWaste[]
+
+  @@index([permitNumber])
+}
+
+model WasteCatalog {
+  id             String   @id @default(uuid())
+  code           String   @unique
+  description    String
+  hazardListMark String?
+  isHazardous    Boolean  @default(false)
+  frequent       Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  permitWastes PermitWaste[]
+
+  @@index([frequent])
+}
+
+model PermitWaste {
+  id             String   @id @default(uuid())
+  permitId       String
+  wasteCatalogId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  permit       Permit       @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  wasteCatalog WasteCatalog @relation(fields: [wasteCatalogId], references: [id], onDelete: Restrict)
+
+  @@unique([permitId, wasteCatalogId])
+  @@index([permitId])
+  @@index([wasteCatalogId])
 }

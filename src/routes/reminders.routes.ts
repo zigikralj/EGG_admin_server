@@ -26,7 +26,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const reminders = await prisma.reminder.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: { project: true, client: true, responsibleUser: true },
+    include: { project: true, client: true, responsibleUser: true, permit: true },
   });
 
   res.json(reminders);
@@ -34,7 +34,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // POST /api/reminders
 router.post('/', asyncHandler(async (req, res) => {
-  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate } = req.body;
+  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber } = req.body;
 
   const finalTitle = title || projectName;
   if (!finalTitle) {
@@ -54,6 +54,8 @@ router.post('/', asyncHandler(async (req, res) => {
       status: status || 'Pending',
       notes: notes || null,
       dueDate: dueDate || null,
+      permitId: permitId || null,
+      permitNumber: permitNumber || null,
     },
   });
 
@@ -63,7 +65,7 @@ router.post('/', asyncHandler(async (req, res) => {
 // PUT /api/reminders/:id
 router.put('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id as string;
-  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate } = req.body;
+  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber } = req.body;
 
   const existing = await prisma.reminder.findUnique({ where: { id } });
   if (!existing) {
@@ -89,6 +91,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       status: status || existing.status,
       notes: notes !== undefined ? (notes || null) : existing.notes,
       dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
+      permitId: permitId !== undefined ? (permitId || null) : (existing as any).permitId,
+      permitNumber: permitNumber !== undefined ? (permitNumber || null) : (existing as any).permitNumber,
     },
   });
 
