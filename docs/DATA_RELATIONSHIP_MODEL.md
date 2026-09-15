@@ -260,6 +260,7 @@ erDiagram
         string startDate
         string endDate
         string notes
+        string[] permitTypes
     }
 
     WASTE_CATALOG {
@@ -524,6 +525,7 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `startDate` | `String` | Optional | | Issue / effective date (`YYYY-MM-DD`) |
 | `endDate` | `String` | Optional | | Expiration date (`YYYY-MM-DD`) |
 | `notes` | `String` | Optional | | Regulatory conditions or notes |
+| `permitTypes` | `String[]` | Optional | `@default([])` | Permit types: Sakupljanje, Transport, Skladistenje, Tretman, Odlaganje |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
 

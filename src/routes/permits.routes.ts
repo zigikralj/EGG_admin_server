@@ -25,6 +25,7 @@ function formatPermit(p: any) {
     wasteCatalogId,
     wasteCatalogs,
     wasteCatalogIds,
+    permitTypes: Array.isArray(p.permitTypes) ? p.permitTypes : [],
     indexNumber,
   };
 }
@@ -36,6 +37,7 @@ router.get('/', asyncHandler(async (req, res) => {
     OR: [
       { permitNumber: { contains: search, mode: 'insensitive' as const } },
       { notes: { contains: search, mode: 'insensitive' as const } },
+      { permitTypes: { hasSome: [search] } },
       { clientExtraData: { some: { client: { name: { contains: search, mode: 'insensitive' as const } } } } },
       {
         permitWastes: {
@@ -100,7 +102,7 @@ router.post('/', asyncHandler(async (req, res) => {
     return;
   }
 
-  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds } = req.body;
+  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds, permitTypes } = req.body;
   let targetWcIds: string[] = [];
   if (Array.isArray(wasteCatalogIds) && wasteCatalogIds.length > 0) {
     targetWcIds = wasteCatalogIds;
@@ -124,6 +126,7 @@ router.post('/', asyncHandler(async (req, res) => {
       startDate: startDate || null,
       endDate: endDate || null,
       notes: notes ? notes.trim() : null,
+      permitTypes: Array.isArray(permitTypes) ? permitTypes.map((t: any) => String(t).trim()).filter(Boolean) : [],
       permitWastes: {
         create: targetWcIds.map(id => ({ wasteCatalogId: id })),
       },
@@ -150,7 +153,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
-  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds } = req.body;
+  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds, permitTypes } = req.body;
 
   const existing = await prisma.permit.findUnique({ where: { id } });
   if (!existing) {
@@ -187,6 +190,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       startDate: startDate !== undefined ? startDate : existing.startDate,
       endDate: endDate !== undefined ? endDate : existing.endDate,
       notes: notes !== undefined ? (notes ? notes.trim() : null) : existing.notes,
+      permitTypes: permitTypes !== undefined ? (Array.isArray(permitTypes) ? permitTypes.map((t: any) => String(t).trim()).filter(Boolean) : []) : existing.permitTypes,
     },
     include: {
       reminders: true,
