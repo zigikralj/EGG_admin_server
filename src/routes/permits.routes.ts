@@ -101,15 +101,20 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds } = req.body;
-  const targetWcId = wasteCatalogId || (Array.isArray(wasteCatalogIds) ? wasteCatalogIds[0] : null);
+  let targetWcIds: string[] = [];
+  if (Array.isArray(wasteCatalogIds) && wasteCatalogIds.length > 0) {
+    targetWcIds = wasteCatalogIds;
+  } else if (wasteCatalogId) {
+    targetWcIds = [wasteCatalogId];
+  }
 
   if (!permitNumber || !permitNumber.trim()) {
     res.status(400).json({ error: 'Permit number is required.' });
     return;
   }
 
-  if (!targetWcId) {
-    res.status(400).json({ error: 'Waste catalog index number is required.' });
+  if (targetWcIds.length === 0) {
+    res.status(400).json({ error: 'At least one waste catalog index number is required.' });
     return;
   }
 
@@ -120,9 +125,7 @@ router.post('/', asyncHandler(async (req, res) => {
       endDate: endDate || null,
       notes: notes ? notes.trim() : null,
       permitWastes: {
-        create: [
-          { wasteCatalogId: targetWcId },
-        ],
+        create: targetWcIds.map(id => ({ wasteCatalogId: id })),
       },
     },
     include: {
@@ -155,19 +158,24 @@ router.put('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  const targetWcId = wasteCatalogId !== undefined ? wasteCatalogId : (Array.isArray(wasteCatalogIds) ? wasteCatalogIds[0] : undefined);
+  let targetWcIds: string[] | undefined = undefined;
+  if (Array.isArray(wasteCatalogIds)) {
+    targetWcIds = wasteCatalogIds;
+  } else if (wasteCatalogId !== undefined) {
+    targetWcIds = wasteCatalogId ? [wasteCatalogId] : [];
+  }
 
-  if (targetWcId !== undefined) {
+  if (targetWcIds !== undefined) {
     await prisma.permitWaste.deleteMany({
       where: { permitId: id },
     });
 
-    if (targetWcId) {
-      await prisma.permitWaste.create({
-        data: {
+    if (targetWcIds.length > 0) {
+      await prisma.permitWaste.createMany({
+        data: targetWcIds.map(wId => ({
           permitId: id,
-          wasteCatalogId: targetWcId,
-        },
+          wasteCatalogId: wId,
+        })),
       });
     }
   }
