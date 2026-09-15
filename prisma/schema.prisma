@@ -273,6 +273,7 @@ model Permit {
   startDate    String?
   endDate      String?
   notes        String?
+  permitTypes  String[] @default([])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

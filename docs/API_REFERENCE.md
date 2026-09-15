@@ -543,6 +543,7 @@ List all permits with associated data. Supports `?search=` (searches permit numb
 - `wasteCatalogs` — array of linked waste catalog entries
 - `wasteCatalogIds` — array of waste catalog IDs
 - `indexNumber` — first waste catalog code
+- `permitTypes` — array of permit type strings (e.g. ["Sakupljanje", "Transport"])
 
 ---
 
@@ -561,6 +562,7 @@ Create a permit. **Admin/Manager only.**
   "startDate": "YYYY-MM-DD (optional)",
   "endDate": "YYYY-MM-DD (optional)",
   "notes": "string (optional)",
+  "permitTypes": ["string (optional: 'Sakupljanje' | 'Transport' | 'Skladistenje' | 'Tretman' | 'Odlaganje')"],
   "wasteCatalogId": "uuid (required — waste catalog entry to link)",
   "wasteCatalogIds": ["uuid"] // alternative array form
 }
