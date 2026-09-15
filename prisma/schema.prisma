@@ -137,8 +137,10 @@ model Category {
 }
 
 model Invoice {
-  id            String   @id @default(uuid())
-  invoiceNumber String   @unique
+  id              String   @id @default(uuid())
+  invoiceNumber   String   @unique
+  invoiceType     String?  @default("Standard")
+  parentInvoiceId String?
   dateCreated   String?
   dueDate       String?
   paymentDate   String?
@@ -157,10 +159,13 @@ model Invoice {
   project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
   items            InvoiceItem[]
   providedServices ProvidedService[]
+  parentInvoice    Invoice?          @relation("ParentChildInvoices", fields: [parentInvoiceId], references: [id], onDelete: SetNull)
+  childInvoices    Invoice[]         @relation("ParentChildInvoices")
 
   @@index([clientId])
   @@index([projectId])
   @@index([status])
+  @@index([parentInvoiceId])
 }
 
 model InvoiceItem {

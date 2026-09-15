@@ -78,6 +78,8 @@ router.post('/', asyncHandler(async (req, res) => {
   }
   const {
     invoiceNumber,
+    invoiceType,
+    parentInvoiceId,
     dateCreated,
     dueDate,
     paymentDate,
@@ -122,6 +124,8 @@ router.post('/', asyncHandler(async (req, res) => {
   const invoice = await prisma.invoice.create({
     data: {
       invoiceNumber: String(invoiceNumber).trim(),
+      invoiceType: invoiceType || 'Standard',
+      parentInvoiceId: parentInvoiceId || null,
       dateCreated: dateCreated || new Date().toISOString().slice(0, 10),
       dueDate: dueDate || null,
       paymentDate: paymentDate || null,
@@ -156,6 +160,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id as string;
   const {
     invoiceNumber,
+    invoiceType,
+    parentInvoiceId,
     dateCreated,
     dueDate,
     paymentDate,
@@ -221,6 +227,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       where: { id },
       data: {
         invoiceNumber: invoiceNumber !== undefined ? String(invoiceNumber).trim() : existing.invoiceNumber,
+        invoiceType: invoiceType !== undefined ? invoiceType : existing.invoiceType,
+        parentInvoiceId: parentInvoiceId !== undefined ? parentInvoiceId : existing.parentInvoiceId,
         dateCreated: dateCreated !== undefined ? (dateCreated || null) : existing.dateCreated,
         dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
         paymentDate: paymentDate !== undefined ? (paymentDate || null) : existing.paymentDate,
