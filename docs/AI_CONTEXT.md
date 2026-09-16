@@ -86,10 +86,11 @@ Every route file follows the same pattern:
 3. Import and mount in `src/app.ts` under `createApp()`
 4. Add model to `prisma/schema.prisma`, run `npx prisma migrate dev --name <name>`
 
-### Adding a New Model
-1. Define in `prisma/schema.prisma` with proper indexes and relations
-2. Run migration: `npm run migrate:dev -- --name <name>`
-3. The `prisma` export from `src/db.ts` auto-includes the new model
+### Adding a New Model or Schema Changes
+1. Define / update models in `prisma/schema.prisma` with proper indexes and relations
+2. Run migration: `npm run migrate:dev -- --name <name>` (creates migration file in `prisma/migrations/` and updates local DB)
+3. **CRITICAL: ALWAYS use migrations (`prisma migrate dev`). NEVER use `prisma db push` on staging/production databases!** Render runs `npx prisma migrate deploy` on startup. If schema changes lack a migration file, Render will not apply them, causing runtime crashes or schema drift.
+4. The `prisma` export from `src/db.ts` auto-includes the new model
 
 ### Auth Pattern
 ```typescript
@@ -166,10 +167,13 @@ npm run dev:local              # Start with .env.localhost
 npm run build                  # Build for production
 
 # Database
-npm run migrate:dev -- --name <name>   # Create new migration
-npm run migrate:deploy                  # Apply migrations
-npm run db:push                         # Push schema without migration
+npm run migrate:dev -- --name <name>   # Create and apply new migration locally
+npm run migrate:deploy                  # Apply pending migrations
+npm run migrate:deploy:neon             # Apply pending migrations to Neon database
+npm run migrate:status                  # Check migration status
+npm run migrate:status:neon             # Check migration status on Neon
 npm run db:seed                         # Seed database
+# Note: NEVER use db:push — always use migrations!
 
 # Import data
 npm run db:import-clients              # Import clients from CSV
@@ -206,3 +210,4 @@ npm run release:major          # Bump major version
 6. **Online status is in-memory** — `userActivityMap` is process-local. Resets on server restart. Not suitable for multi-instance deployments.
 7. **Password never returned** — All user endpoints destructure out the `password` field before responding.
 8. **Manager < Administrator** — Managers cannot create, modify, or delete Administrator accounts, nor assign the Administrator role.
+9. **ALWAYS use migrations, NEVER db push** — Render runs `npx prisma migrate deploy` on deployment. Every schema change must have a corresponding migration file in `prisma/migrations/`. Using `db push` skips migration tracking, causes schema drift, and breaks deployments.

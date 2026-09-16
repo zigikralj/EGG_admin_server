@@ -269,18 +269,19 @@ Create a client. **Admin/Manager only.**
   "email": "string (optional)",
   "phone": "string (optional)",
   "city": "string (optional)",
-  "permitId": "uuid (optional — links to a Permit)"
+  "permitId": "uuid (optional — links a single Permit)",
+  "permitIds": ["uuid"] // optional — links multiple Permits
 }
 ```
 
-**Response 201:** Client object with permit data.
+**Response 201:** Client object with `permits` array, `permitId`, and `permit`.
 
 ---
 
 ### `PUT /api/clients/:id`
-Update a client. **Admin/Manager only.**
+Update a client. **Admin/Manager only.** Supports updating `permitId` or `permitIds`.
 
-**Response 200:** Updated client object with permit data.
+**Response 200:** Updated client object with `permits` array, `permitId`, and `permit`.
 
 ---
 
@@ -562,8 +563,9 @@ Create a permit. **Admin/Manager only.**
   "startDate": "YYYY-MM-DD (optional)",
   "endDate": "YYYY-MM-DD (optional)",
   "notes": "string (optional)",
-  "permitTypes": ["string (optional: 'Sakupljanje' | 'Transport' | 'Skladistenje' | 'Tretman' | 'Odlaganje')"],
-  "wasteCatalogId": "uuid (required — waste catalog entry to link)",
+  "clientId": "uuid (required — client to associate permit with)",
+  "permitTypes": ["string (required: at least one: 'Sakupljanje' | 'Transport' | 'Skladistenje' | 'Tretman' | 'Odlaganje')"],
+  "wasteCatalogId": "uuid (required if wasteCatalogIds omitted — waste catalog entry to link)",
   "wasteCatalogIds": ["uuid"] // alternative array form
 }
 ```
@@ -573,7 +575,7 @@ Create a permit. **Admin/Manager only.**
 ---
 
 ### `PUT /api/permits/:id`
-Update a permit. **Admin/Manager only.** Replaces waste catalog associations if `wasteCatalogId` is provided.
+Update a permit. **Admin/Manager only.** Supports updating `clientId`, `permitTypes`, and replaces waste catalog associations if `wasteCatalogId` or `wasteCatalogIds` is provided.
 
 ---
 

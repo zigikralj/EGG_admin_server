@@ -464,6 +464,7 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 - `invoices` → `Invoice[]`
 - `providedServices` → `ProvidedService[]`
 - `extraData` → `ClientExtraData?` (1:1)
+- `permits` → `Permit[]` (1:N)
 
 ---
 
@@ -526,13 +527,17 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `endDate` | `String` | Optional | | Expiration date (`YYYY-MM-DD`) |
 | `notes` | `String` | Optional | | Regulatory conditions or notes |
 | `permitTypes` | `String[]` | Optional | `@default([])` | Permit types: Sakupljanje, Transport, Skladistenje, Tretman, Odlaganje |
+| `clientId` | `String` | Optional | FK to `Client.id` | Associated client |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
 
 **Indexes & Constraints:**
 - `@@index([permitNumber])`
+- `@@index([clientId])`
+- `onDelete: SetNull` to `Client`
 
 **Relations:**
+- `client` → `Client?`
 - `reminders` → `Reminder[]`
 - `clientExtraData` → `ClientExtraData[]`
 - `permitWastes` → `PermitWaste[]`

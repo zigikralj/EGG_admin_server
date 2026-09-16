@@ -1,26 +1,28 @@
-import { Router } from 'express';
-import { prisma } from '../db';
-import { asyncHandler } from '../middleware/errorHandler';
-import { requireAuth } from '../middleware/auth';
-import { isAdminOrManager } from '../types';
+import { Router } from "express";
+import { prisma } from "../db";
+import { asyncHandler } from "../middleware/errorHandler";
+import { requireAuth } from "../middleware/auth";
+import { isAdminOrManager } from "../types";
 
 const router = Router();
 
 router.use(requireAuth);
 
-function formatPermit(p: any) {
-  const clientsList = (p.clientExtraData || []).map((ed: any) => ed.client).filter(Boolean);
+export function formatPermit(p: any) {
+  const client = p.client || p.clientExtraData?.[0]?.client || null;
+  const clientsList = client ? [client] : (p.clientExtraData || []).map((ed: any) => ed.client).filter(Boolean);
   const wasteCatalogs = (p.permitWastes || []).map((pw: any) => pw.wasteCatalog).filter(Boolean);
   const wasteCatalogIds = (p.permitWastes || []).map((pw: any) => pw.wasteCatalogId);
   const wasteCatalog = wasteCatalogs[0] || null;
   const wasteCatalogId = wasteCatalogIds[0] || null;
-  const indexNumber = wasteCatalog?.code || '';
+  const indexNumber = wasteCatalog?.code || "";
 
   return {
     ...p,
+    client,
     clients: clientsList,
-    clientName: clientsList[0]?.name || null,
-    clientId: clientsList[0]?.id || null,
+    clientName: client?.name || clientsList[0]?.name || null,
+    clientId: p.clientId || client?.id || clientsList[0]?.id || null,
     wasteCatalog,
     wasteCatalogId,
     wasteCatalogs,
@@ -31,21 +33,22 @@ function formatPermit(p: any) {
 }
 
 // GET /api/permits
-router.get('/', asyncHandler(async (req, res) => {
-  const search = ((req.query.search as string) || '').trim();
+router.get("/", asyncHandler(async (req, res) => {
+  const search = ((req.query.search as string) || "").trim();
   const where = search ? {
     OR: [
-      { permitNumber: { contains: search, mode: 'insensitive' as const } },
-      { notes: { contains: search, mode: 'insensitive' as const } },
+      { permitNumber: { contains: search, mode: "insensitive" as const } },
+      { notes: { contains: search, mode: "insensitive" as const } },
       { permitTypes: { hasSome: [search] } },
-      { clientExtraData: { some: { client: { name: { contains: search, mode: 'insensitive' as const } } } } },
+      { client: { name: { contains: search, mode: "insensitive" as const } } },
+      { clientExtraData: { some: { client: { name: { contains: search, mode: "insensitive" as const } } } } },
       {
         permitWastes: {
           some: {
             wasteCatalog: {
               OR: [
-                { code: { contains: search, mode: 'insensitive' as const } },
-                { description: { contains: search, mode: 'insensitive' as const } },
+                { code: { contains: search, mode: "insensitive" as const } },
+                { description: { contains: search, mode: "insensitive" as const } },
               ],
             },
           },
@@ -56,8 +59,9 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const permits = await prisma.permit.findMany({
     where,
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     include: {
+      client: true,
       reminders: true,
       clientExtraData: {
         include: { client: true },
@@ -72,11 +76,12 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/permits/:id
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get("/:id", asyncHandler(async (req, res) => {
   const id = req.params.id as string;
   const permit = await prisma.permit.findUnique({
     where: { id },
     include: {
+      client: true,
       reminders: true,
       clientExtraData: {
         include: { client: true },
@@ -88,7 +93,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 
   if (!permit) {
-    res.status(404).json({ error: 'Permit not found' });
+    res.status(404).json({ error: "Permit not found" });
     return;
   }
 
@@ -96,13 +101,13 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/permits
-router.post('/', asyncHandler(async (req, res) => {
+router.post("/", asyncHandler(async (req, res) => {
   if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can create permits.' });
+    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can create permits." });
     return;
   }
 
-  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds, permitTypes } = req.body;
+  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds, permitTypes, clientId } = req.body;
   let targetWcIds: string[] = [];
   if (Array.isArray(wasteCatalogIds) && wasteCatalogIds.length > 0) {
     targetWcIds = wasteCatalogIds;
@@ -111,12 +116,25 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   if (!permitNumber || !permitNumber.trim()) {
-    res.status(400).json({ error: 'Permit number is required.' });
+    res.status(400).json({ error: "Permit number is required." });
     return;
   }
 
   if (targetWcIds.length === 0) {
-    res.status(400).json({ error: 'At least one waste catalog index number is required.' });
+    res.status(400).json({ error: "At least one waste catalog index number is required." });
+    return;
+  }
+
+  if (!clientId || !String(clientId).trim()) {
+    res.status(400).json({ error: "Client is required." });
+    return;
+  }
+
+  const normalizedPermitTypes = Array.isArray(permitTypes)
+    ? permitTypes.map((t: any) => String(t).trim()).filter(Boolean)
+    : [];
+  if (normalizedPermitTypes.length === 0) {
+    res.status(400).json({ error: "At least one permit type is required." });
     return;
   }
 
@@ -126,12 +144,14 @@ router.post('/', asyncHandler(async (req, res) => {
       startDate: startDate || null,
       endDate: endDate || null,
       notes: notes ? notes.trim() : null,
-      permitTypes: Array.isArray(permitTypes) ? permitTypes.map((t: any) => String(t).trim()).filter(Boolean) : [],
+      permitTypes: normalizedPermitTypes,
+      clientId: clientId.trim(),
       permitWastes: {
         create: targetWcIds.map(id => ({ wasteCatalogId: id })),
       },
     },
     include: {
+      client: true,
       reminders: true,
       clientExtraData: {
         include: { client: true },
@@ -142,23 +162,46 @@ router.post('/', asyncHandler(async (req, res) => {
     },
   });
 
+  // Keep legacy ClientExtraData in sync for fallback
+  await prisma.clientExtraData.upsert({
+    where: { clientId: clientId.trim() },
+    create: { clientId: clientId.trim(), permitId: permit.id },
+    update: { permitId: permit.id },
+  });
+
   res.status(201).json(formatPermit(permit));
 }));
 
 // PUT /api/permits/:id
-router.put('/:id', asyncHandler(async (req, res) => {
+router.put("/:id", asyncHandler(async (req, res) => {
   if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can edit permits.' });
+    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can edit permits." });
     return;
   }
 
   const id = req.params.id as string;
-  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds, permitTypes } = req.body;
+  const { permitNumber, startDate, endDate, notes, wasteCatalogId, wasteCatalogIds, permitTypes, clientId } = req.body;
 
   const existing = await prisma.permit.findUnique({ where: { id } });
   if (!existing) {
-    res.status(404).json({ error: 'Permit not found' });
+    res.status(404).json({ error: "Permit not found" });
     return;
+  }
+
+  if (clientId !== undefined && (!clientId || !String(clientId).trim())) {
+    res.status(400).json({ error: "Client is required." });
+    return;
+  }
+
+  let normalizedPermitTypes: string[] | undefined = undefined;
+  if (permitTypes !== undefined) {
+    normalizedPermitTypes = Array.isArray(permitTypes)
+      ? permitTypes.map((t: any) => String(t).trim()).filter(Boolean)
+      : [];
+    if (normalizedPermitTypes.length === 0) {
+      res.status(400).json({ error: "At least one permit type is required." });
+      return;
+    }
   }
 
   let targetWcIds: string[] | undefined = undefined;
@@ -183,6 +226,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  const targetClientId = clientId !== undefined ? (clientId ? String(clientId).trim() : null) : existing.clientId;
+
   const updated = await prisma.permit.update({
     where: { id },
     data: {
@@ -190,9 +235,11 @@ router.put('/:id', asyncHandler(async (req, res) => {
       startDate: startDate !== undefined ? startDate : existing.startDate,
       endDate: endDate !== undefined ? endDate : existing.endDate,
       notes: notes !== undefined ? (notes ? notes.trim() : null) : existing.notes,
-      permitTypes: permitTypes !== undefined ? (Array.isArray(permitTypes) ? permitTypes.map((t: any) => String(t).trim()).filter(Boolean) : []) : existing.permitTypes,
+      permitTypes: normalizedPermitTypes !== undefined ? normalizedPermitTypes : existing.permitTypes,
+      clientId: targetClientId,
     },
     include: {
+      client: true,
       reminders: true,
       clientExtraData: {
         include: { client: true },
@@ -203,25 +250,58 @@ router.put('/:id', asyncHandler(async (req, res) => {
     },
   });
 
+  // Sync clientExtraData if client changed
+  if (clientId !== undefined && targetClientId !== existing.clientId) {
+    if (targetClientId) {
+      await prisma.clientExtraData.upsert({
+        where: { clientId: targetClientId },
+        create: { clientId: targetClientId, permitId: id },
+        update: { permitId: id },
+      });
+    }
+    if (existing.clientId) {
+      const remainingPermit = await prisma.permit.findFirst({
+        where: { clientId: existing.clientId, id: { not: id } },
+      });
+      await prisma.clientExtraData.upsert({
+        where: { clientId: existing.clientId },
+        create: { clientId: existing.clientId, permitId: remainingPermit?.id || null },
+        update: { permitId: remainingPermit?.id || null },
+      });
+    }
+  }
+
   res.json(formatPermit(updated));
 }));
 
 // DELETE /api/permits/:id
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete("/:id", asyncHandler(async (req, res) => {
   if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can delete permits.' });
+    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can delete permits." });
     return;
   }
 
   const id = req.params.id as string;
   const existing = await prisma.permit.findUnique({ where: { id } });
   if (!existing) {
-    res.status(404).json({ error: 'Permit not found' });
+    res.status(404).json({ error: "Permit not found" });
     return;
   }
 
   await prisma.permit.delete({ where: { id } });
-  res.json({ message: 'Permit deleted successfully' });
+
+  // Update clientExtraData fallback if needed
+  if (existing.clientId) {
+    const nextPermit = await prisma.permit.findFirst({
+      where: { clientId: existing.clientId },
+    });
+    await prisma.clientExtraData.updateMany({
+      where: { clientId: existing.clientId },
+      data: { permitId: nextPermit ? nextPermit.id : null },
+    });
+  }
+
+  res.json({ message: "Permit deleted successfully" });
 }));
 
 export default router;
