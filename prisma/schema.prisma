@@ -50,6 +50,7 @@ model Client {
   invoices         Invoice[]
   providedServices ProvidedService[]
   extraData        ClientExtraData?
+  permits          Permit[]
 }
 
 model User {
@@ -274,14 +275,17 @@ model Permit {
   endDate      String?
   notes        String?
   permitTypes  String[] @default([])
+  clientId     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  client          Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
   reminders       Reminder[]
   clientExtraData ClientExtraData[]
   permitWastes    PermitWaste[]
 
   @@index([permitNumber])
+  @@index([clientId])
 }
 
 model WasteCatalog {
