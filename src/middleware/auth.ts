@@ -9,7 +9,7 @@ import { verifyToken } from '../authUtils';
 declare global {
   namespace Express {
     interface Request {
-      authUser?: User;
+      authUser?: User & { roleEntity?: any };
     }
   }
 }
@@ -60,11 +60,11 @@ export async function getAuthUser(req: Request): Promise<User | null> {
 
     // Check if Administrator or Manager is switching user (impersonation / preview)
     const xUserId = req.headers["x-user-id"] as string;
-    const authDbUser = await prisma.user.findUnique({ where: { id: payload.userId } });
+    const authDbUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: payload.userId } });
 
     if (authDbUser && xUserId && xUserId !== payload.userId) {
       if (authDbUser.role === "Administrator" || authDbUser.role === "Manager") {
-        const impersonatedUser = await prisma.user.findUnique({ where: { id: xUserId } });
+        const impersonatedUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: xUserId } });
         if (impersonatedUser && impersonatedUser.isApproved && impersonatedUser.status !== "BLOCKED") {
           userActivityMap.set(impersonatedUser.id, Date.now());
           return impersonatedUser;
@@ -79,7 +79,7 @@ export async function getAuthUser(req: Request): Promise<User | null> {
   // Fallback X-User-Id
   const fallbackXUserId = req.headers["x-user-id"] as string;
   if (fallbackXUserId) {
-    const fallbackUser = await prisma.user.findUnique({ where: { id: fallbackXUserId } });
+    const fallbackUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: fallbackXUserId } });
     if (fallbackUser) userActivityMap.set(fallbackUser.id, Date.now());
     return fallbackUser ?? null;
   }

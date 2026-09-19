@@ -61,6 +61,7 @@ model User {
   isApproved    Boolean          @default(true)
   status        String           @default("APPROVED")
   role          String           @default("User")
+  roleEntity    Role?            @relation(fields: [role], references: [name])
   phone         String?
   avatarUrl     String?
   gender        String?
@@ -316,4 +317,14 @@ model PermitWaste {
   @@unique([permitId, wasteCatalogId])
   @@index([permitId])
   @@index([wasteCatalogId])
+}
+
+model Role {
+  name          String   @id
+  description   String?
+  isSystemAdmin Boolean  @default(false)
+  permissions   Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  users         User[]
 }
