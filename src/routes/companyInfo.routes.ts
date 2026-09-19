@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { UserRole } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
@@ -10,7 +10,13 @@ const router = Router();
 router.use(requireAuth);
 
 // GET /api/company-info
-router.get('/', asyncHandler(async (_req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  if (!hasPermission(authUser, 'companyInfo', 'view')) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'You do not have permission to view company information.' });
+    return;
+  }
+
   let info = await prisma.companyInfo.findUnique({ where: { id: 'default' } });
   if (!info) {
     info = await prisma.companyInfo.create({
@@ -43,10 +49,9 @@ router.get('/', asyncHandler(async (_req, res) => {
 
 // PUT /api/company-info
 router.put('/', asyncHandler(async (req, res) => {
-  // Security Hardening: Only ADMIN or MANAGER can update company info
   const authUser = req.authUser!;
-  if (authUser.role !== UserRole.ADMINISTRATOR && authUser.role !== UserRole.MANAGER) {
-    res.status(403).json({ error: 'FORBIDDEN', message: 'Only administrators and managers can update company info.' });
+  if (!hasPermission(authUser, 'companyInfo', 'edit')) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Only authorized roles can update company info.' });
     return;
   }
 
