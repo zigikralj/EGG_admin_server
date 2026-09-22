@@ -121,7 +121,6 @@ export async function importWasteCatalogFromCsv(options: ImportWasteCatalogOptio
     code = code.replace(/\s+/g, ' ').trim();
 
     const is6DigitIndex = /^\d{2}\s\d{2}\s\d{2}\*?$/.test(code);
-    const isCategoryOrChapter = /^\d{1,2}$/.test(code) || /^\d{2}\s\d{2}$/.test(code);
 
     if (!is6DigitIndex && !includeCategories) {
       skipped++;

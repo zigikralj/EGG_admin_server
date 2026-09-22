@@ -24,6 +24,9 @@ router.post('/login', asyncHandler(async (req, res) => {
         { name: { equals: searchStr, mode: 'insensitive' } },
       ],
     },
+    include: {
+      roleEntity: true,
+    },
   });
 
   if (!user) {

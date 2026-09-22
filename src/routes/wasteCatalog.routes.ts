@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { isAdminOrManager } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
@@ -184,8 +184,8 @@ router.patch('/:id/frequent', asyncHandler(async (req, res) => {
 
 // POST /api/waste-catalog
 router.post('/', asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can add waste catalog items.' });
+  if (!hasPermission(req.authUser, 'permits', 'create')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to add waste catalog items.' });
     return;
   }
 

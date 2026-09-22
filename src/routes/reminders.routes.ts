@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { isAdminOrManager } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
@@ -73,7 +73,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isAdminOrManager(req.authUser!.role) && existing.responsibleId !== req.authUser!.id) {
+  const canEditReminder = hasPermission(req.authUser, "reminders", "edit") || hasPermission(req.authUser, "tracker_reminders", "edit");
+  if (!canEditReminder && existing.responsibleId !== req.authUser!.id) {
     res.status(403).json({ error: 'Permission denied. You can only manage your own reminders.' });
     return;
   }
@@ -91,8 +92,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       status: status || existing.status,
       notes: notes !== undefined ? (notes || null) : existing.notes,
       dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
-      permitId: permitId !== undefined ? (permitId || null) : (existing as any).permitId,
-      permitNumber: permitNumber !== undefined ? (permitNumber || null) : (existing as any).permitNumber,
+      permitId: permitId !== undefined ? (permitId || null) : existing.permitId,
+      permitNumber: permitNumber !== undefined ? (permitNumber || null) : existing.permitNumber,
     },
   });
 
@@ -110,7 +111,8 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isAdminOrManager(req.authUser!.role) && existing.responsibleId !== req.authUser!.id) {
+  const canEditReminder = hasPermission(req.authUser, "reminders", "edit") || hasPermission(req.authUser, "tracker_reminders", "edit");
+  if (!canEditReminder && existing.responsibleId !== req.authUser!.id) {
     res.status(403).json({ error: 'Permission denied. You can only manage your own reminders.' });
     return;
   }
@@ -132,7 +134,8 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     return;
   }
   
-  if (!isAdminOrManager(req.authUser!.role) && existing.responsibleId !== req.authUser!.id) {
+  const canDeleteReminder = hasPermission(req.authUser, "reminders", "delete") || hasPermission(req.authUser, "tracker_reminders", "delete");
+  if (!canDeleteReminder && existing.responsibleId !== req.authUser!.id) {
     res.status(403).json({ error: 'Permission denied. You can only manage your own reminders.' });
     return;
   }

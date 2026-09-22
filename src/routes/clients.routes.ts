@@ -2,16 +2,12 @@ import { Router } from "express";
 import { prisma } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
-import { UserRole } from "../types";
+import { hasPermission } from "../types";
 import { formatPermit } from "./permits.routes";
 
 const router = Router();
 
 router.use(requireAuth);
-
-function isAdminOrManager(role: string): boolean {
-  return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-}
 
 function formatClientPermits(permits: any[], fallbackPermit?: any) {
   const formatted = (permits && permits.length > 0)
@@ -63,8 +59,8 @@ router.get("/", asyncHandler(async (_req, res) => {
 // POST /api/clients
 router.post("/", asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can manage clients." });
+  if (!hasPermission(authUser, "clients", "create")) {
+    res.status(403).json({ error: "Permission denied. You do not have permission to create clients." });
     return;
   }
 
@@ -143,8 +139,8 @@ router.post("/", asyncHandler(async (req, res) => {
 // PUT /api/clients/:id
 router.put("/:id", asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can manage clients." });
+  if (!hasPermission(authUser, "clients", "edit")) {
+    res.status(403).json({ error: "Permission denied. You do not have permission to edit clients." });
     return;
   }
 
@@ -256,8 +252,8 @@ router.put("/:id", asyncHandler(async (req, res) => {
 // DELETE /api/clients/:id
 router.delete("/:id", asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can manage clients." });
+  if (!hasPermission(authUser, "clients", "delete")) {
+    res.status(403).json({ error: "Permission denied. You do not have permission to delete clients." });
     return;
   }
 

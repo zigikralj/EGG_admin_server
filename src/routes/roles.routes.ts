@@ -7,12 +7,6 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/', asyncHandler(async (req, res) => {
-  const userRole = (req as any).authUser?.roleEntity;
-  
-  if (!userRole?.isSystemAdmin && !userRole?.permissions?.roles?.includes('view')) {
-    res.status(403).json({ error: 'Permission denied.' });
-    return;
-  }
 
   const roles = await prisma.role.findMany({
     orderBy: { createdAt: 'asc' },
@@ -25,9 +19,11 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
-  const userRole = (req as any).authUser?.roleEntity;
+  const authUser = (req as any).authUser;
+  const userRole = authUser?.roleEntity;
+  const isSysAdmin = authUser?.role === 'Administrator' || Boolean(userRole?.isSystemAdmin);
   
-  if (!userRole?.isSystemAdmin && !userRole?.permissions?.roles?.includes('create')) {
+  if (!isSysAdmin && !userRole?.permissions?.roles?.includes('create')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -40,7 +36,7 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   if (isSystemAdmin) {
-    if (!userRole?.isSystemAdmin) {
+    if (!isSysAdmin) {
       res.status(403).json({ error: 'Only system admins can create system admin roles.' });
       return;
     }
@@ -70,9 +66,11 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 router.put('/:name', asyncHandler(async (req, res) => {
-  const userRole = (req as any).authUser?.roleEntity;
+  const authUser = (req as any).authUser;
+  const userRole = authUser?.roleEntity;
+  const isSysAdmin = authUser?.role === 'Administrator' || Boolean(userRole?.isSystemAdmin);
   
-  if (!userRole?.isSystemAdmin && !userRole?.permissions?.roles?.includes('edit')) {
+  if (!isSysAdmin && !userRole?.permissions?.roles?.includes('edit')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -92,7 +90,7 @@ router.put('/:name', asyncHandler(async (req, res) => {
   }
 
   if (isSystemAdmin && !roleToUpdate.isSystemAdmin) {
-    if (!userRole?.isSystemAdmin) {
+    if (!isSysAdmin) {
       res.status(403).json({ error: 'Only system admins can grant system admin privileges.' });
       return;
     }
@@ -116,9 +114,11 @@ router.put('/:name', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/:name', asyncHandler(async (req, res) => {
-  const userRole = (req as any).authUser?.roleEntity;
+  const authUser = (req as any).authUser;
+  const userRole = authUser?.roleEntity;
+  const isSysAdmin = authUser?.role === 'Administrator' || Boolean(userRole?.isSystemAdmin);
   
-  if (!userRole?.isSystemAdmin && !userRole?.permissions?.roles?.includes('delete')) {
+  if (!isSysAdmin && !userRole?.permissions?.roles?.includes('delete')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }

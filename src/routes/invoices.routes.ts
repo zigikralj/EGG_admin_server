@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { canManageInvoices } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
@@ -72,7 +72,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 // POST /api/invoices
 router.post('/', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "create") && !hasPermission(req.authUser, "tracker_invoices", "create")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
@@ -153,7 +153,7 @@ router.post('/', asyncHandler(async (req, res) => {
 
 // PUT /api/invoices/:id
 router.put('/:id', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "edit") && !hasPermission(req.authUser, "tracker_invoices", "edit")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
@@ -254,7 +254,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 
 // PATCH /api/invoices/:id/status
 router.patch('/:id/status', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "edit") && !hasPermission(req.authUser, "tracker_invoices", "edit")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
@@ -291,7 +291,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 
 // DELETE /api/invoices/:id
 router.delete('/:id', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "delete") && !hasPermission(req.authUser, "tracker_invoices", "delete")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
