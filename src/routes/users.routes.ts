@@ -4,21 +4,22 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth, userForceLogoutMap, userActivityMap } from '../middleware/auth';
 import { generateTempPassword, hashPassword, verifyPassword } from '../authUtils';
 import { validatePassword } from '../middleware/validate';
-import { UserRole } from '../types';
+import { UserRole, hasPermission } from '../types';
 
 const router = Router();
+
+function isSystemAdminUser(user?: any): boolean {
+  if (!user) return false;
+  return user.role === UserRole.ADMINISTRATOR || Boolean(user.roleEntity?.isSystemAdmin);
+}
 
 // Require authentication for all user routes
 router.use(requireAuth);
 
-// Helper to check if a role is Admin or Manager
-function isAdminOrManager(role: string): boolean {
-  return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-}
-
 // GET /api/users
 router.get('/', asyncHandler(async (_req, res) => {
   const users = await prisma.user.findMany({
+    include: { roleEntity: true },
     orderBy: { name: 'asc' },
   });
   const now = Date.now();
@@ -37,8 +38,8 @@ router.get('/', asyncHandler(async (_req, res) => {
 // POST /api/users/:id/force-logout
 router.post('/:id/force-logout', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can force log out users.' });
+  if (!hasPermission(authUser, "users", "edit")) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to force log out users.' });
     return;
   }
 
@@ -58,8 +59,8 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
 // POST /api/users
 router.post('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
+  if (!hasPermission(authUser, "users", "create")) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to create users.' });
     return;
   }
 
@@ -88,9 +89,9 @@ router.post('/', asyncHandler(async (req, res) => {
 
   const targetRole = role || UserRole.USER;
 
-  // Manager cannot create an Administrator account
-  if (authUser.role === UserRole.MANAGER && targetRole === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
+  // Non-system-admin cannot create an Administrator account
+  if (!isSystemAdminUser(authUser) && targetRole === UserRole.ADMINISTRATOR) {
+    res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
     return;
   }
 
@@ -140,8 +141,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id as string;
   const isSelf = authUser.id === id;
 
-  if (!isAdminOrManager(authUser.role) && !isSelf) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
+  if (!hasPermission(authUser, "users", "edit") && !isSelf) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to manage users.' });
     return;
   }
 
@@ -154,18 +155,18 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   let finalRole = existingUser.role;
-  if (isAdminOrManager(authUser.role)) {
+  if (hasPermission(authUser, "users", "edit")) {
     finalRole = role || existingUser.role;
   }
 
-  // Manager cannot edit an Administrator account or upgrade someone to Administrator
-  if (authUser.role === UserRole.MANAGER) {
+  // Non-system-admin cannot edit an Administrator account or upgrade someone to Administrator
+  if (!isSystemAdminUser(authUser)) {
     if (existingUser.role === UserRole.ADMINISTRATOR) {
-      res.status(403).json({ error: 'Permission denied. Managers cannot modify Administrator accounts.' });
+      res.status(403).json({ error: 'Permission denied. Only System Administrators can modify Administrator accounts.' });
       return;
     }
     if (finalRole === UserRole.ADMINISTRATOR) {
-      res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
+      res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
       return;
     }
   }
@@ -193,8 +194,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
     name: trimmedName !== undefined ? trimmedName : existingUser.name,
     email: trimmedEmail !== undefined ? trimmedEmail : existingUser.email,
     phone: phone !== undefined ? (phone ? phone.trim() : null) : existingUser.phone,
-    avatarUrl: avatarUrl !== undefined ? avatarUrl : (existingUser as any).avatarUrl,
-    gender: gender !== undefined ? gender : (existingUser as any).gender,
+    avatarUrl: avatarUrl !== undefined ? avatarUrl : existingUser.avatarUrl,
+    gender: gender !== undefined ? gender : existingUser.gender,
     role: finalRole,
   };
 
@@ -213,7 +214,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
     updatedData.password = hashPassword(password);
   }
   
-  if (isAdminOrManager(authUser.role)) {
+  if (hasPermission(authUser, "users", "edit")) {
     if (status !== undefined) {
       updatedData.status = status;
       updatedData.isApproved = status === 'APPROVED';
@@ -226,6 +227,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const updated = await prisma.user.update({
     where: { id },
     data: updatedData,
+    include: { roleEntity: true },
   });
   const { password: _, ...userWithoutPassword } = updated;
   res.json(userWithoutPassword);
@@ -234,8 +236,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // POST /api/users/:id/approve
 router.post('/:id/approve', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can approve users.' });
+  if (!hasPermission(authUser, "users", "edit")) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to approve users.' });
     return;
   }
 
@@ -243,8 +245,8 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   const { role } = req.body;
   const targetRole = role || UserRole.USER;
 
-  if (authUser.role === UserRole.MANAGER && targetRole === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Managers cannot assign the Administrator role.' });
+  if (!isSystemAdminUser(authUser) && targetRole === UserRole.ADMINISTRATOR) {
+    res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
     return;
   }
 
@@ -255,6 +257,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
       status: 'APPROVED',
       role: targetRole,
     },
+    include: { roleEntity: true },
   });
 
   const { password: _, ...userWithoutPassword } = updatedUser;
@@ -264,8 +267,8 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
 // POST /api/users/:id/reject
 router.post('/:id/reject', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can reject users.' });
+  if (!hasPermission(authUser, "users", "edit")) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to reject users.' });
     return;
   }
 
@@ -276,7 +279,7 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (authUser.role === UserRole.MANAGER && existingUser.role === UserRole.ADMINISTRATOR) {
+  if (!isSystemAdminUser(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -288,8 +291,8 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
 // DELETE /api/users/:id
 router.delete('/:id', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage users.' });
+  if (!hasPermission(authUser, "users", "delete")) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to delete users.' });
     return;
   }
 
@@ -300,9 +303,9 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  // Manager cannot delete an Administrator account
-  if (authUser.role === UserRole.MANAGER && existingUser.role === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Managers cannot delete Administrator accounts.' });
+  // Non-system-admin cannot delete an Administrator account
+  if (!isSystemAdminUser(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
+    res.status(403).json({ error: 'Permission denied. Only System Administrators can delete Administrator accounts.' });
     return;
   }
 

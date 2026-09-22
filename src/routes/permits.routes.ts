@@ -2,13 +2,27 @@ import { Router } from "express";
 import { prisma } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
-import { isAdminOrManager } from "../types";
+import { hasPermission } from "../types";
 
 const router = Router();
 
 router.use(requireAuth);
 
-export function formatPermit(p: any) {
+export interface FormattablePermit {
+  id?: string;
+  permitNumber?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  notes?: string | null;
+  permitTypes?: string[] | null;
+  clientId?: string | null;
+  client?: any;
+  clientExtraData?: any[];
+  permitWastes?: any[];
+  [key: string]: any;
+}
+
+export function formatPermit<T extends FormattablePermit>(p: T) {
   const client = p.client || p.clientExtraData?.[0]?.client || null;
   const clientsList = client ? [client] : (p.clientExtraData || []).map((ed: any) => ed.client).filter(Boolean);
   const wasteCatalogs = (p.permitWastes || []).map((pw: any) => pw.wasteCatalog).filter(Boolean);
@@ -102,8 +116,8 @@ router.get("/:id", asyncHandler(async (req, res) => {
 
 // POST /api/permits
 router.post("/", asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can create permits." });
+  if (!hasPermission(req.authUser, "permits", "create")) {
+    res.status(403).json({ error: "Permission denied. You do not have permission to create permits." });
     return;
   }
 
@@ -174,8 +188,8 @@ router.post("/", asyncHandler(async (req, res) => {
 
 // PUT /api/permits/:id
 router.put("/:id", asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can edit permits." });
+  if (!hasPermission(req.authUser, "permits", "edit")) {
+    res.status(403).json({ error: "Permission denied. You do not have permission to edit permits." });
     return;
   }
 
@@ -211,73 +225,77 @@ router.put("/:id", asyncHandler(async (req, res) => {
     targetWcIds = wasteCatalogId ? [wasteCatalogId] : [];
   }
 
-  if (targetWcIds !== undefined) {
-    await prisma.permitWaste.deleteMany({
-      where: { permitId: id },
-    });
-
-    if (targetWcIds.length > 0) {
-      await prisma.permitWaste.createMany({
-        data: targetWcIds.map(wId => ({
-          permitId: id,
-          wasteCatalogId: wId,
-        })),
-      });
-    }
-  }
-
   const targetClientId = clientId !== undefined ? (clientId ? String(clientId).trim() : null) : existing.clientId;
 
-  const updated = await prisma.permit.update({
-    where: { id },
-    data: {
-      permitNumber: permitNumber !== undefined ? permitNumber.trim() : existing.permitNumber,
-      startDate: startDate !== undefined ? startDate : existing.startDate,
-      endDate: endDate !== undefined ? endDate : existing.endDate,
-      notes: notes !== undefined ? (notes ? notes.trim() : null) : existing.notes,
-      permitTypes: normalizedPermitTypes !== undefined ? normalizedPermitTypes : existing.permitTypes,
-      clientId: targetClientId,
-    },
-    include: {
-      client: true,
-      reminders: true,
-      clientExtraData: {
-        include: { client: true },
-      },
-      permitWastes: {
-        include: { wasteCatalog: true },
-      },
-    },
-  });
+  const updated = await prisma.$transaction(async (tx) => {
+    if (targetWcIds !== undefined) {
+      await tx.permitWaste.deleteMany({
+        where: { permitId: id },
+      });
 
-  // Sync clientExtraData if client changed
-  if (clientId !== undefined && targetClientId !== existing.clientId) {
-    if (targetClientId) {
-      await prisma.clientExtraData.upsert({
-        where: { clientId: targetClientId },
-        create: { clientId: targetClientId, permitId: id },
-        update: { permitId: id },
-      });
+      if (targetWcIds.length > 0) {
+        await tx.permitWaste.createMany({
+          data: targetWcIds.map(wId => ({
+            permitId: id,
+            wasteCatalogId: wId,
+          })),
+        });
+      }
     }
-    if (existing.clientId) {
-      const remainingPermit = await prisma.permit.findFirst({
-        where: { clientId: existing.clientId, id: { not: id } },
-      });
-      await prisma.clientExtraData.upsert({
-        where: { clientId: existing.clientId },
-        create: { clientId: existing.clientId, permitId: remainingPermit?.id || null },
-        update: { permitId: remainingPermit?.id || null },
-      });
+
+    const permitUpdate = await tx.permit.update({
+      where: { id },
+      data: {
+        permitNumber: permitNumber !== undefined ? permitNumber.trim() : existing.permitNumber,
+        startDate: startDate !== undefined ? startDate : existing.startDate,
+        endDate: endDate !== undefined ? endDate : existing.endDate,
+        notes: notes !== undefined ? (notes ? notes.trim() : null) : existing.notes,
+        permitTypes: normalizedPermitTypes !== undefined ? normalizedPermitTypes : existing.permitTypes,
+        clientId: targetClientId,
+      },
+      include: {
+        client: true,
+        reminders: true,
+        clientExtraData: {
+          include: { client: true },
+        },
+        permitWastes: {
+          include: { wasteCatalog: true },
+        },
+      },
+    });
+
+    // Sync clientExtraData if client changed
+    if (clientId !== undefined && targetClientId !== existing.clientId) {
+      if (targetClientId) {
+        await tx.clientExtraData.upsert({
+          where: { clientId: targetClientId },
+          create: { clientId: targetClientId, permitId: id },
+          update: { permitId: id },
+        });
+      }
+      if (existing.clientId) {
+        const remainingPermit = await tx.permit.findFirst({
+          where: { clientId: existing.clientId, id: { not: id } },
+        });
+        await tx.clientExtraData.upsert({
+          where: { clientId: existing.clientId },
+          create: { clientId: existing.clientId, permitId: remainingPermit?.id || null },
+          update: { permitId: remainingPermit?.id || null },
+        });
+      }
     }
-  }
+
+    return permitUpdate;
+  });
 
   res.json(formatPermit(updated));
 }));
 
 // DELETE /api/permits/:id
 router.delete("/:id", asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: "Permission denied. Only Administrators and Managers can delete permits." });
+  if (!hasPermission(req.authUser, "permits", "delete")) {
+    res.status(403).json({ error: "Permission denied. You do not have permission to delete permits." });
     return;
   }
 

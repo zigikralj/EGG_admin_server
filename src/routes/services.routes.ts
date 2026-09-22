@@ -2,17 +2,12 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { UserRole } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
 // Require authentication for all services routes
 router.use(requireAuth);
-
-// Helper to check if a role is Admin or Manager
-function isAdminOrManager(role: string): boolean {
-  return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-}
 
 // GET /api/services
 router.get('/', asyncHandler(async (_req, res) => {
@@ -25,8 +20,8 @@ router.get('/', asyncHandler(async (_req, res) => {
 // POST /api/services
 router.post('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
+  if (!hasPermission(authUser, 'services', 'create')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to create services.' });
     return;
   }
 
@@ -73,8 +68,8 @@ router.post('/', asyncHandler(async (req, res) => {
 // PUT /api/services/:id
 router.put('/:id', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
+  if (!hasPermission(authUser, 'services', 'edit')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to edit services.' });
     return;
   }
 
@@ -111,8 +106,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // DELETE /api/services/:id
 router.delete('/:id', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isAdminOrManager(authUser.role)) {
-    res.status(403).json({ error: 'Permission denied. Only Administrators and Managers can manage services.' });
+  if (!hasPermission(authUser, 'services', 'delete')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to delete services.' });
     return;
   }
 

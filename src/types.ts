@@ -17,28 +17,20 @@ export function canManageInvoices(role?: string | null): boolean {
   );
 }
 
+export function getDefaultResourcePermission(role?: string | null, resource?: string, action?: string): boolean {
+  if (role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER) return true;
+  return false;
+}
+
 export function hasPermission(user: any, resource: string, action: string): boolean {
   if (!user) return false;
-  if (!user.roleEntity) {
-    if (user.role === UserRole.ADMINISTRATOR) return true;
-    if (resource === 'companyInfo') {
-      if (action === 'view') return true;
-      if (action === 'edit' || action === 'create' || action === 'delete') {
-        return user.role === UserRole.ADMINISTRATOR || user.role === UserRole.MANAGER;
-      }
-    }
-    return false;
+  if (user.role === UserRole.ADMINISTRATOR || user.roleEntity?.isSystemAdmin) {
+    return true;
   }
-  if (user.roleEntity.isSystemAdmin) return true;
-  const perms = user.roleEntity.permissions || {};
-  if (!perms[resource] || !Array.isArray(perms[resource])) {
-    if (resource === 'companyInfo') {
-      if (action === 'view') return true;
-      if (action === 'edit' || action === 'create' || action === 'delete') {
-        return user.role === UserRole.ADMINISTRATOR || user.role === UserRole.MANAGER;
-      }
-    }
-    return false;
+  const perms = user.roleEntity?.permissions;
+  if (perms && typeof perms === 'object' && Array.isArray(perms[resource])) {
+    return perms[resource].includes(action);
   }
-  return perms[resource].includes(action);
+  return getDefaultResourcePermission(user.role, resource, action);
 }
+
