@@ -34,3 +34,34 @@ export function hasPermission(user: any, resource: string, action: string): bool
   return getDefaultResourcePermission(user.role, resource, action);
 }
 
+export function isRestrictedToOwn(user: any, resource: string): boolean {
+  if (!user) return false;
+  const isSysAdmin =
+    user.role === UserRole.ADMINISTRATOR ||
+    Boolean(user.roleEntity?.isSystemAdmin) ||
+    user.realRole === UserRole.ADMINISTRATOR ||
+    Boolean(user.realRoleEntity?.isSystemAdmin);
+
+  if (isSysAdmin) return false;
+
+  const perms = user.roleEntity?.permissions;
+  if (!perms || typeof perms !== "object") return false;
+
+  const checkOnlyOwn = (key: string) => {
+    const val = perms[key];
+    if (val === true) return true;
+    if (Array.isArray(val) && val.length > 0) return true;
+    return false;
+  };
+
+  if (checkOnlyOwn(`${resource}_onlyOwn`)) return true;
+
+  if (resource.startsWith("tracker_")) {
+    const base = resource.replace("tracker_", "");
+    if (checkOnlyOwn(`${base}_onlyOwn`)) return true;
+  } else {
+    if (checkOnlyOwn(`tracker_${resource}_onlyOwn`)) return true;
+  }
+
+  return false;
+}
