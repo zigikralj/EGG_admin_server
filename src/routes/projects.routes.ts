@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { hasPermission } from '../types';
+import { hasPermission, isRestrictedToOwn } from '../types';
 import { addMonths } from '../helpers/dateUtils';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
 
@@ -17,10 +17,16 @@ function isProjectOwnerOrCan(
   project: { responsible?: string | null; responsibleId?: string | null },
   action: "edit" | "delete"
 ): boolean {
+  if (user.role === "Administrator" || user.roleEntity?.isSystemAdmin || user.realRole === "Administrator" || user.realRoleEntity?.isSystemAdmin) return true;
+  const isOwner = Boolean(
+    (project.responsible && project.responsible.trim().toLowerCase() === (user.name || "").trim().toLowerCase()) ||
+    (project.responsibleId && project.responsibleId === user.id)
+  );
+  if (isRestrictedToOwn(user, "projects")) {
+    return isOwner;
+  }
   if (hasPermission(user, "projects", action) || hasPermission(user, "tracker_projects", action)) return true;
-  if (project.responsible && project.responsible.trim().toLowerCase() === (user.name || "").trim().toLowerCase()) return true;
-  if (project.responsibleId && project.responsibleId === user.id) return true;
-  return false;
+  return isOwner;
 }
 
 // ----------------------------------------------------
@@ -29,14 +35,52 @@ function isProjectOwnerOrCan(
 
 // GET /api/projects
 router.get('/', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const isSimulating = Boolean((authUser as any).isSimulatingRole);
+  const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
   const search = ((req.query.search as string) || '').trim();
-  const where = search ? {
+
+  let ownerCondition: any = undefined;
+  if (isOnlyOwn) {
+    if (isSimulating) {
+      const roleUsers = await prisma.user.findMany({
+        where: { role: authUser.role },
+        select: { id: true, name: true },
+      });
+      const userIds = roleUsers.map((u) => u.id);
+      const userNames = roleUsers.map((u) => u.name).filter(Boolean);
+      ownerCondition = {
+        OR: [
+          { responsibleId: { in: userIds } },
+          ...(userNames.length > 0 ? [{ responsible: { in: userNames, mode: 'insensitive' as const } }] : []),
+        ],
+      };
+    } else {
+      ownerCondition = {
+        OR: [
+          { responsibleId: authUser.id },
+          ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
+        ],
+      };
+    }
+  }
+
+  const searchCondition = search ? {
     OR: [
       { name: { contains: search, mode: 'insensitive' as const } },
       { clientName: { contains: search, mode: 'insensitive' as const } },
       { responsible: { contains: search, mode: 'insensitive' as const } },
     ]
-  } : {};
+  } : undefined;
+
+  let where: any = {};
+  if (ownerCondition && searchCondition) {
+    where = { AND: [ownerCondition, searchCondition] };
+  } else if (ownerCondition) {
+    where = ownerCondition;
+  } else if (searchCondition) {
+    where = searchCondition;
+  }
 
   const projects = await prisma.project.findMany({
     where,
@@ -63,12 +107,16 @@ router.post('/', asyncHandler(async (req, res) => {
     if (c) finalClientName = c.name;
   }
 
-  let finalResponsible = (responsible ? String(responsible).trim() : "") || authUser.name;
+  const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
+  let finalResponsible = authUser.name || "";
   let finalResponsibleId: string | null = authUser.id;
 
-  if (responsible) {
-    const matchedUser = await prisma.user.findFirst({ where: { name: responsible } });
-    if (matchedUser) finalResponsibleId = matchedUser.id;
+  if (!isOnlyOwn) {
+    finalResponsible = (responsible ? String(responsible).trim() : "") || authUser.name;
+    if (responsible) {
+      const matchedUser = await prisma.user.findFirst({ where: { name: responsible } });
+      if (matchedUser) finalResponsibleId = matchedUser.id;
+    }
   }
 
   const computedNextSample = nextSample || null;
@@ -123,10 +171,14 @@ router.put('/:id', asyncHandler(async (req, res) => {
     if (c) finalClientName = c.name;
   }
 
+  const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
   let finalResponsible = responsible !== undefined ? (responsible ? String(responsible).trim() : "") : existing.responsible;
   let finalResponsibleId = existing.responsibleId;
 
-  if (responsible) {
+  if (isOnlyOwn) {
+    finalResponsible = authUser.name || existing.responsible;
+    finalResponsibleId = authUser.id;
+  } else if (responsible) {
     const matchedUser = await prisma.user.findFirst({ where: { name: responsible } });
     if (matchedUser) finalResponsibleId = matchedUser.id;
   }
