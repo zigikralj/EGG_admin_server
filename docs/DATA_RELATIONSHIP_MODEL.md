@@ -89,8 +89,10 @@ flowchart TD
     subgraph Config ["Configuration"]
         CompanyInfo["CompanyInfo<br/>(Singleton Header)"]:::config
         Category["Category<br/>(Project Types)"]:::config
+        Role["Role<br/>(Dynamic Permissions)"]:::config
     end
 
+    Role -->|"defines permissions for (1:N)"| User
     User -->|"owns (1:N)"| UserPref
     User -->|"assigned responsible (1:N)"| Project
     Client -->|"commissions (1:N)"| Project
@@ -410,7 +412,8 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `password` | `String` | Optional | | Salted bcrypt hash |
 | `isApproved` | `Boolean` | Required | `@default(true)` | Registration approval flag |
 | `status` | `String` | Required | `@default("APPROVED")` | Workflow status (`APPROVED`, `PENDING`, `REJECTED`) |
-| `role` | `String` | Required | `@default("User")` | Access level (`Admin`, `User`) |
+| `role` | `String` | Required | `@default("User")` | Access level identifier (references `Role.name`) |
+| `roleEntity` | `Role` | Optional | `@relation(fields: [role], references: [name])` | Role permissions definition |
 | `phone` | `String` | Optional | | Contact phone number |
 | `avatarUrl` | `String` | Optional | | Link to avatar image |
 | `gender` | `String` | Optional | | Gender identifier |
@@ -422,10 +425,28 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 - `preferences` → `UserPreference[]`
 - `reminders` → `Reminder[]`
 - `notifications` → `Notification[]`
+- `roleEntity` → `Role`
 
 ---
 
-### 4.2. `UserPreference`
+### 4.2. `Role`
+*Dynamic role definitions with granular permissions.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `name` | `String` | Required | `@id` | Role name (e.g., 'Administrator', 'Manager') |
+| `description` | `String` | Optional | | Role description |
+| `isSystemAdmin` | `Boolean` | Required | `@default(false)` | Flag bypassing all permission checks |
+| `permissions` | `Json` | Required | `@default("{}")` | Granular permission map |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
+
+**Relations:**
+- `users` → `User[]`
+
+---
+
+### 4.3. `UserPreference`
 *User-specific key-value application settings.*
 
 | Field | Type | Modifiers | Constraints | Description |

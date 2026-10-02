@@ -35,7 +35,7 @@ Every route file follows the same pattern:
 1. Creates `Router()`
 2. Applies `router.use(requireAuth)` (except auth routes)
 3. Defines CRUD endpoints wrapped in `asyncHandler`
-4. Checks roles inline with `isAdminOrManager` etc.
+4. Checks roles inline with `hasPermission(user, 'resource', 'action')` etc.
 
 | File | Mount Path | Purpose |
 |---|---|---|
@@ -53,7 +53,7 @@ Every route file follows the same pattern:
 | `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions. Own notifications only. |
 | `companyInfo.routes.ts` | `/api/company-info` | Singleton company record. Admin/Manager write. |
 | `preferences.routes.ts` | `/api/preferences` | Per-user key-value settings. Own preferences only. |
-| `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts. No auth. |
+| `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts. Optional auth. |
 
 ### Helper Utilities (`src/helpers/`)
 | File | Purpose |
@@ -96,19 +96,22 @@ Every route file follows the same pattern:
 ```typescript
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { isAdminOrManager } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 router.use(requireAuth);
 
 router.post('/', asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, 'resource_name', 'create')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
   // ... handler logic
 }));
 ```
+**Role Simulation**: The `X-Role-View` header can be used by an Administrator to simulate another role (e.g. `X-Role-View: Manager`). This sets `req.authUser.isSimulatingRole = true` and overwrites `role`/`roleEntity` while backing up the real ones.
+
+**Resource Ownership Restrictions**: Check `isRestrictedToOwn(user, "projects")` when roles define limits on viewing/editing only the user's assigned items.
 
 ### Search Pattern
 Most GET list endpoints support `?search=` with Prisma `contains`:
@@ -204,7 +207,7 @@ npm run release:major          # Bump major version
 
 1. **Dates are strings** — stored as `String` type (ISO `YYYY-MM-DD`), not Prisma `DateTime`. Only `createdAt`/`updatedAt` are actual timestamps.
 2. **X-User-Id fallback** — The auth middleware has a legacy fallback that trusts `X-User-Id` header without JWT. Marked for removal in "Phase 3". Security risk.
-3. **Stats route has no auth** — `GET /api/projects/stats` is mounted before the auth-protected project routes, so it's publicly accessible.
+3. **Stats route has optional auth** — `GET /api/projects/stats` is mounted before the auth-protected project routes, so it's publicly accessible, but respects the authenticated user's resource ownership restrictions if a token is provided.
 4. **Waste catalog auto-seeds** — The `GET /api/waste-catalog` endpoint auto-seeds ~50 entries on first call if table is empty.
 5. **Invoice items are replaced** — `PUT /api/invoices/:id` with `items` array deletes all existing items and re-creates them (inside a transaction).
 6. **Online status is in-memory** — `userActivityMap` is process-local. Resets on server restart. Not suitable for multi-instance deployments.
