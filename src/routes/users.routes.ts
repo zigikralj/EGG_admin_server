@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
-import { requireAuth, userForceLogoutMap, userActivityMap } from '../middleware/auth';
+import { requireAuth, userForceLogoutMap } from '../middleware/auth';
 import { generateTempPassword, hashPassword, verifyPassword } from '../authUtils';
 import { validatePassword } from '../middleware/validate';
 import { UserRole, hasPermission } from '../types';
@@ -22,16 +22,7 @@ router.get('/', asyncHandler(async (_req, res) => {
     include: { roleEntity: true },
     orderBy: { name: 'asc' },
   });
-  const now = Date.now();
-  const sanitizedUsers = users.map(({ password, ...rest }) => {
-    const lastActive = userActivityMap.get(rest.id);
-    const isOnline = Boolean(lastActive && (now - lastActive) < 45000);
-    return {
-      ...rest,
-      isOnline,
-      lastActiveAt: lastActive ? new Date(lastActive).toISOString() : null,
-    };
-  });
+  const sanitizedUsers = users.map(({ password, ...rest }) => rest);
   res.json(sanitizedUsers);
 }));
 
@@ -51,7 +42,6 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
   }
 
   userForceLogoutMap.set(targetId, Date.now());
-  userActivityMap.delete(targetId);
 
   res.json({ success: true, message: `User ${targetUser.name} has been forced to log out.` });
 }));

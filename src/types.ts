@@ -18,6 +18,9 @@ export function canManageInvoices(role?: string | null): boolean {
 }
 
 export function getDefaultResourcePermission(role?: string | null, resource?: string, action?: string): boolean {
+  if (resource === 'activityLogs' || resource === 'activity_logs') {
+    return role === UserRole.ADMINISTRATOR;
+  }
   if (role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER) return true;
   return false;
 }

@@ -71,6 +71,7 @@ model User {
   preferences   UserPreference[]
   reminders     Reminder[]
   notifications Notification[]
+  activityLogs  ActivityLog[]
 }
 
 model UserPreference {
@@ -327,4 +328,30 @@ model Role {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   users         User[]
+}
+
+model ActivityLog {
+  id              String   @id @default(uuid())
+  userId          String
+  userName        String?
+  type            String
+  path            String?
+  details         String?
+  durationSeconds Int?     @default(0)
+  sessionId       String?
+  timestamp       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, timestamp])
+  @@index([timestamp])
+  @@index([sessionId])
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

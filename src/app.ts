@@ -6,6 +6,7 @@ import { errorHandler } from './middleware/errorHandler';
 import rolesRoutes from './routes/roles.routes';
 import authRoutes from './routes/auth.routes';
 import usersRoutes from './routes/users.routes';
+import activityLogRoutes from './routes/activityLog.routes';
 import projectsRoutes from './routes/projects.routes';
 import remindersRoutes from './routes/reminders.routes';
 import clientsRoutes from './routes/clients.routes';
@@ -70,6 +71,7 @@ export function createApp() {
   app.use('/api/roles', rolesRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/users', usersRoutes);
+  app.use('/api/activity-logs', activityLogRoutes);
   app.use('/api/projects/stats', statsRoutes);
   app.use('/api/projects', projectsRoutes);
   app.use('/api/reminders', remindersRoutes);
