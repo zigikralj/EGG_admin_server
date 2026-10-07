@@ -113,8 +113,6 @@ router.post('/', asyncHandler(async (req, res) => {
   // ... handler logic
 }));
 ```
-**Role Simulation**: The `X-Role-View` header can be used by an Administrator to simulate another role (e.g. `X-Role-View: Manager`). This sets `req.authUser.isSimulatingRole = true` and overwrites `role`/`roleEntity` while backing up the real ones.
-
 **Resource Ownership Restrictions**: Check `isRestrictedToOwn(user, "projects")` when roles define limits on viewing/editing only the user's assigned items.
 
 ### Search Pattern

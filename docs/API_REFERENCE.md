@@ -16,7 +16,6 @@ Authorization: Bearer <jwt_token>
 ### Optional Headers
 
 - **`X-User-Id`**: Legacy fallback that trusts the provided user ID without JWT (marked for removal).
-- **`X-Role-View`**: Allows administrators to simulate another role for testing or debugging (e.g., `X-Role-View: Manager`). Overrides the apparent role of the authenticated user for the duration of the request.
 
 ---
 

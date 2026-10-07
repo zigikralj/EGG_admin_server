@@ -17,7 +17,7 @@ function isProjectOwnerOrCan(
   project: { responsible?: string | null; responsibleId?: string | null },
   action: "edit" | "delete"
 ): boolean {
-  if (user.role === "Administrator" || user.roleEntity?.isSystemAdmin || user.realRole === "Administrator" || user.realRoleEntity?.isSystemAdmin) return true;
+  if (user.role === "Administrator" || user.roleEntity?.isSystemAdmin) return true;
   const isOwner = Boolean(
     (project.responsible && project.responsible.trim().toLowerCase() === (user.name || "").trim().toLowerCase()) ||
     (project.responsibleId && project.responsibleId === user.id)
@@ -36,33 +36,17 @@ function isProjectOwnerOrCan(
 // GET /api/projects
 router.get('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  const isSimulating = Boolean((authUser as any).isSimulatingRole);
   const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
   const search = ((req.query.search as string) || '').trim();
 
   let ownerCondition: any = undefined;
   if (isOnlyOwn) {
-    if (isSimulating) {
-      const roleUsers = await prisma.user.findMany({
-        where: { role: authUser.role },
-        select: { id: true, name: true },
-      });
-      const userIds = roleUsers.map((u) => u.id);
-      const userNames = roleUsers.map((u) => u.name).filter(Boolean);
-      ownerCondition = {
-        OR: [
-          { responsibleId: { in: userIds } },
-          ...(userNames.length > 0 ? [{ responsible: { in: userNames, mode: 'insensitive' as const } }] : []),
-        ],
-      };
-    } else {
-      ownerCondition = {
-        OR: [
-          { responsibleId: authUser.id },
-          ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
-        ],
-      };
-    }
+    ownerCondition = {
+      OR: [
+        { responsibleId: authUser.id },
+        ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
+      ],
+    };
   }
 
   const searchCondition = search ? {
