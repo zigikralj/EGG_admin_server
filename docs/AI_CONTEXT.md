@@ -25,7 +25,7 @@ A **REST API server** for managing environmental services projects (waste manage
 ### Middleware (`src/middleware/`)
 | File | Purpose | Key Exports |
 |---|---|---|
-| `auth.ts` | JWT auth resolution, `requireAuth` middleware, online-status tracking, force-logout, impersonation | `requireAuth`, `getAuthUser`, `userActivityMap`, `userForceLogoutMap` |
+| `auth.ts` | JWT auth resolution, `requireAuth` middleware, force-logout, impersonation | `requireAuth`, `getAuthUser`, `userForceLogoutMap` |
 | `errorHandler.ts` | `asyncHandler` wrapper + global error handler (Prisma P2002/P2025) | `asyncHandler`, `errorHandler` |
 | `validate.ts` | `sanitizeString()`, `validatePassword()` | `sanitizeString`, `validatePassword` |
 
@@ -35,7 +35,7 @@ Every route file follows the same pattern:
 1. Creates `Router()`
 2. Applies `router.use(requireAuth)` (except auth routes)
 3. Defines CRUD endpoints wrapped in `asyncHandler`
-4. Checks roles inline with `isAdminOrManager` etc.
+4. Checks roles inline with `hasPermission(user, 'resource', 'action')` etc.
 
 | File | Mount Path | Purpose |
 |---|---|---|
@@ -53,11 +53,13 @@ Every route file follows the same pattern:
 | `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions. Own notifications only. |
 | `companyInfo.routes.ts` | `/api/company-info` | Singleton company record. Admin/Manager write. |
 | `preferences.routes.ts` | `/api/preferences` | Per-user key-value settings. Own preferences only. |
-| `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts. No auth. |
+| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, lazy diff loading, purge. |
+| `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts. Optional auth. |
 
 ### Helper Utilities (`src/helpers/`)
 | File | Purpose |
 |---|---|
+| `activityLogger.ts` | Non-blocking batched in-memory activity log buffer with auto-flush (5s / 50 items) and daily retention purge |
 | `dateUtils.ts` | `addMonths()`, `daysUntil()`, `isStale()` — date arithmetic for project scheduling |
 | `mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes, creates Notification records |
 | `prismaErrors.ts` | `handlePrismaError()` — legacy inline Prisma error handler (mostly superseded by global errorHandler) |
@@ -91,24 +93,27 @@ Every route file follows the same pattern:
 2. Run migration: `npm run migrate:dev -- --name <name>` (creates migration file in `prisma/migrations/` and updates local DB)
 3. **CRITICAL: ALWAYS use migrations (`prisma migrate dev`). NEVER use `prisma db push` on staging/production databases!** Render runs `npx prisma migrate deploy` on startup. If schema changes lack a migration file, Render will not apply them, causing runtime crashes or schema drift.
 4. The `prisma` export from `src/db.ts` auto-includes the new model
+5. **Squash Iterative Migrations Before Production Deployment**: When developing a new unreleased feature, iterative tweaks often produce multiple migration files (e.g., initial table -> add column -> modify index -> add settings). Before deploying to staging/production, **squash these into a single consolidated migration**. Having multiple migrations for an unreleased feature introduces migration debt, index churn (creating and dropping indexes), and deployment overhead. Once a migration is deployed to production/Neon, it becomes immutable.
+
 
 ### Auth Pattern
 ```typescript
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { isAdminOrManager } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 router.use(requireAuth);
 
 router.post('/', asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, 'resource_name', 'create')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
   // ... handler logic
 }));
 ```
+**Resource Ownership Restrictions**: Check `isRestrictedToOwn(user, "projects")` when roles define limits on viewing/editing only the user's assigned items.
 
 ### Search Pattern
 Most GET list endpoints support `?search=` with Prisma `contains`:
@@ -155,6 +160,8 @@ const where = search ? {
 - **Category** — project categories
 - **CompanyInfo** — singleton with company legal details
 - **Reminder** — tasks linked to projects/clients/permits/users
+- **ActivityLog** — user audit and navigation logs (Administrator only)
+- **SystemSetting** — global key-value application settings (e.g. `activity_logging_enabled`, `activity_log_retention_days`)
 
 ---
 
@@ -204,10 +211,12 @@ npm run release:major          # Bump major version
 
 1. **Dates are strings** — stored as `String` type (ISO `YYYY-MM-DD`), not Prisma `DateTime`. Only `createdAt`/`updatedAt` are actual timestamps.
 2. **X-User-Id fallback** — The auth middleware has a legacy fallback that trusts `X-User-Id` header without JWT. Marked for removal in "Phase 3". Security risk.
-3. **Stats route has no auth** — `GET /api/projects/stats` is mounted before the auth-protected project routes, so it's publicly accessible.
+3. **Stats route has optional auth** — `GET /api/projects/stats` is mounted before the auth-protected project routes, so it's publicly accessible, but respects the authenticated user's resource ownership restrictions if a token is provided.
 4. **Waste catalog auto-seeds** — The `GET /api/waste-catalog` endpoint auto-seeds ~50 entries on first call if table is empty.
 5. **Invoice items are replaced** — `PUT /api/invoices/:id` with `items` array deletes all existing items and re-creates them (inside a transaction).
-6. **Online status is in-memory** — `userActivityMap` is process-local. Resets on server restart. Not suitable for multi-instance deployments.
+6. **Force logout is in-memory** — `userForceLogoutMap` is process-local. Resets on server restart. For multi-instance deployments, a shared store (e.g. Redis) is needed.
 7. **Password never returned** — All user endpoints destructure out the `password` field before responding.
 8. **Manager < Administrator** — Managers cannot create, modify, or delete Administrator accounts, nor assign the Administrator role.
 9. **ALWAYS use migrations, NEVER db push** — Render runs `npx prisma migrate deploy` on deployment. Every schema change must have a corresponding migration file in `prisma/migrations/`. Using `db push` skips migration tracking, causes schema drift, and breaks deployments.
+10. **Squash Pre-Production Migrations** — Always consolidate micro-migrations created during feature development into a single clean migration before deploying to staging/production. Do not ship intermediate iterations (e.g. creating a table, adding a column, dropping/re-creating indexes) if they all belong to the same initial feature release.
+

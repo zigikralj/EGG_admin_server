@@ -190,7 +190,6 @@ The app factory performs, in order:
 - **`requireAuth`**: Extracts JWT from `Authorization: Bearer <token>` header. Resolves user from database. Attaches `req.authUser`. Returns 401 if invalid.
 - **Impersonation**: Admin/Manager users can send `X-User-Id` header alongside their JWT to act as another user.
 - **Force logout**: In-memory `userForceLogoutMap` stores force-logout timestamps. Tokens issued before the timestamp are rejected.
-- **Online tracking**: In-memory `userActivityMap` tracks last-active timestamps (45s threshold for "online" status).
 
 ### Role-Based Access Control (RBAC)
 
@@ -262,6 +261,7 @@ All routes follow a consistent pattern:
 | `/api/notifications` | `notifications.routes.ts` | All routes require auth |
 | `/api/permits` | `permits.routes.ts` | All routes require auth |
 | `/api/waste-catalog` | `wasteCatalog.routes.ts` | All routes require auth |
+| `/api/activity-logs` | `activityLog.routes.ts` | Admin only for viewing/managing |
 
 ---
 
@@ -301,6 +301,8 @@ erDiagram
     WasteCatalog ||--o{ PermitWaste : "referenced by"
 
     ClientExtraData }o--|| Permit : "references"
+    
+    User ||--o{ ActivityLog : "performs"
 ```
 
 ### Model Summary
@@ -323,6 +325,8 @@ erDiagram
 | **Permit** | Environmental permits | permitNumber, startDate, endDate |
 | **WasteCatalog** | Serbian waste index catalog | code (unique), description, isHazardous, hazardListMark, frequent |
 | **PermitWaste** | Permit↔WasteCatalog junction | permitId, wasteCatalogId (unique together) |
+| **ActivityLog** | System audit and user activity | userId, type, details, timestamp |
+| **SystemSetting** | Global application settings | key (unique), value |
 
 ---
 
@@ -338,6 +342,12 @@ erDiagram
 
 - **`extractMentionedUserIds(content)`**: Parses HTML content for `data-user-id` attributes and `@Name` plain-text mentions. Returns array of user IDs.
 - **`handleProjectNotesMentions(...)`**: Compares current vs. previous notes to find *newly* mentioned users, then creates `Notification` records for each.
+
+### `src/helpers/activityLogger.ts`
+
+- **`enqueueActivityLog(entry)`**: Buffers an activity log entry in memory.
+- **`flushActivityLogs()`**: Persists buffered logs to the database in batches.
+- **`purgeOldActivityLogs()`**: Deletes logs older than the configured retention period.
 
 ### `src/helpers/prismaErrors.ts`
 

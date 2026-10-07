@@ -84,13 +84,17 @@ flowchart TD
     subgraph Workflow ["Tasks & Notifications"]
         Reminder["Reminder<br/>(Multi-parent Tasks)"]:::workflow
         Notification["Notification<br/>(In-App Mentions)"]:::workflow
+        ActivityLog["ActivityLog<br/>(Audit & Usage)"]:::workflow
     end
 
     subgraph Config ["Configuration"]
         CompanyInfo["CompanyInfo<br/>(Singleton Header)"]:::config
         Category["Category<br/>(Project Types)"]:::config
+        Role["Role<br/>(Dynamic Permissions)"]:::config
+        SystemSetting["SystemSetting<br/>(Global Settings)"]:::config
     end
 
+    Role -->|"defines permissions for (1:N)"| User
     User -->|"owns (1:N)"| UserPref
     User -->|"assigned responsible (1:N)"| Project
     Client -->|"commissions (1:N)"| Project
@@ -109,6 +113,7 @@ flowchart TD
     Invoice -->|"contains line items (1:N)"| InvoiceItem
 
     User -->|"receives"| Notification
+    User -->|"generates"| ActivityLog
     Project -.->|"context for"| Notification
     Project -.->|"milestone for"| Reminder
     Client -.->|"follow-up on"| Reminder
@@ -126,6 +131,7 @@ erDiagram
     USER ||--o{ PROJECT : "assigned responsible (responsibleId)"
     USER ||--o{ USER_PREFERENCE : "owns settings (userId) [CASCADE]"
     USER ||--o{ NOTIFICATION : "receives alerts (userId) [CASCADE]"
+    USER ||--o{ ACTIVITY_LOG : "performs actions (userId) [CASCADE]"
     USER ||--o{ REMINDER : "responsible for (responsibleId) [SET NULL]"
 
     CLIENT ||--o{ PROJECT : "engages (clientId)"
@@ -293,6 +299,18 @@ erDiagram
         string taxId
         string email
     }
+
+    SYSTEM_SETTING {
+        string key PK
+        string value
+    }
+
+    ACTIVITY_LOG {
+        string id PK
+        string userId FK
+        string type
+        string details
+    }
 ```
 
 ---
@@ -410,7 +428,8 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `password` | `String` | Optional | | Salted bcrypt hash |
 | `isApproved` | `Boolean` | Required | `@default(true)` | Registration approval flag |
 | `status` | `String` | Required | `@default("APPROVED")` | Workflow status (`APPROVED`, `PENDING`, `REJECTED`) |
-| `role` | `String` | Required | `@default("User")` | Access level (`Admin`, `User`) |
+| `role` | `String` | Required | `@default("User")` | Access level identifier (references `Role.name`) |
+| `roleEntity` | `Role` | Optional | `@relation(fields: [role], references: [name])` | Role permissions definition |
 | `phone` | `String` | Optional | | Contact phone number |
 | `avatarUrl` | `String` | Optional | | Link to avatar image |
 | `gender` | `String` | Optional | | Gender identifier |
@@ -422,10 +441,28 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 - `preferences` → `UserPreference[]`
 - `reminders` → `Reminder[]`
 - `notifications` → `Notification[]`
+- `roleEntity` → `Role`
 
 ---
 
-### 4.2. `UserPreference`
+### 4.2. `Role`
+*Dynamic role definitions with granular permissions.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `name` | `String` | Required | `@id` | Role name (e.g., 'Administrator', 'Manager') |
+| `description` | `String` | Optional | | Role description |
+| `isSystemAdmin` | `Boolean` | Required | `@default(false)` | Flag bypassing all permission checks |
+| `permissions` | `Json` | Required | `@default("{}")` | Granular permission map |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
+
+**Relations:**
+- `users` → `User[]`
+
+---
+
+### 4.3. `UserPreference`
 *User-specific key-value application settings.*
 
 | Field | Type | Modifiers | Constraints | Description |
@@ -780,6 +817,45 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 
 ---
 
+
+
+---
+
+### 4.17. `SystemSetting`
+*Global key-value application settings configuration.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `key` | `String` | Required | `@id` | Primary key configuration key |
+| `value` | `String` | Required | | Setting value |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
+
+---
+
+### 4.18. `ActivityLog`
+*System audit and user activity tracking.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `userId` | `String` | Required | FK to `User.id` | User performing the action |
+| `userName` | `String` | Optional | | Denormalized user name |
+| `type` | `String` | Required | | Action type classification |
+| `path` | `String` | Optional | | Route/Context |
+| `details` | `String` | Optional | | Action JSON metadata/diff |
+| `durationSeconds` | `Int` | Optional | | Session/action duration |
+| `sessionId` | `String` | Optional | | Session grouping identifier |
+| `timestamp` | `DateTime` | Required | `@default(now())` | Event occurrence timestamp |
+
+**Indexes & Constraints:**
+- `@@index([userId])`
+- `@@index([timestamp])`
+- `@@index([type])`
+- `@@index([sessionId])`
+- `onDelete: Cascade` to `User`
+
+
 ## 5. Relationship & Foreign Key Quick Reference
 
 | Source Model | Field (FK) | Target Model | Cardinality | Action on Target Delete (`onDelete`) |
@@ -804,6 +880,7 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `Notification` | `projectId` | `Project` | N:1 | **`SetNull`** |
 | `PermitWaste` | `permitId` | `Permit` | N:1 | **`Cascade`** |
 | `PermitWaste` | `wasteCatalogId` | `WasteCatalog` | N:1 | **`Restrict`** |
+| `ActivityLog` | `userId` | `User` | N:1 | **`Cascade`** |
 
 ---
 
@@ -849,3 +926,7 @@ Indexes are optimized for foreign key lookups, frequent status filtering, and so
 | `PermitWaste` | `[permitId]` | INDEX | List waste codes on permit |
 | `PermitWaste` | `[wasteCatalogId]` | INDEX | Find all permits authorizing waste code |
 | `Category` | `code` | UNIQUE | Category code identifier |
+| `SystemSetting` | `key` | UNIQUE | Setting lookup |
+| `ActivityLog` | `[userId]` | INDEX | User activity filter |
+| `ActivityLog` | `[timestamp]` | INDEX | Chronological sorting |
+| `ActivityLog` | `[type]` | INDEX | Event type filtering |

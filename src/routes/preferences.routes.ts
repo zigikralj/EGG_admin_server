@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { UserRole } from '../types';
 
 const router = Router();
 

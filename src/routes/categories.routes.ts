@@ -2,18 +2,16 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { UserRole } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
 // Require authentication for all categories routes
 router.use(requireAuth);
 
-// Helper to check for admin/manager rights
-const requireAdminOrManager = (req: any, res: any, next: any) => {
-  const role = req.authUser!.role;
-  if (role !== UserRole.ADMINISTRATOR && role !== UserRole.MANAGER) {
-    res.status(403).json({ error: 'FORBIDDEN', message: 'Only administrators and managers can perform this action.' });
+const requireCategoryPermission = (action: string) => (req: any, res: any, next: any) => {
+  if (!hasPermission(req.authUser, "categories", action)) {
+    res.status(403).json({ error: "FORBIDDEN", message: `You do not have permission to ${action} categories.` });
     return;
   }
   next();
@@ -28,7 +26,7 @@ router.get('/', asyncHandler(async (_req, res) => {
 }));
 
 // POST /api/categories
-router.post('/', requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/', requireCategoryPermission('create'), asyncHandler(async (req, res) => {
   const { code, name, description } = req.body;
   if (!code || !code.trim() || !name || !name.trim()) {
     res.status(400).json({ error: 'Category code and name are required.' });
@@ -53,7 +51,7 @@ router.post('/', requireAdminOrManager, asyncHandler(async (req, res) => {
 }));
 
 // PUT /api/categories/:id
-router.put('/:id', requireAdminOrManager, asyncHandler(async (req, res) => {
+router.put('/:id', requireCategoryPermission('edit'), asyncHandler(async (req, res) => {
   const id = String(req.params.id);
   const rawCode = req.body.code;
   const rawName = req.body.name;
@@ -97,7 +95,7 @@ router.put('/:id', requireAdminOrManager, asyncHandler(async (req, res) => {
 }));
 
 // DELETE /api/categories/:id
-router.delete('/:id', requireAdminOrManager, asyncHandler(async (req, res) => {
+router.delete('/:id', requireCategoryPermission('delete'), asyncHandler(async (req, res) => {
   const id = String(req.params.id);
   
   // Need to ensure this doesn't violate foreign key constraints (e.g., invoices using this category)

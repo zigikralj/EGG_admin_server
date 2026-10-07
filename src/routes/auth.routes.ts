@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { generateToken, hashPassword, verifyPassword } from '../authUtils';
 import { asyncHandler } from '../middleware/errorHandler';
-import { requireAuth, userForceLogoutMap, userActivityMap } from '../middleware/auth';
+import { requireAuth, userForceLogoutMap } from '../middleware/auth';
 import { validatePassword, sanitizeString } from '../middleware/validate';
 
 const router = Router();
@@ -23,6 +23,9 @@ router.post('/login', asyncHandler(async (req, res) => {
         { email: { equals: searchStr, mode: 'insensitive' } },
         { name: { equals: searchStr, mode: 'insensitive' } },
       ],
+    },
+    include: {
+      roleEntity: true,
     },
   });
 
@@ -75,7 +78,6 @@ router.post('/login', asyncHandler(async (req, res) => {
   }
 
   userForceLogoutMap.delete(user.id);
-  userActivityMap.set(user.id, Date.now());
   const token = generateToken(user);
   const { password: _, ...userWithoutPassword } = user;
   res.json({ user: userWithoutPassword, token, expiresIn: SESSION_DURATION_SECONDS });
