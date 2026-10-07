@@ -34,6 +34,19 @@ export function hasPermission(user: any, resource: string, action: string): bool
   if (perms && typeof perms === 'object' && Array.isArray(perms[resource])) {
     return perms[resource].includes(action);
   }
+  // Legacy fallback ONLY if the key is undefined in perms (e.g. older role schema before separation)
+  if (perms && typeof perms === 'object') {
+    if (resource.startsWith('tracker_')) {
+      const base = resource.replace('tracker_', '');
+      if (Array.isArray(perms[base])) {
+        return perms[base].includes(action);
+      }
+    } else if (resource === 'wasteDisposal') {
+      if (Array.isArray(perms.providedServices)) {
+        return perms.providedServices.includes(action);
+      }
+    }
+  }
   return getDefaultResourcePermission(user.role, resource, action);
 }
 
@@ -57,13 +70,19 @@ export function isRestrictedToOwn(user: any, resource: string): boolean {
     return false;
   };
 
-  if (checkOnlyOwn(`${resource}_onlyOwn`)) return true;
+  const directKey = `${resource}_onlyOwn`;
+  if (typeof perms[directKey] === 'boolean') {
+    return perms[directKey];
+  }
+  if (checkOnlyOwn(directKey)) return true;
 
+  // Legacy fallback ONLY if tracker_* is not configured
   if (resource.startsWith("tracker_")) {
     const base = resource.replace("tracker_", "");
+    if (typeof perms[`${base}_onlyOwn`] === 'boolean') {
+      return perms[`${base}_onlyOwn`];
+    }
     if (checkOnlyOwn(`${base}_onlyOwn`)) return true;
-  } else {
-    if (checkOnlyOwn(`tracker_${resource}_onlyOwn`)) return true;
   }
 
   return false;

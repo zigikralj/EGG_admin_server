@@ -37,6 +37,14 @@ router.use(requireAuth);
 
 // GET /api/provided-services
 router.get('/', asyncHandler(async (req, res) => {
+  const canViewAll = hasPermission(req.authUser, 'providedServices', 'view');
+  const canViewWaste = hasPermission(req.authUser, 'wasteDisposal', 'view');
+
+  if (!canViewAll && !canViewWaste) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view provided services.' });
+    return;
+  }
+
   const search = ((req.query.search as string) || '').trim();
   const status = (req.query.status as string) || '';
   const clientId = (req.query.clientId as string) || '';
@@ -63,7 +71,7 @@ router.get('/', asyncHandler(async (req, res) => {
     ];
   }
 
-  const items = await prisma.providedService.findMany({
+  let items = await prisma.providedService.findMany({
     where,
     orderBy: { createdAt: 'desc' },
     include: {
@@ -73,6 +81,10 @@ router.get('/', asyncHandler(async (req, res) => {
       invoice: true,
     },
   });
+
+  if (!canViewAll && canViewWaste) {
+    items = items.filter((item) => isWasteDisposalService(item.service));
+  }
 
   res.json(items);
 }));
@@ -92,6 +104,16 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
   if (!item) {
     res.status(404).json({ error: 'Provided service not found' });
+    return;
+  }
+
+  const isWaste = isWasteDisposalService(item.service);
+  const canView =
+    hasPermission(req.authUser, 'providedServices', 'view') ||
+    (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'view'));
+
+  if (!canView) {
+    res.status(403).json({ error: 'Permission denied.' });
     return;
   }
 
