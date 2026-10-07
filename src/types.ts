@@ -54,9 +54,7 @@ export function isRestrictedToOwn(user: any, resource: string): boolean {
   if (!user) return false;
   const isSysAdmin =
     user.role === UserRole.ADMINISTRATOR ||
-    Boolean(user.roleEntity?.isSystemAdmin) ||
-    user.realRole === UserRole.ADMINISTRATOR ||
-    Boolean(user.realRoleEntity?.isSystemAdmin);
+    Boolean(user.roleEntity?.isSystemAdmin);
 
   if (isSysAdmin) return false;
 

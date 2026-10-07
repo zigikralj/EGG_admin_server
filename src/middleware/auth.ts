@@ -70,19 +70,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
       }
     }
 
-    if (authDbUser) {
-      const xRoleView = req.headers["x-role-view"] as string;
-      if ((authDbUser.role === "Administrator" || authDbUser.roleEntity?.isSystemAdmin) && xRoleView && xRoleView !== authDbUser.role) {
-        const simulatedRoleEntity = await prisma.role.findUnique({ where: { name: xRoleView } });
-        (authDbUser as any).isSimulatingRole = true;
-        (authDbUser as any).realRole = authDbUser.role;
-        (authDbUser as any).realRoleEntity = authDbUser.roleEntity;
-        authDbUser.role = xRoleView;
-        if (simulatedRoleEntity) {
-          authDbUser.roleEntity = simulatedRoleEntity;
-        }
-      }
-    }
     return authDbUser ?? null;
   }
 
@@ -90,19 +77,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
   const fallbackXUserId = req.headers["x-user-id"] as string;
   if (fallbackXUserId) {
     const fallbackUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: fallbackXUserId } });
-    if (fallbackUser) {
-      const xRoleView = req.headers["x-role-view"] as string;
-      if ((fallbackUser.role === "Administrator" || fallbackUser.roleEntity?.isSystemAdmin) && xRoleView && xRoleView !== fallbackUser.role) {
-        const simulatedRoleEntity = await prisma.role.findUnique({ where: { name: xRoleView } });
-        (fallbackUser as any).isSimulatingRole = true;
-        (fallbackUser as any).realRole = fallbackUser.role;
-        (fallbackUser as any).realRoleEntity = fallbackUser.roleEntity;
-        fallbackUser.role = xRoleView;
-        if (simulatedRoleEntity) {
-          fallbackUser.roleEntity = simulatedRoleEntity;
-        }
-      }
-    }
     return fallbackUser ?? null;
   }
 

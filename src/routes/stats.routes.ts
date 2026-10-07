@@ -9,7 +9,6 @@ const router = Router();
 // GET /api/projects/stats
 router.get('/', asyncHandler(async (req, res) => {
   const authUser = await getAuthUser(req);
-  const isSimulating = Boolean((authUser as any)?.isSimulatingRole);
   const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
 
   const cutoffStale = new Date();
@@ -22,27 +21,12 @@ router.get('/', asyncHandler(async (req, res) => {
 
   let projectWhere: any = {};
   if (isOnlyOwn && authUser) {
-    if (isSimulating) {
-      const roleUsers = await prisma.user.findMany({
-        where: { role: authUser.role },
-        select: { id: true, name: true },
-      });
-      const userIds = roleUsers.map((u) => u.id);
-      const userNames = roleUsers.map((u) => u.name).filter(Boolean);
-      projectWhere = {
-        OR: [
-          { responsibleId: { in: userIds } },
-          ...(userNames.length > 0 ? [{ responsible: { in: userNames, mode: 'insensitive' as const } }] : []),
-        ],
-      };
-    } else {
-      projectWhere = {
-        OR: [
-          { responsibleId: authUser.id },
-          ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
-        ],
-      };
-    }
+    projectWhere = {
+      OR: [
+        { responsibleId: authUser.id },
+        ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
+      ],
+    };
   }
 
   const [
