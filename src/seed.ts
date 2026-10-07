@@ -164,12 +164,14 @@ export async function seed(force = false) {
   }
 
   if (force) {
-    // Delete existing providedServices, items, invoices, reminders, and projects to re-populate cleanly
+    // Delete existing providedServices, items, invoices, reminders, projects, and permits to re-populate cleanly
     await prisma.providedService.deleteMany();
     await prisma.reminder.deleteMany();
     await prisma.invoiceItem.deleteMany();
     await prisma.invoice.deleteMany();
     await prisma.project.deleteMany();
+    await prisma.permitWaste.deleteMany();
+    await prisma.permit.deleteMany();
   }
 
   const projectMap: Record<string, string> = {};
@@ -1835,6 +1837,177 @@ export async function seed(force = false) {
   }
 
   
+  // 6. Seed Permits
+  const permitCount = await prisma.permit.count();
+  if (force || permitCount === 0) {
+    // Ensure standard waste catalog items exist
+    const initialCatalogs = [
+      { code: '15 01 01', description: 'Papirna i kartonska ambalaža', isHazardous: false },
+      { code: '15 01 02', description: 'Plastična ambalaža', isHazardous: false },
+      { code: '15 01 10*', description: 'Ambalaža koja sadrži ostatke opasnih supstanci', isHazardous: true, hazardListMark: 'Y35' },
+      { code: '17 01 01', description: 'Beton', isHazardous: false },
+      { code: '17 04 05', description: 'Gvožđe i čelik', isHazardous: false },
+      { code: '19 12 04', description: 'Plastika i guma (mehanička obrada otpada)', isHazardous: false },
+      { code: '20 01 01', description: 'Papir i karton (komunalni)', isHazardous: false },
+      { code: '20 01 39', description: 'Plastika (komunalna)', isHazardous: false },
+    ];
+    for (const wc of initialCatalogs) {
+      await prisma.wasteCatalog.upsert({
+        where: { code: wc.code },
+        update: {},
+        create: wc,
+      });
+    }
+
+    const wasteCatalogs = await prisma.wasteCatalog.findMany();
+    const getWcId = (code: string) => wasteCatalogs.find((w) => w.code === code)?.id || wasteCatalogs[0]?.id;
+
+    const mockPermits = [
+      {
+        permitNumber: '19-00-00124/2023-05',
+        clientName: 'EcoRecycling d.o.o.',
+        permitTypes: ['Sakupljanje', 'Transport'],
+        startDate: '2023-05-10T00:00:00.000Z',
+        endDate: '2028-05-10T00:00:00.000Z',
+        notes: 'Dozvola za sakupljanje i transport neopasnog ambalažnog otpada na teritoriji RS.',
+        wasteCodes: ['15 01 01', '15 01 02'],
+      },
+      {
+        permitNumber: '501-501-44/2022-01',
+        clientName: 'Fabrika pakovanja "Pak-Sistem"',
+        permitTypes: ['Skladistenje', 'Tretman'],
+        startDate: '2022-02-15T00:00:00.000Z',
+        endDate: '2027-02-15T00:00:00.000Z',
+        notes: 'Integralna dozvola za privremeno skladištenje i mehanički tretman otpadnog papira i plastike.',
+        wasteCodes: ['15 01 01', '19 12 04'],
+      },
+      {
+        permitNumber: 'III-501-12/2021',
+        clientName: 'Metalurgija AD',
+        permitTypes: ['Sakupljanje', 'Transport', 'Skladistenje'],
+        startDate: '2021-11-01T00:00:00.000Z',
+        endDate: '2026-10-25T00:00:00.000Z',
+        notes: 'Dozvola za sakupljanje, transport i skladištenje metalnog i građevinskog otpada. Zahtev za produženje podnet.',
+        wasteCodes: ['17 04 05', '17 01 01'],
+      },
+      {
+        permitNumber: '19-00-00982/2021-03',
+        clientName: 'Balkan Petroleum Services',
+        permitTypes: ['Transport', 'Tretman'],
+        startDate: '2021-09-01T00:00:00.000Z',
+        endDate: '2026-09-01T00:00:00.000Z',
+        notes: 'Dozvola za tretman i transport opasnog industrijskog otpada. Istekla, u toku je revizija.',
+        wasteCodes: ['15 01 10*'],
+      },
+      {
+        permitNumber: '501-32/2024-04',
+        clientName: 'Grammer Automotive d.o.o.',
+        permitTypes: ['Sakupljanje'],
+        startDate: '2024-04-12T00:00:00.000Z',
+        endDate: '2029-04-12T00:00:00.000Z',
+        notes: 'Lokalna dozvola za sakupljanje sekundarnih sirovina iz automobilske industrije.',
+        wasteCodes: ['20 01 39', '15 01 02'],
+      },
+      {
+        permitNumber: 'UP-I-03-451/2023',
+        clientName: 'Tehno-Plast d.o.o.',
+        permitTypes: ['Tretman'],
+        startDate: '2023-01-20T00:00:00.000Z',
+        endDate: '2028-01-20T00:00:00.000Z',
+        notes: 'Dozvola za postrojenje za granulaciju i reciklažu plastičnih masa.',
+        wasteCodes: ['19 12 04', '20 01 39'],
+      },
+      {
+        permitNumber: '19-00-00441/2022-02',
+        clientName: 'Adient Seating d.o.o.',
+        permitTypes: ['Transport'],
+        startDate: '2022-06-15T00:00:00.000Z',
+        endDate: '2027-06-15T00:00:00.000Z',
+        notes: 'Dozvola za drumski transport neopasnog otpada.',
+        wasteCodes: ['15 01 01', '15 01 02'],
+      },
+      {
+        permitNumber: '501-118/2021-08',
+        clientName: 'Eurotay d.o.o.',
+        permitTypes: ['Skladistenje'],
+        startDate: '2021-08-10T00:00:00.000Z',
+        endDate: '2026-10-20T00:00:00.000Z',
+        notes: 'Privremeno skladište tekstilnog i ambalažnog otpada.',
+        wasteCodes: ['15 01 01'],
+      },
+      {
+        permitNumber: 'RE-882/2020-01',
+        clientName: 'Grad Kraljevo – Gradska uprava',
+        permitTypes: ['Odlaganje'],
+        startDate: '2020-03-01T00:00:00.000Z',
+        endDate: '2025-03-01T00:00:00.000Z',
+        notes: 'Dozvola za upravljanje telom deponije i odlaganje inertnog otpada.',
+        wasteCodes: ['17 01 01', '20 01 01'],
+      },
+      {
+        permitNumber: '19-00-00712/2024-01',
+        clientName: 'IGB Automotive Inđija d.o.o.',
+        permitTypes: ['Tretman', 'Odlaganje'],
+        startDate: '2024-02-01T00:00:00.000Z',
+        endDate: '2029-02-01T00:00:00.000Z',
+        notes: 'Dozvola za tretman i konačno zbrinjavanje procesnih taloga i šljake.',
+        wasteCodes: ['17 04 05'],
+      },
+    ];
+
+    for (const p of mockPermits) {
+      const client = clientMap[p.clientName];
+      const permitRecord = await prisma.permit.create({
+        data: {
+          permitNumber: p.permitNumber,
+          permitTypes: p.permitTypes,
+          startDate: p.startDate,
+          endDate: p.endDate,
+          notes: p.notes,
+          clientId: client?.id || null,
+        },
+      });
+
+      // Link waste catalogs
+      for (const code of p.wasteCodes) {
+        const wcId = getWcId(code);
+        if (wcId) {
+          await prisma.permitWaste.upsert({
+            where: {
+              permitId_wasteCatalogId: {
+                permitId: permitRecord.id,
+                wasteCatalogId: wcId,
+              },
+            },
+            update: {},
+            create: {
+              permitId: permitRecord.id,
+              wasteCatalogId: wcId,
+            },
+          });
+        }
+      }
+
+      // Add a test reminder for the expiring permit
+      if (p.permitNumber === 'III-501-12/2021') {
+        await prisma.reminder.create({
+          data: {
+            title: `Obnova dozvole: ${p.permitNumber}`,
+            permitId: permitRecord.id,
+            clientId: client?.id || null,
+            clientName: client?.name || null,
+            permitNumber: p.permitNumber,
+            dueDate: '2026-10-20',
+            notes: 'Rok za dopunu dokumentacije za produženje dozvole.',
+            status: 'Pending',
+          },
+        });
+      }
+    }
+
+    console.log(`✅ Seeded ${mockPermits.length} mock permits.`);
+  }
+
   // Seed CompanyInfo (Serbian Latin)
   const defaultCompanyInfo = {
     id: 'default',
@@ -1875,9 +2048,10 @@ export async function seed(force = false) {
   const finalReminderCount = await prisma.reminder.count();
   const finalInvoiceCount = await prisma.invoice.count();
   const finalClientCount = await prisma.client.count();
+  const finalPermitCount = await prisma.permit.count();
   const finalProvidedServicesCount = await prisma.providedService.count();
 
-  console.log(`🎉 Seed completed successfully: ${finalClientCount} clients, ${finalProjectCount} projects, ${finalReminderCount} reminders, ${finalInvoiceCount} invoices, ${finalProvidedServicesCount} provided services.`);
+  console.log(`🎉 Seed completed successfully: ${finalClientCount} clients, ${finalProjectCount} projects, ${finalReminderCount} reminders, ${finalInvoiceCount} invoices, ${finalPermitCount} permits, ${finalProvidedServicesCount} provided services.`);
 }
 
 if (require.main === module) {
