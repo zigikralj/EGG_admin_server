@@ -119,9 +119,9 @@ Returns the current authenticated user (without password).
 **All routes require auth.** Write operations require **Admin/Manager** role.
 
 ### `GET /api/users`
-List all users (with online status).
+List all users.
 
-**Response 200:** Array of user objects (without password) with `isOnline` and `lastActiveAt`.
+**Response 200:** Array of user objects (without password).
 
 ---
 
@@ -747,6 +747,52 @@ Definitions:
 - **done**: Projects where `done = true`
 - **stale**: Active projects with `start` date >2 months ago
 - **monitor**: Projects with `nextSample` ≤ 14 days from now
+
+---
+
+## Activity Logs (`/api/activity-logs`)
+
+Audit and user activity logging. Client events and database mutations are buffered asynchronously and flushed in batches. **Viewing, deleting, and configuring activity logs is restricted to Administrators only.**
+
+### `GET /api/activity-logs/status`
+Check whether activity logging is globally active or paused.
+- **Auth:** Any authenticated user.
+- **Response 200:** `{ "enabled": boolean }`
+
+### `PATCH /api/activity-logs/status`
+Toggle activity logging globally. **Administrator only.**
+- **Body:** `{ "enabled": boolean }`
+- **Response 200:** `{ "enabled": boolean }`
+
+### `GET /api/activity-logs`
+List activity logs. **Administrator only.** By default excludes the heavy `details` field.
+- **Query params:**
+  - `userId` (optional): Filter by specific user UUID.
+  - `sessionId` (optional): Filter by specific session ID.
+  - `from` (optional): ISO date string (`YYYY-MM-DDTHH:mm:ss.sssZ`). Only returns logs at or after this timestamp.
+  - `limit` (optional): Number of records (default 1000, max 5000).
+  - `includeDetails` (optional): `'true'` to include the JSON diff `details` field.
+
+### `GET /api/activity-logs/:id`
+Fetch a single activity log including its full `details` (lazy loaded for diff views). **Administrator only.**
+
+### `POST /api/activity-logs`
+Ingest client activity events (e.g. `PAGE_VIEW`, `LOGIN`, `LOGOUT`).
+- Accepts a single event object or an array of event objects (batched).
+- Identity is derived from the authenticated user token.
+- Returns `202 Accepted` immediately; events are ignored if logging is deactivated, otherwise persisted asynchronously.
+
+### `DELETE /api/activity-logs/clear-all`
+Deletes all activity logs. **Administrator only.**
+
+### `POST /api/activity-logs/bulk-delete`
+Deletes specific activity logs by IDs. Body: `{ ids: string[] }`. **Administrator only.**
+
+### `DELETE /api/activity-logs/session/:sessionId`
+Deletes all activity logs for a specific session. **Administrator only.**
+
+### `DELETE /api/activity-logs/:id`
+Deletes an individual activity log. **Administrator only.**
 
 ---
 

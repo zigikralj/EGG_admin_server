@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import type { User } from '@prisma/client';
 import { prisma } from '../db';
 import { verifyToken } from '../authUtils';
+import { requestContext } from '../context';
 
 // ---------------------------------------------------------------------------
 // Type extension — gives every Express Request a typed authUser property.
@@ -16,18 +17,16 @@ declare global {
 
 // ---------------------------------------------------------------------------
 // In-memory maps for online-status tracking and force-logout revocation.
+// ---------------------------------------------------------------------------
+// In-memory store for force-logout timestamps.
 // NOTE: These are process-local and reset on server restart.
 //       For multi-instance deployments, a shared store (e.g. Redis) is needed.
 // ---------------------------------------------------------------------------
-export const userActivityMap = new Map<string, number>();
 export const userForceLogoutMap = new Map<string, number>();
 
 // Periodic cleanup — purge entries older than 1 hour, runs every 5 minutes.
 setInterval(() => {
   const cutoff = Date.now() - 60 * 60 * 1000;
-  for (const [id, ts] of userActivityMap) {
-    if (ts < cutoff) userActivityMap.delete(id);
-  }
   for (const [id, ts] of userForceLogoutMap) {
     if (ts < cutoff) userForceLogoutMap.delete(id);
   }
@@ -66,7 +65,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
       if (authDbUser.role === "Administrator" || authDbUser.role === "Manager") {
         const impersonatedUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: xUserId } });
         if (impersonatedUser && impersonatedUser.isApproved && impersonatedUser.status !== "BLOCKED") {
-          userActivityMap.set(impersonatedUser.id, Date.now());
           return impersonatedUser;
         }
       }
@@ -84,7 +82,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
           authDbUser.roleEntity = simulatedRoleEntity;
         }
       }
-      userActivityMap.set(authDbUser.id, Date.now());
     }
     return authDbUser ?? null;
   }
@@ -105,7 +102,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
           fallbackUser.roleEntity = simulatedRoleEntity;
         }
       }
-      userActivityMap.set(fallbackUser.id, Date.now());
     }
     return fallbackUser ?? null;
   }
@@ -134,5 +130,9 @@ export async function requireAuth(
     return;
   }
   req.authUser = user;
-  next();
+  
+  const sessionId = req.headers['x-session-id'] as string | undefined;
+  requestContext.run({ userId: user.id, userName: user.name || "Unknown", sessionId }, () => {
+    next();
+  });
 }
