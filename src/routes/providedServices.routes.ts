@@ -2,7 +2,33 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { isAdminOrManager } from '../types';
+import { hasPermission } from '../types';
+
+function isWasteDisposalService(srv?: { code?: string | null; name?: string | null } | null): boolean {
+  if (!srv) return false;
+  const code = (srv.code || "").toLowerCase().trim();
+  const name = (srv.name || "").toLowerCase().trim();
+  return (
+    code === "waste-disposal" ||
+    code === "zbrinjavanje" ||
+    code === "zbrinjavanje-otpada" ||
+    code === "odlaganje" ||
+    code === "odlaganje-otpada" ||
+    code.includes("disposal") ||
+    code.includes("zbrinjavanje") ||
+    code.includes("odlaganje") ||
+    name === "waste disposal" ||
+    name === "zbrinjavanje otpada" ||
+    name === "збрињавање отпада" ||
+    name === "odlaganje otpada" ||
+    name === "одлагање отпада" ||
+    name.includes("disposal") ||
+    name.includes("zbrinjavanje") ||
+    name.includes("збрињавање") ||
+    name.includes("odlaganje") ||
+    name.includes("одлагање")
+  );
+}
 
 const router = Router();
 
@@ -11,6 +37,14 @@ router.use(requireAuth);
 
 // GET /api/provided-services
 router.get('/', asyncHandler(async (req, res) => {
+  const canViewAll = hasPermission(req.authUser, 'providedServices', 'view');
+  const canViewWaste = hasPermission(req.authUser, 'wasteDisposal', 'view');
+
+  if (!canViewAll && !canViewWaste) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view provided services.' });
+    return;
+  }
+
   const search = ((req.query.search as string) || '').trim();
   const status = (req.query.status as string) || '';
   const clientId = (req.query.clientId as string) || '';
@@ -37,7 +71,7 @@ router.get('/', asyncHandler(async (req, res) => {
     ];
   }
 
-  const items = await prisma.providedService.findMany({
+  let items = await prisma.providedService.findMany({
     where,
     orderBy: { createdAt: 'desc' },
     include: {
@@ -47,6 +81,10 @@ router.get('/', asyncHandler(async (req, res) => {
       invoice: true,
     },
   });
+
+  if (!canViewAll && canViewWaste) {
+    items = items.filter((item) => isWasteDisposalService(item.service));
+  }
 
   res.json(items);
 }));
@@ -69,15 +107,21 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
+  const isWaste = isWasteDisposalService(item.service);
+  const canView =
+    hasPermission(req.authUser, 'providedServices', 'view') ||
+    (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'view'));
+
+  if (!canView) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
   res.json(item);
 }));
 
 // POST /api/provided-services
 router.post('/', asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. You do not have permission to manage provided services.' });
-    return;
-  }
   const {
     serviceId,
     clientId,
@@ -106,6 +150,16 @@ router.post('/', asyncHandler(async (req, res) => {
   const serviceExists = await prisma.service.findUnique({ where: { id: serviceId } });
   if (!serviceExists) {
     res.status(400).json({ error: 'Selected service does not exist' });
+    return;
+  }
+
+  const isWaste = isWasteDisposalService(serviceExists);
+  const canCreate =
+    hasPermission(req.authUser, 'providedServices', 'create') ||
+    (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'create'));
+
+  if (!canCreate) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to manage provided services.' });
     return;
   }
 
@@ -160,14 +214,23 @@ router.post('/', asyncHandler(async (req, res) => {
 
 // PUT /api/provided-services/:id
 router.put('/:id', asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. You do not have permission to manage provided services.' });
-    return;
-  }
   const id = req.params.id as string;
-  const existing = await prisma.providedService.findUnique({ where: { id } });
+  const existing = await prisma.providedService.findUnique({
+    where: { id },
+    include: { service: true },
+  });
   if (!existing) {
     res.status(404).json({ error: 'Provided service not found' });
+    return;
+  }
+
+  const isWaste = isWasteDisposalService(existing.service);
+  const canEdit =
+    hasPermission(req.authUser, 'providedServices', 'edit') ||
+    (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'edit'));
+
+  if (!canEdit) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to manage provided services.' });
     return;
   }
 
@@ -247,14 +310,23 @@ router.put('/:id', asyncHandler(async (req, res) => {
 
 // DELETE /api/provided-services/:id
 router.delete('/:id', asyncHandler(async (req, res) => {
-  if (!isAdminOrManager(req.authUser!.role)) {
-    res.status(403).json({ error: 'Permission denied. You do not have permission to manage provided services.' });
-    return;
-  }
   const id = req.params.id as string;
-  const existing = await prisma.providedService.findUnique({ where: { id } });
+  const existing = await prisma.providedService.findUnique({
+    where: { id },
+    include: { service: true },
+  });
   if (!existing) {
     res.status(404).json({ error: 'Provided service not found' });
+    return;
+  }
+
+  const isWaste = isWasteDisposalService(existing.service);
+  const canDelete =
+    hasPermission(req.authUser, 'providedServices', 'delete') ||
+    (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'delete'));
+
+  if (!canDelete) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to manage provided services.' });
     return;
   }
 

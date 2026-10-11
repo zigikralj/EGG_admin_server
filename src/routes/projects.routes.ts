@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { Project } from '@prisma/client';
-import { UserRole } from '../types';
+import { hasPermission, isRestrictedToOwn } from '../types';
 import { addMonths } from '../helpers/dateUtils';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
 
@@ -12,20 +11,22 @@ const router = Router();
 // Require authentication for all projects routes
 router.use(requireAuth);
 
-// Helper to check if a role is Admin or Manager
-function isAdminOrManager(role: string): boolean {
-  return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-}
-
 // Helper to check if a user is the owner of a project or an admin/manager
-function isProjectOwnerOrAdminManager(
-  user: { id: string; name: string; role: string },
-  project: { responsible: string | null; responsibleId: string | null }
+function isProjectOwnerOrCan(
+  user: any,
+  project: { responsible?: string | null; responsibleId?: string | null },
+  action: "edit" | "delete"
 ): boolean {
-  if (isAdminOrManager(user.role)) return true;
-  if (project.responsible && project.responsible.trim().toLowerCase() === user.name.trim().toLowerCase()) return true;
-  if (project.responsibleId && project.responsibleId === user.id) return true;
-  return false;
+  if (user.role === "Administrator" || user.roleEntity?.isSystemAdmin) return true;
+  const isOwner = Boolean(
+    (project.responsible && project.responsible.trim().toLowerCase() === (user.name || "").trim().toLowerCase()) ||
+    (project.responsibleId && project.responsibleId === user.id)
+  );
+  if (isRestrictedToOwn(user, "projects")) {
+    return isOwner;
+  }
+  if (hasPermission(user, "projects", action) || hasPermission(user, "tracker_projects", action)) return true;
+  return isOwner;
 }
 
 // ----------------------------------------------------
@@ -34,14 +35,36 @@ function isProjectOwnerOrAdminManager(
 
 // GET /api/projects
 router.get('/', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
   const search = ((req.query.search as string) || '').trim();
-  const where = search ? {
+
+  let ownerCondition: any = undefined;
+  if (isOnlyOwn) {
+    ownerCondition = {
+      OR: [
+        { responsibleId: authUser.id },
+        ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
+      ],
+    };
+  }
+
+  const searchCondition = search ? {
     OR: [
       { name: { contains: search, mode: 'insensitive' as const } },
       { clientName: { contains: search, mode: 'insensitive' as const } },
       { responsible: { contains: search, mode: 'insensitive' as const } },
     ]
-  } : {};
+  } : undefined;
+
+  let where: any = {};
+  if (ownerCondition && searchCondition) {
+    where = { AND: [ownerCondition, searchCondition] };
+  } else if (ownerCondition) {
+    where = ownerCondition;
+  } else if (searchCondition) {
+    where = searchCondition;
+  }
 
   const projects = await prisma.project.findMany({
     where,
@@ -68,17 +91,16 @@ router.post('/', asyncHandler(async (req, res) => {
     if (c) finalClientName = c.name;
   }
 
-  // Standard Users must assign themselves as responsible
-  let finalResponsible = responsible || authUser.name;
+  const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
+  let finalResponsible = authUser.name || "";
   let finalResponsibleId: string | null = authUser.id;
 
-  if (authUser.role === UserRole.USER) {
-    finalResponsible = authUser.name;
-    finalResponsibleId = authUser.id;
-  } else if (responsible) {
-    // Find matching user ID if possible
-    const matchedUser = await prisma.user.findFirst({ where: { name: responsible } });
-    if (matchedUser) finalResponsibleId = matchedUser.id;
+  if (!isOnlyOwn) {
+    finalResponsible = (responsible ? String(responsible).trim() : "") || authUser.name;
+    if (responsible) {
+      const matchedUser = await prisma.user.findFirst({ where: { name: responsible } });
+      if (matchedUser) finalResponsibleId = matchedUser.id;
+    }
   }
 
   const computedNextSample = nextSample || null;
@@ -122,8 +144,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isProjectOwnerOrAdminManager(authUser, existing)) {
-    res.status(403).json({ error: 'Permission denied. Standard Users can only edit their own projects.' });
+  if (!isProjectOwnerOrCan(authUser, existing, "edit")) {
+    res.status(403).json({ error: 'Permission denied. You can only edit projects you own or have permission to edit.' });
     return;
   }
 
@@ -133,11 +155,12 @@ router.put('/:id', asyncHandler(async (req, res) => {
     if (c) finalClientName = c.name;
   }
 
-  let finalResponsible = responsible || existing.responsible;
+  const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
+  let finalResponsible = responsible !== undefined ? (responsible ? String(responsible).trim() : "") : existing.responsible;
   let finalResponsibleId = existing.responsibleId;
 
-  if (authUser.role === UserRole.USER) {
-    finalResponsible = authUser.name;
+  if (isOnlyOwn) {
+    finalResponsible = authUser.name || existing.responsible;
     finalResponsibleId = authUser.id;
   } else if (responsible) {
     const matchedUser = await prisma.user.findFirst({ where: { name: responsible } });
@@ -184,8 +207,8 @@ router.patch('/:id/toggle-done', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isProjectOwnerOrAdminManager(authUser, existing)) {
-    res.status(403).json({ error: 'Permission denied. Standard Users can only edit their own projects.' });
+  if (!isProjectOwnerOrCan(authUser, existing, "edit")) {
+    res.status(403).json({ error: 'Permission denied. You can only edit projects you own or have permission to edit.' });
     return;
   }
 
@@ -210,8 +233,8 @@ router.patch('/:id/sample', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isProjectOwnerOrAdminManager(authUser, existing)) {
-    res.status(403).json({ error: 'Permission denied. Standard Users can only edit their own projects.' });
+  if (!isProjectOwnerOrCan(authUser, existing, "edit")) {
+    res.status(403).json({ error: 'Permission denied. You can only edit projects you own or have permission to edit.' });
     return;
   }
 
@@ -237,8 +260,8 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isProjectOwnerOrAdminManager(authUser, existing)) {
-    res.status(403).json({ error: 'Permission denied. Standard Users can only delete their own projects.' });
+  if (!isProjectOwnerOrCan(authUser, existing, "delete")) {
+    res.status(403).json({ error: 'Permission denied. You can only delete projects you own or have permission to delete.' });
     return;
   }
 
@@ -246,12 +269,4 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   res.json({ message: 'Project deleted successfully' });
 }));
 
-// ----------------------------------------------------
-// REMINDERS CRUD
-// ----------------------------------------------------
-
-// GET /api/projects/reminders (using /projects prefix because it's mounted as /api/projects in index.ts)
-// Wait, in index.ts, reminders are mounted on /api/reminders. I will export a separate router for them,
-// or I can mount them in index.ts on their own. Let's make a separate router for reminders to keep things cleaner.
-// I will create reminders.routes.ts instead of cluttering this one.
 export default router;

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { canManageInvoices } from '../types';
+import { hasPermission } from '../types';
 
 const router = Router();
 
@@ -72,12 +72,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 // POST /api/invoices
 router.post('/', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "create") && !hasPermission(req.authUser, "tracker_invoices", "create")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
   const {
     invoiceNumber,
+    invoiceType,
+    parentInvoiceId,
     dateCreated,
     dueDate,
     paymentDate,
@@ -122,6 +124,8 @@ router.post('/', asyncHandler(async (req, res) => {
   const invoice = await prisma.invoice.create({
     data: {
       invoiceNumber: String(invoiceNumber).trim(),
+      invoiceType: invoiceType || 'Standard',
+      parentInvoiceId: parentInvoiceId || null,
       dateCreated: dateCreated || new Date().toISOString().slice(0, 10),
       dueDate: dueDate || null,
       paymentDate: paymentDate || null,
@@ -149,13 +153,15 @@ router.post('/', asyncHandler(async (req, res) => {
 
 // PUT /api/invoices/:id
 router.put('/:id', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "edit") && !hasPermission(req.authUser, "tracker_invoices", "edit")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
   const id = req.params.id as string;
   const {
     invoiceNumber,
+    invoiceType,
+    parentInvoiceId,
     dateCreated,
     dueDate,
     paymentDate,
@@ -221,6 +227,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       where: { id },
       data: {
         invoiceNumber: invoiceNumber !== undefined ? String(invoiceNumber).trim() : existing.invoiceNumber,
+        invoiceType: invoiceType !== undefined ? invoiceType : existing.invoiceType,
+        parentInvoiceId: parentInvoiceId !== undefined ? parentInvoiceId : existing.parentInvoiceId,
         dateCreated: dateCreated !== undefined ? (dateCreated || null) : existing.dateCreated,
         dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
         paymentDate: paymentDate !== undefined ? (paymentDate || null) : existing.paymentDate,
@@ -246,7 +254,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 
 // PATCH /api/invoices/:id/status
 router.patch('/:id/status', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "edit") && !hasPermission(req.authUser, "tracker_invoices", "edit")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }
@@ -283,7 +291,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 
 // DELETE /api/invoices/:id
 router.delete('/:id', asyncHandler(async (req, res) => {
-  if (!canManageInvoices(req.authUser!.role)) {
+  if (!hasPermission(req.authUser, "invoices", "delete") && !hasPermission(req.authUser, "tracker_invoices", "delete")) {
     res.status(403).json({ error: 'Permission denied. You do not have permission to manage invoices.' });
     return;
   }

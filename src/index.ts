@@ -3,6 +3,7 @@ dotenv.config();
 
 import { createApp } from './app';
 import { prisma } from './db';
+import { shutdownActivityLogger } from './helpers/activityLogger';
 
 const PORT = process.env.PORT || 3001;
 
@@ -19,6 +20,7 @@ async function startServer() {
       console.log('Shutting down server gracefully...');
       server.close(async () => {
         console.log('HTTP server closed.');
+        await shutdownActivityLogger();
         await prisma.$disconnect();
         console.log('Prisma disconnected.');
         process.exit(0);
