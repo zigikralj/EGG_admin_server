@@ -85,13 +85,16 @@ export const prisma = basePrisma.$extends({
         const changedKeys =
           operation === 'update' && data ? Object.keys(data).filter((k) => isScalarAssignment(data[k])) : [];
 
+        const delegateName = model.charAt(0).toLowerCase() + model.slice(1);
+        const delegate = (basePrisma as any)[delegateName] || (basePrisma as any)[model];
+
         // Before-state: for updates only the fields being changed; for deletes the full row.
         let before: any = null;
-        if (where && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
+        if (where && delegate && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
           try {
             const select =
               operation === 'update' ? Object.fromEntries(changedKeys.map((k) => [k, true])) : undefined;
-            before = await (basePrisma as any)[model].findUnique({ where, ...(select ? { select } : {}) });
+            before = await delegate.findUnique({ where, ...(select ? { select } : {}) });
           } catch {
             // Ignore fetch errors — audit is best-effort
           }
@@ -108,7 +111,12 @@ export const prisma = basePrisma.$extends({
             for (const key of changedKeys) {
               const oldVal = before?.[key];
               const newVal = (result as any)?.[key];
-              if (JSON.stringify(oldVal) === JSON.stringify(newVal)) continue;
+
+              const normOld = oldVal instanceof Date ? oldVal.toISOString() : (oldVal ?? null);
+              const normNew = newVal instanceof Date ? newVal.toISOString() : (newVal ?? null);
+
+              if (JSON.stringify(normOld) === JSON.stringify(normNew)) continue;
+
               diff[key] = SENSITIVE_FIELD_RE.test(key)
                 ? { old: '[redacted]', new: '[redacted]' }
                 : { old: compactValue(oldVal), new: compactValue(newVal) };
@@ -121,6 +129,7 @@ export const prisma = basePrisma.$extends({
               if (relationKeys.length === 0) return result;
               diff = { relations: relationKeys.join(', ') };
             }
+            if (Object.keys(diff).length === 0) return result;
           } else if (operation === 'delete') {
             diff = compactSnapshot(before);
           }

@@ -246,6 +246,7 @@ All routes follow a consistent pattern:
 
 | Mount Path | Route File | Auth |
 |---|---|---|
+| `/api/roles` | `roles.routes.ts` | All routes require auth |
 | `/api/auth` | `auth.routes.ts` | Partial (login/register are public) |
 | `/api/users` | `users.routes.ts` | All routes require auth |
 | `/api/projects/stats` | `stats.routes.ts` | No auth (mounted before projects) |
@@ -267,12 +268,13 @@ All routes follow a consistent pattern:
 
 ## Data Models (Prisma Schema)
 
-> **Detailed Model Specification:** See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for a comprehensive field-by-field breakdown of all 16 entities, foreign key constraints, cascade rules, indices, and domain patterns.
+> **Detailed Model Specification:** See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for a comprehensive field-by-field breakdown of all 19 entities, foreign key constraints, cascade rules, indices, and domain patterns.
 
 ### Entity Relationship Diagram
 
 ```mermaid
 erDiagram
+    Role ||--o{ User : "assigns to"
     User ||--o{ Project : "responsible for"
     User ||--o{ UserPreference : has
     User ||--o{ Notification : receives
@@ -309,6 +311,7 @@ erDiagram
 
 | Model | Purpose | Key Fields |
 |---|---|---|
+| **Role** | Dynamic roles & permissions | name (PK), description, isSystemAdmin, permissions (JSON) |
 | **User** | System users | name, email, password, role, status, isApproved |
 | **UserPreference** | Per-user settings (KV store) | userId, key, value (JSON string) |
 | **Project** | Environmental service projects | name, clientId, responsible, type, progress, done, nextSample |
@@ -322,7 +325,7 @@ erDiagram
 | **Reminder** | Tasks/reminders | title, status, dueDate, linked to project/client/permit/user |
 | **Notification** | User notifications (@mentions) | userId, type, title, message, read, link |
 | **CompanyInfo** | Company details (singleton) | Legal info, bank accounts, address |
-| **Permit** | Environmental permits | permitNumber, startDate, endDate |
+| **Permit** | Environmental permits | permitNumber, permitTypes, startDate, endDate |
 | **WasteCatalog** | Serbian waste index catalog | code (unique), description, isHazardous, hazardListMark, frequent |
 | **PermitWaste** | Permit↔WasteCatalog junction | permitId, wasteCatalogId (unique together) |
 | **ActivityLog** | System audit and user activity | userId, type, details, timestamp |
@@ -422,7 +425,7 @@ Push to `main` branch triggers the GitHub Actions deploy workflow (`deploy.yml`)
 
 ### Dependabot
 
-Configured in `.github/dependabot.yml` for automated npm dependency update PRs.
+Configured in `.github/dependabot.yml` for automated npm dependency update PRs, organized into dependency groups (`production-dependencies`, `development-dependencies`, `github-actions`) to streamline review and minimize PR churn.
 
 ---
 

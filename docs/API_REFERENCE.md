@@ -186,6 +186,74 @@ Delete a user. **Admin/Manager only.** Manager cannot delete Administrators.
 
 ---
 
+## Roles (`/api/roles`)
+
+Dynamic role and permission matrix management.
+
+### `GET /api/roles`
+List all roles with user counts.
+
+**Response 200:**
+```json
+[
+  {
+    "name": "Manager",
+    "description": "Standard management role",
+    "isSystemAdmin": false,
+    "permissions": {
+      "projects": ["view", "create", "edit", "delete"],
+      "clients": ["view", "create", "edit"]
+    },
+    "_count": { "users": 3 },
+    "createdAt": "2026-09-19T10:00:00.000Z",
+    "updatedAt": "2026-09-19T10:00:00.000Z"
+  }
+]
+```
+
+### `POST /api/roles`
+Create a new custom role. Requires `roles` create permission or System Administrator. Only System Administrators can designate a role as `isSystemAdmin: true`.
+
+**Body:**
+```json
+{
+  "name": "string (required)",
+  "description": "string (optional)",
+  "isSystemAdmin": false,
+  "permissions": {
+    "projects": ["view", "create", "edit", "delete"],
+    "projects_onlyOwn": true
+  }
+}
+```
+
+**Response 201:** Created role object.
+
+### `PUT /api/roles/:name`
+Update an existing role. Requires `roles` edit permission or System Administrator.
+- Default `Administrator` role cannot have system admin privileges revoked.
+- Only one role in the system can be designated as System Administrator.
+
+**Body:**
+```json
+{
+  "description": "string (optional)",
+  "isSystemAdmin": false,
+  "permissions": { ... }
+}
+```
+
+**Response 200:** Updated role object.
+
+### `DELETE /api/roles/:name`
+Delete a role. Requires `roles` delete permission or System Administrator.
+- Cannot delete the default `Administrator` role.
+- Cannot delete a role that is currently assigned to users.
+
+**Response 200:** `{ "success": true }`
+
+---
+
 ## Projects (`/api/projects`)
 
 **All routes require auth.**
