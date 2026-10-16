@@ -24,6 +24,8 @@ import wasteCatalogRoutes from './routes/wasteCatalog.routes';
 // Import rate limiters (currently defined in index.ts or authUtils, let's assume we need to import or recreate them)
 import rateLimit from 'express-rate-limit';
 
+import { API_ROUTES } from './constants/apiRoutes';
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -42,7 +44,7 @@ export function createApp() {
   app.use(cors());
   
   // Override for import endpoints (applied before the import route handlers)
-  app.use('/api/import', express.json({ limit: '10mb' })); 
+  app.use(API_ROUTES.IMPORT, express.json({ limit: '10mb' })); 
   
   // Default for all other routes
   app.use(express.json({ limit: '1mb' })); 
@@ -64,27 +66,27 @@ export function createApp() {
   });
 
   // Apply stricter rate limits to auth
-  app.use('/api/auth/login', authLimiter);
-  app.use('/api/auth/register', authLimiter);
+  app.use(API_ROUTES.AUTH.LOGIN, authLimiter);
+  app.use(API_ROUTES.AUTH.REGISTER, authLimiter);
 
   // Mount routes
-  app.use('/api/roles', rolesRoutes);
-  app.use('/api/auth', authRoutes);
-  app.use('/api/users', usersRoutes);
-  app.use('/api/activity-logs', activityLogRoutes);
-  app.use('/api/projects/stats', statsRoutes);
-  app.use('/api/projects', projectsRoutes);
-  app.use('/api/reminders', remindersRoutes);
-  app.use('/api/clients', clientsRoutes);
-  app.use('/api/services', servicesRoutes);
-  app.use('/api/categories', categoriesRoutes);
-  app.use('/api/invoices', invoicesRoutes);
-  app.use('/api/provided-services', providedServicesRoutes);
-  app.use('/api/preferences', preferencesRoutes);
-  app.use('/api/company-info', companyInfoRoutes);
-  app.use('/api/notifications', notificationsRoutes);
-  app.use('/api/permits', permitsRoutes);
-  app.use('/api/waste-catalog', wasteCatalogRoutes);
+  app.use(API_ROUTES.ROLES, rolesRoutes);
+  app.use(API_ROUTES.AUTH.BASE, authRoutes);
+  app.use(API_ROUTES.USERS, usersRoutes);
+  app.use(API_ROUTES.ACTIVITY_LOGS, activityLogRoutes);
+  app.use(API_ROUTES.PROJECTS.STATS, statsRoutes);
+  app.use(API_ROUTES.PROJECTS.BASE, projectsRoutes);
+  app.use(API_ROUTES.REMINDERS, remindersRoutes);
+  app.use(API_ROUTES.CLIENTS, clientsRoutes);
+  app.use(API_ROUTES.SERVICES, servicesRoutes);
+  app.use(API_ROUTES.CATEGORIES, categoriesRoutes);
+  app.use(API_ROUTES.INVOICES, invoicesRoutes);
+  app.use(API_ROUTES.PROVIDED_SERVICES, providedServicesRoutes);
+  app.use(API_ROUTES.PREFERENCES, preferencesRoutes);
+  app.use(API_ROUTES.COMPANY_INFO, companyInfoRoutes);
+  app.use(API_ROUTES.NOTIFICATIONS, notificationsRoutes);
+  app.use(API_ROUTES.PERMITS, permitsRoutes);
+  app.use(API_ROUTES.WASTE_CATALOG, wasteCatalogRoutes);
 
   // Handle undefined routes
   app.use((req, res) => {

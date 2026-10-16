@@ -1,12 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../db';
-import { generateToken, hashPassword, verifyPassword } from '../authUtils';
+import { generateToken, hashPassword, verifyPassword, SESSION_DURATION_SECONDS } from '../authUtils';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth, userForceLogoutMap } from '../middleware/auth';
 import { validatePassword, sanitizeString } from '../middleware/validate';
 
 const router = Router();
-const SESSION_DURATION_SECONDS = 7200; // 2 hours
 
 // POST /api/auth/login
 router.post('/login', asyncHandler(async (req, res) => {

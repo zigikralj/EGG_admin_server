@@ -14,6 +14,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { requestContext } from './context';
 import { initActivityLogger, enqueueActivityLog, isActivityLoggingEnabled } from './helpers/activityLogger';
+import { PRISMA_MODEL_TO_API_ROUTE } from './constants/apiRoutes';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -134,12 +135,14 @@ export const prisma = basePrisma.$extends({
             diff = compactSnapshot(before);
           }
 
+          const apiPath = PRISMA_MODEL_TO_API_ROUTE[model] || `/api/${model.toLowerCase()}s`;
+
           // Non-blocking: persisted in background batches by activityLogger.
           enqueueActivityLog({
             userId: ctx.userId,
             userName: ctx.userName || 'Unknown',
             type: operation.toUpperCase(),
-            path: `/api/${model.toLowerCase()}s`,
+            path: apiPath,
             details: JSON.stringify({ model, action: operation, diff }),
             sessionId: ctx.sessionId || null,
           });
