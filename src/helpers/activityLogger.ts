@@ -176,8 +176,35 @@ export async function flushActivityLogs(): Promise<void> {
   if (queue.length > 0) enqueueActivityLog([]);
 }
 
+export async function purgeShortLifecycleSessions(): Promise<number> {
+  if (!client) return 0;
+  try {
+    const result = await client.$executeRaw`
+      DELETE FROM "ActivityLog"
+      WHERE "sessionId" IN (
+        SELECT "sessionId"
+        FROM "ActivityLog"
+        WHERE "sessionId" IS NOT NULL
+        GROUP BY "sessionId"
+        HAVING 
+          BOOL_AND("type" IN ('LOGIN', 'LOGOUT')) = TRUE
+          AND COALESCE(SUM("durationSeconds"), 0) < 5
+          AND EXTRACT(EPOCH FROM (MAX("timestamp") - MIN("timestamp"))) < 5
+      );
+    `;
+    if (result > 0) {
+      console.log(`[activityLogger] Purged ${result} log entries from sessions < 5s with only login/logout.`);
+    }
+    return result;
+  } catch (err) {
+    console.error('[activityLogger] Failed to purge short lifecycle sessions', err);
+    return 0;
+  }
+}
+
 export async function purgeOldActivityLogs(): Promise<number> {
   if (!client) return 0;
+  await purgeShortLifecycleSessions();
   const cutoff = new Date(Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000);
   try {
     const result = await client.activityLog.deleteMany({ where: { timestamp: { lt: cutoff } } });
