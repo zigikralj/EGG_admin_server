@@ -6,6 +6,7 @@ import { UserRole } from "../types";
 import {
   enqueueActivityLog,
   flushActivityLogs,
+  purgeShortLifecycleSessions,
   getRetentionDays,
   isActivityLoggingEnabled,
   setActivityLoggingEnabled,
@@ -107,8 +108,9 @@ router.get("/", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Make sure freshly buffered entries are visible to the viewer.
+  // Make sure freshly buffered entries are visible to the viewer and purge short lifecycle-only sessions
   await flushActivityLogs();
+  await purgeShortLifecycleSessions();
 
   const { userId, sessionId, limit, from, includeDetails } = req.query;
   const where: any = {};

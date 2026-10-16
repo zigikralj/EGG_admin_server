@@ -14,6 +14,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { requestContext } from './context';
 import { initActivityLogger, enqueueActivityLog, isActivityLoggingEnabled } from './helpers/activityLogger';
+import { PRISMA_MODEL_TO_API_ROUTE } from './constants/apiRoutes';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -85,13 +86,16 @@ export const prisma = basePrisma.$extends({
         const changedKeys =
           operation === 'update' && data ? Object.keys(data).filter((k) => isScalarAssignment(data[k])) : [];
 
+        const delegateName = model.charAt(0).toLowerCase() + model.slice(1);
+        const delegate = (basePrisma as any)[delegateName] || (basePrisma as any)[model];
+
         // Before-state: for updates only the fields being changed; for deletes the full row.
         let before: any = null;
-        if (where && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
+        if (where && delegate && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
           try {
             const select =
               operation === 'update' ? Object.fromEntries(changedKeys.map((k) => [k, true])) : undefined;
-            before = await (basePrisma as any)[model].findUnique({ where, ...(select ? { select } : {}) });
+            before = await delegate.findUnique({ where, ...(select ? { select } : {}) });
           } catch {
             // Ignore fetch errors — audit is best-effort
           }
@@ -108,7 +112,12 @@ export const prisma = basePrisma.$extends({
             for (const key of changedKeys) {
               const oldVal = before?.[key];
               const newVal = (result as any)?.[key];
-              if (JSON.stringify(oldVal) === JSON.stringify(newVal)) continue;
+
+              const normOld = oldVal instanceof Date ? oldVal.toISOString() : (oldVal ?? null);
+              const normNew = newVal instanceof Date ? newVal.toISOString() : (newVal ?? null);
+
+              if (JSON.stringify(normOld) === JSON.stringify(normNew)) continue;
+
               diff[key] = SENSITIVE_FIELD_RE.test(key)
                 ? { old: '[redacted]', new: '[redacted]' }
                 : { old: compactValue(oldVal), new: compactValue(newVal) };
@@ -121,16 +130,19 @@ export const prisma = basePrisma.$extends({
               if (relationKeys.length === 0) return result;
               diff = { relations: relationKeys.join(', ') };
             }
+            if (Object.keys(diff).length === 0) return result;
           } else if (operation === 'delete') {
             diff = compactSnapshot(before);
           }
+
+          const apiPath = PRISMA_MODEL_TO_API_ROUTE[model] || `/api/${model.toLowerCase()}s`;
 
           // Non-blocking: persisted in background batches by activityLogger.
           enqueueActivityLog({
             userId: ctx.userId,
             userName: ctx.userName || 'Unknown',
             type: operation.toUpperCase(),
-            path: `/api/${model.toLowerCase()}s`,
+            path: apiPath,
             details: JSON.stringify({ model, action: operation, diff }),
             sessionId: ctx.sessionId || null,
           });
