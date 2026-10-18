@@ -53,16 +53,18 @@ Every route file follows the same pattern:
 | `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions. Own notifications only. |
 | `companyInfo.routes.ts` | `/api/company-info` | Singleton company record. Admin/Manager write. |
 | `preferences.routes.ts` | `/api/preferences` | Per-user key-value settings. Own preferences only. |
-| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, lazy diff loading, purge. |
+| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, lazy diff loading, purge, and `/analytics` endpoint. |
 | `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts. Optional auth. |
 
-### Helper Utilities (`src/helpers/`)
+### Services & Helper Utilities (`src/services/`, `src/helpers/`)
 | File | Purpose |
 |---|---|
-| `activityLogger.ts` | Non-blocking batched in-memory activity log buffer with auto-flush (5s / 50 items) and daily retention purge |
-| `dateUtils.ts` | `addMonths()`, `daysUntil()`, `isStale()` — date arithmetic for project scheduling |
-| `mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes, creates Notification records |
-| `prismaErrors.ts` | `handlePrismaError()` — legacy inline Prisma error handler (mostly superseded by global errorHandler) |
+| `src/services/activityAnalytics.service.ts` | Activity Analytics aggregation engine (KPIs, timelines, top pages, actions by entity, user usage, heatmap, session duration distribution, transitions, stickiness) |
+| `src/helpers/analyticsCache.ts` | In-memory 60-second TTL cache for analytics queries with automatic invalidation on activity log deletions |
+| `src/helpers/activityLogger.ts` | Non-blocking batched in-memory activity log buffer with auto-flush (5s / 50 items) and daily retention purge |
+| `src/helpers/dateUtils.ts` | `addMonths()`, `daysUntil()`, `isStale()` — date arithmetic for project scheduling |
+| `src/helpers/mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes, creates Notification records |
+| `src/helpers/prismaErrors.ts` | `handlePrismaError()` — legacy inline Prisma error handler (mostly superseded by global errorHandler) |
 
 ### Import Scripts (standalone, run via `npm run`)
 | File | Command | What it does |

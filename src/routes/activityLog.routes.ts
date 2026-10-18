@@ -15,6 +15,8 @@ import {
   SETTING_KEY_ACTIVITY_RETENTION,
   type ActivityLogEntry,
 } from "../helpers/activityLogger";
+import { getAnalyticsCache, setAnalyticsCache, clearAnalyticsCache } from "../helpers/analyticsCache";
+import { getActivityAnalytics } from "../services/activityAnalytics.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -139,6 +141,99 @@ router.get("/", asyncHandler(async (req, res) => {
   res.json(logs);
 }));
 
+// GET /api/activity-logs/analytics — Activity analytics (Administrator only)
+router.get("/analytics", asyncHandler(async (req, res) => {
+  if (!isUserAdmin(req.authUser)) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Activity analytics are restricted to Administrators." });
+    return;
+  }
+
+  // Ensure buffered in-memory logs are persisted before analytics computation
+  await flushActivityLogs();
+
+  const query = req.query;
+
+  // 1. Timezone validation
+  let tz = typeof query.tz === "string" ? query.tz.trim() : "UTC";
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+  } catch {
+    tz = "UTC";
+  }
+
+  // 2. Date range validation
+  const now = new Date();
+  let toDate = query.to ? new Date(query.to as string) : now;
+  if (isNaN(toDate.getTime())) toDate = now;
+
+  let fromDate = query.from ? new Date(query.from as string) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (isNaN(fromDate.getTime())) fromDate = new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  if (fromDate >= toDate) {
+    res.status(400).json({ error: "INVALID_RANGE", message: "'from' date must be before 'to' date." });
+    return;
+  }
+
+  // Hard-cap the range to retention period
+  const retentionDays = getRetentionDays();
+  const maxRangeMs = retentionDays * 24 * 60 * 60 * 1000;
+  if (toDate.getTime() - fromDate.getTime() > maxRangeMs) {
+    fromDate = new Date(toDate.getTime() - maxRangeMs);
+  }
+
+  // 3. Granularity validation / auto-calculation
+  const allowedGranularities = new Set(["day", "week", "month"]);
+  let granularity = typeof query.granularity === "string" ? query.granularity.toLowerCase() : "";
+  if (!allowedGranularities.has(granularity)) {
+    const rangeDays = (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24);
+    granularity = rangeDays <= 45 ? "day" : rangeDays <= 180 ? "week" : "month";
+  }
+
+  // 4. Optional filters
+  const userIds = query.userIds && typeof query.userIds === "string"
+    ? query.userIds.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+
+  const roles = query.roles && typeof query.roles === "string"
+    ? query.roles.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+
+  const excludeAdminPages = query.excludeAdminPages !== "false";
+  const compare = query.compare !== "false";
+
+  // Cache lookup
+  const cacheKey = JSON.stringify({
+    from: fromDate.toISOString(),
+    to: toDate.toISOString(),
+    granularity,
+    tz,
+    userIds: userIds?.sort(),
+    roles: roles?.sort(),
+    excludeAdminPages,
+    compare,
+  });
+
+  const cached = getAnalyticsCache(cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  const result = await getActivityAnalytics(prisma, {
+    from: fromDate,
+    to: toDate,
+    granularity: granularity as "day" | "week" | "month",
+    tz,
+    userIds,
+    roles,
+    excludeAdminPages,
+    compare,
+  });
+
+  setAnalyticsCache(cacheKey, result);
+  res.json(result);
+}));
+
 // GET /api/activity-logs/:id — single log including details (Administrator only)
 router.get("/:id", asyncHandler(async (req, res) => {
   if (!isUserAdmin(req.authUser)) {
@@ -199,6 +294,7 @@ router.delete("/clear-all", asyncHandler(async (req, res) => {
 
   await flushActivityLogs();
   const result = await prisma.activityLog.deleteMany({});
+  clearAnalyticsCache();
   res.json({ message: "All activity logs deleted.", count: result.count });
 }));
 
@@ -221,6 +317,7 @@ router.post("/bulk-delete", asyncHandler(async (req, res) => {
     }
   });
 
+  clearAnalyticsCache();
   res.json({ message: "Activity logs deleted.", count: result.count });
 }));
 
@@ -236,6 +333,7 @@ router.delete("/session/:sessionId", asyncHandler(async (req, res) => {
   const result = await prisma.activityLog.deleteMany({
     where: { sessionId },
   });
+  clearAnalyticsCache();
   res.json({ message: "Activity logs for session deleted.", count: result.count });
 }));
 
@@ -250,6 +348,7 @@ router.delete("/:id", asyncHandler(async (req, res) => {
   await prisma.activityLog.delete({
     where: { id },
   });
+  clearAnalyticsCache();
   res.json({ message: "Activity log deleted." });
 }));
 

@@ -346,6 +346,7 @@ model ActivityLog {
   @@index([userId, timestamp])
   @@index([timestamp])
   @@index([sessionId])
+  @@index([type, timestamp])
 }
 
 model SystemSetting {

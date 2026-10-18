@@ -28,7 +28,10 @@ export const API_ROUTES = {
   NOTIFICATIONS: '/api/notifications',
   PERMITS: '/api/permits',
   WASTE_CATALOG: '/api/waste-catalog',
-  ACTIVITY_LOGS: '/api/activity-logs',
+  ACTIVITY_LOGS: {
+    BASE: '/api/activity-logs',
+    ANALYTICS: '/api/activity-logs/analytics',
+  },
   IMPORT: '/api/import',
 } as const;
 
@@ -50,4 +53,5 @@ export const PRISMA_MODEL_TO_API_ROUTE: Record<string, string> = {
   Role: API_ROUTES.ROLES,
   WasteCatalog: API_ROUTES.WASTE_CATALOG,
   CompanyInfo: API_ROUTES.COMPANY_INFO,
+  ActivityLog: API_ROUTES.ACTIVITY_LOGS.BASE,
 };
