@@ -73,7 +73,7 @@ export function createApp() {
   app.use(API_ROUTES.ROLES, rolesRoutes);
   app.use(API_ROUTES.AUTH.BASE, authRoutes);
   app.use(API_ROUTES.USERS, usersRoutes);
-  app.use(API_ROUTES.ACTIVITY_LOGS, activityLogRoutes);
+  app.use(API_ROUTES.ACTIVITY_LOGS.BASE, activityLogRoutes);
   app.use(API_ROUTES.PROJECTS.STATS, statsRoutes);
   app.use(API_ROUTES.PROJECTS.BASE, projectsRoutes);
   app.use(API_ROUTES.REMINDERS, remindersRoutes);
