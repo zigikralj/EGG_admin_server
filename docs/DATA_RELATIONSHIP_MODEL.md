@@ -16,7 +16,7 @@ The database layer is managed with **Prisma ORM** connecting to a **PostgreSQL**
 
 2. **Temporal & Date Handling:**
    - **System Timestamps:** `createdAt` (`DateTime @default(now())`) and `updatedAt` (`DateTime @updatedAt`) are managed as native PostgreSQL timestamps with timezone.
-   - **Business Dates:** Dates such as `start`, `deadline`, `dueDate`, `paymentDate`, `scheduledDate`, `completionDate`, and `nextSample` are stored as **ISO 8601 Date Strings** (`String?`, format `YYYY-MM-DD`). This avoids time zone shifts and serialization mismatches across clients and external reporting systems.
+   - **Business Dates:** Dates such as `start`, `deadline`, `dueDate`, `paymentDate`, `scheduledDate`, and `completionDate` are stored as **ISO 8601 Date Strings** (`String?`, format `YYYY-MM-DD`). This avoids time zone shifts and serialization mismatches across clients and external reporting systems.
 
 3. **Read Optimization via Controlled Denormalization:**
    - To avoid expensive multi-table joins on list views and search filters, related display labels are snapshot on creation:
@@ -540,7 +540,6 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `deadline` | `String` | Optional | | Target completion date (`YYYY-MM-DD`) |
 | `progress` | `Int` | Required | `@default(0)` | Completion percentage (0–100) |
 | `done` | `Boolean` | Required | `@default(false)` | Completion status flag |
-| `nextSample` | `String` | Optional | | Next sampling date string (`YYYY-MM-DD`) |
 | `notes` | `String` | Optional | | Project operational notes |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |

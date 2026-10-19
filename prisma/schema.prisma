@@ -18,7 +18,6 @@ model Project {
   deadline      String?
   progress      Int      @default(0)
   done          Boolean  @default(false)
-  nextSample    String?
   notes         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

@@ -280,7 +280,6 @@ Create a project.
   "deadline": "YYYY-MM-DD (optional)",
   "progress": "0-100 (optional, default 0)",
   "done": "boolean (optional)",
-  "nextSample": "YYYY-MM-DD (optional)",
   "notes": "string/HTML (optional — supports @mentions)"
 }
 ```
@@ -303,12 +302,7 @@ Toggle project done/undone status. Requires ownership or Admin/Manager.
 
 **Response 200:** Updated project object.
 
----
 
-### `PATCH /api/projects/:id/sample`
-Advance `nextSample` date by the service's frequency (in months). Requires ownership or Admin/Manager.
-
-**Response 200:** Updated project object.
 
 ---
 
@@ -813,7 +807,7 @@ Definitions:
 - **active**: Projects where `done = false`
 - **done**: Projects where `done = true`
 - **stale**: Active projects with `start` date >2 months ago
-- **monitor**: Projects with `nextSample` ≤ 14 days from now
+- **monitor**: Pending reminders with `dueDate` ≤ 14 days from now
 
 ---
 

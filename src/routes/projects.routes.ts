@@ -3,7 +3,6 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission, isRestrictedToOwn } from '../types';
-import { addMonths } from '../helpers/dateUtils';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
 
 const router = Router();
@@ -78,7 +77,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // POST /api/projects
 router.post('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample, notes } = req.body;
+  const { name, clientId, clientName, responsible, type, start, deadline, progress, done, notes } = req.body;
 
   if (!name || (!clientId && !clientName) || !type) {
     res.status(400).json({ error: 'Name, client, and type are required' });
@@ -103,8 +102,6 @@ router.post('/', asyncHandler(async (req, res) => {
     }
   }
 
-  const computedNextSample = nextSample || null;
-
   const progVal = Math.max(0, Math.min(100, Number(progress) || 0));
   const isDone = done !== undefined ? Boolean(done) : progVal >= 100;
 
@@ -120,7 +117,6 @@ router.post('/', asyncHandler(async (req, res) => {
       deadline: deadline || null,
       progress: progVal,
       done: isDone,
-      nextSample: computedNextSample,
       notes: notes || null,
     },
   });
@@ -136,7 +132,7 @@ router.post('/', asyncHandler(async (req, res) => {
 router.put('/:id', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
   const id = req.params.id as string;
-  const { name, clientId, clientName, responsible, type, start, deadline, progress, done, nextSample, notes } = req.body;
+  const { name, clientId, clientName, responsible, type, start, deadline, progress, done, notes } = req.body;
 
   const existing = await prisma.project.findUnique({ where: { id } });
   if (!existing) {
@@ -167,25 +163,22 @@ router.put('/:id', asyncHandler(async (req, res) => {
     if (matchedUser) finalResponsibleId = matchedUser.id;
   }
 
-  const computedNextSample = nextSample || null;
-
-  const progVal = Math.max(0, Math.min(100, Number(progress) || 0));
+  const progVal = progress !== undefined ? Math.max(0, Math.min(100, Number(progress) || 0)) : existing.progress;
   const isDone = done !== undefined ? Boolean(done) : (progVal >= 100 ? true : existing.done);
 
   const updated = await prisma.project.update({
     where: { id },
     data: {
-      name,
-      clientId: clientId || null,
+      name: name !== undefined ? name : existing.name,
+      clientId: clientId !== undefined ? (clientId || null) : existing.clientId,
       clientName: finalClientName,
       responsible: finalResponsible,
       responsibleId: finalResponsibleId,
-      type,
-      start: start || null,
-      deadline: deadline || null,
+      type: type !== undefined ? type : existing.type,
+      start: start !== undefined ? (start || null) : existing.start,
+      deadline: deadline !== undefined ? (deadline || null) : existing.deadline,
       progress: progVal,
       done: isDone,
-      nextSample: computedNextSample,
       notes: notes !== undefined ? (notes || null) : existing.notes,
     },
   });
@@ -218,33 +211,6 @@ router.patch('/:id/toggle-done', asyncHandler(async (req, res) => {
   const updated = await prisma.project.update({
     where: { id },
     data: { done: newDone, progress: newProgress },
-  });
-
-  res.json(updated);
-}));
-
-// PATCH /api/projects/:id/sample
-router.patch('/:id/sample', asyncHandler(async (req, res) => {
-  const authUser = req.authUser!;
-  const id = req.params.id as string;
-  const existing = await prisma.project.findUnique({ where: { id } });
-  if (!existing || !existing.nextSample) {
-    res.status(400).json({ error: 'Project has no next sample date' });
-    return;
-  }
-
-  if (!isProjectOwnerOrCan(authUser, existing, "edit")) {
-    res.status(403).json({ error: 'Permission denied. You can only edit projects you own or have permission to edit.' });
-    return;
-  }
-
-  const service = await prisma.service.findUnique({ where: { code: existing.type } });
-  const freq = service?.frequency || 3;
-  const newNextSample = addMonths(existing.nextSample, freq);
-
-  const updated = await prisma.project.update({
-    where: { id },
-    data: { nextSample: newNextSample },
   });
 
   res.json(updated);

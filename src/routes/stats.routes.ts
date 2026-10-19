@@ -44,7 +44,7 @@ router.get('/', asyncHandler(async (req, res) => {
     prisma.project.count({ where: { ...projectWhere, done: false } }),
     prisma.project.count({ where: { ...projectWhere, done: true } }),
     prisma.project.count({ where: { ...projectWhere, done: false, start: { lt: cutoffStaleStr } } }),
-    prisma.project.count({ where: { ...projectWhere, nextSample: { not: null, lte: cutoffMonitorStr } } }),
+    prisma.reminder.count({ where: { status: 'Pending', dueDate: { not: null, lte: cutoffMonitorStr } } }),
     prisma.client.count(),
     prisma.user.count(),
     prisma.service.count(),

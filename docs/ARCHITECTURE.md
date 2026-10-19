@@ -31,7 +31,7 @@ The Ekos Project Tracker API Server is a REST API backend for managing environme
 
 The server provides:
 - **User management** with role-based access control (RBAC)
-- **Project lifecycle management** with sampling schedules
+- **Project lifecycle management** with progress tracking and reminders
 - **Client management** with permit associations
 - **Invoice management** with line items
 - **Permit management** linked to waste catalog entries
@@ -109,7 +109,7 @@ server/
 │       ├── auth.routes.ts          # /api/auth — login, register, me
 │       ├── roles.routes.ts         # /api/roles — CRUD, permissions matrix
 │       ├── users.routes.ts         # /api/users — CRUD, approve, reject, force-logout
-│       ├── projects.routes.ts      # /api/projects — CRUD, toggle-done, sample advance
+│       ├── projects.routes.ts      # /api/projects — CRUD, toggle-done
 │       ├── clients.routes.ts       # /api/clients — CRUD with permit association
 │       ├── invoices.routes.ts      # /api/invoices — CRUD with line items, status
 │       ├── services.routes.ts      # /api/services — CRUD for service types
@@ -321,7 +321,7 @@ erDiagram
 | **Role** | Dynamic roles & permissions | name (PK), description, isSystemAdmin, permissions (JSON) |
 | **User** | System users | name, email, password, role, status, isApproved |
 | **UserPreference** | Per-user settings (KV store) | userId, key, value (JSON string) |
-| **Project** | Environmental service projects | name, clientId, responsible, type, progress, done, nextSample |
+| **Project** | Environmental service projects | name, clientId, responsible, type, progress, done |
 | **Client** | Company clients | name, contactPerson, email, phone, city |
 | **ClientExtraData** | Client→Permit association | clientId (unique), permitId |
 | **Service** | Service type definitions | code (unique), name, group, frequency, customDataModel (JSON) |
@@ -344,7 +344,7 @@ erDiagram
 
 ### `src/helpers/dateUtils.ts`
 
-- **`addMonths(dateStr, months)`**: Advances an ISO date string by N months. Used for sample schedule advancement.
+- **`addMonths(dateStr, months)`**: Advances an ISO date string by N months.
 - **`daysUntil(dateStr)`**: Days from today to the given date. Negative = past.
 - **`isStale(project)`**: Project is stale if not done AND started >2 months ago.
 

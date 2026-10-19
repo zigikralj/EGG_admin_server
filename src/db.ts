@@ -13,7 +13,8 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { requestContext } from './context';
-import { initActivityLogger } from './helpers/activityLogger';
+import { initActivityLogger, enqueueActivityLog, isActivityLoggingEnabled } from './helpers/activityLogger';
+import { PRISMA_MODEL_TO_API_ROUTE } from './constants/apiRoutes';
 
 // Enable BigInt serialization in JSON.stringify
 if (!(BigInt.prototype as any).toJSON) {
@@ -81,6 +82,52 @@ const MUTATION_OPERATIONS = new Set([
   'deleteMany',
 ]);
 
+/** Models never audited: the log itself and high-frequency / low-value side-effect records. */
+const AUDIT_SKIP_MODELS = new Set(['ActivityLog', 'UserPreference', 'Notification', 'SystemSetting', 'ChangeSet', 'EntityVersion']);
+const AUDIT_OPERATIONS = new Set(['create', 'update', 'delete']);
+/** Fields that must never be written to the activity log. */
+const SENSITIVE_FIELD_RE = /password|token|secret/i;
+/** Bookkeeping and relational fields that are not meaningful to log as diffs. */
+const NOISE_FIELDS = new Set(['id', 'createdAt', 'updatedAt']);
+const MAX_STRING_LENGTH = 120;
+
+const isScalarAssignment = (val: unknown): boolean =>
+  val === null ||
+  typeof val === 'string' ||
+  typeof val === 'number' ||
+  typeof val === 'boolean' ||
+  val instanceof Date;
+
+const compactValue = (v: unknown): unknown => {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === 'string') {
+    const text = /<[a-z][\s\S]*>/i.test(v) ? v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : v;
+    return text.length > MAX_STRING_LENGTH ? text.slice(0, MAX_STRING_LENGTH) + '…' : text;
+  }
+  if (typeof v === 'object') {
+    const json = JSON.stringify(v);
+    return json.length > MAX_STRING_LENGTH ? json.slice(0, MAX_STRING_LENGTH) + '…' : v;
+  }
+  return v;
+};
+
+/** Compact snapshot of a record: scalar fields only, secrets redacted, long text truncated. */
+const compactSnapshot = (record: any): Record<string, unknown> | null => {
+  if (!record || typeof record !== 'object') return null;
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(record)) {
+    if (NOISE_FIELDS.has(key) || val === null || val === undefined || val === '') continue;
+    if (SENSITIVE_FIELD_RE.test(key)) {
+      out[key] = '[redacted]';
+      continue;
+    }
+    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object') continue; // included relations
+    out[key] = compactValue(val);
+  }
+  return out;
+};
+
 export const prisma = basePrisma.$extends({
   query: {
     $allModels: {
@@ -92,14 +139,87 @@ export const prisma = basePrisma.$extends({
           return query(args);
         }
 
-        // Automatic context propagation for single mutations
-        return auditedTransaction(async (tx) => {
-          const delegateName = model.charAt(0).toLowerCase() + model.slice(1);
-          const delegate = (tx as any)[delegateName] || (tx as any)[model];
-          return delegate[operation](args);
+        const data = (args as any)?.data as Record<string, unknown> | undefined;
+        const where = (args as any)?.where;
+        const changedKeys =
+          operation === 'update' && data ? Object.keys(data).filter((k) => isScalarAssignment(data[k])) : [];
+
+        const delegateName = model.charAt(0).toLowerCase() + model.slice(1);
+        const delegate = (basePrisma as any)[delegateName] || (basePrisma as any)[model];
+
+        // Before-state: for updates only the fields being changed; for deletes the full row.
+        let before: any = null;
+        if (where && delegate && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
+          try {
+            const select =
+              operation === 'update' ? Object.fromEntries(changedKeys.map((k) => [k, true])) : undefined;
+            before = await delegate.findUnique({ where, ...(select ? { select } : {}) });
+          } catch {
+            // Ignore fetch errors — audit is best-effort
+          }
+        }
+
+        // Automatic context propagation for mutations through PostgreSQL transaction
+        const result = await auditedTransaction(async (tx) => {
+          const txDelegate = (tx as any)[delegateName] || (tx as any)[model];
+          return txDelegate[operation](args);
         });
+
+        // Record to ActivityLog for user audit timeline and session activity
+        if (isActivityLoggingEnabled() && ctx?.userId && !AUDIT_SKIP_MODELS.has(model) && AUDIT_OPERATIONS.has(operation)) {
+          try {
+            let diff: Record<string, unknown> | null = null;
+            if (operation === 'create') {
+              diff = compactSnapshot(result);
+            } else if (operation === 'update') {
+              diff = {};
+              for (const key of changedKeys) {
+                const oldVal = before?.[key];
+                const newVal = (result as any)?.[key];
+
+                const normOld = oldVal instanceof Date ? oldVal.toISOString() : (oldVal ?? null);
+                const normNew = newVal instanceof Date ? newVal.toISOString() : (newVal ?? null);
+
+                if (JSON.stringify(normOld) === JSON.stringify(normNew)) continue;
+
+                diff[key] = SENSITIVE_FIELD_RE.test(key)
+                  ? { old: '[redacted]', new: '[redacted]' }
+                  : { old: compactValue(oldVal), new: compactValue(newVal) };
+              }
+
+              if (Object.keys(diff).length === 0) {
+                const relationKeys = data
+                  ? Object.keys(data).filter((k) => data[k] !== undefined && !isScalarAssignment(data[k]))
+                  : [];
+                if (relationKeys.length > 0) {
+                  diff = { relations: relationKeys.join(', ') };
+                }
+              }
+            } else if (operation === 'delete') {
+              diff = compactSnapshot(before);
+            }
+
+            if (diff && Object.keys(diff).length > 0) {
+              const apiPath = PRISMA_MODEL_TO_API_ROUTE[model] || `/api/${model.toLowerCase()}s`;
+
+              enqueueActivityLog({
+                userId: ctx.userId,
+                userName: ctx.userName || 'Unknown',
+                type: operation.toUpperCase(),
+                path: apiPath,
+                details: JSON.stringify({ model, action: operation, diff }),
+                sessionId: ctx.sessionId || null,
+              });
+            }
+          } catch (e) {
+            console.error('Failed to log activity via Prisma extension', e);
+          }
+        }
+
+        return result;
       },
     },
   },
 }) as unknown as PrismaClient;
+
 
