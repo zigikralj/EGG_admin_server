@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma } from '../db';
+import { prisma, auditedTransaction } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
@@ -197,29 +197,54 @@ router.put('/:id', asyncHandler(async (req, res) => {
     if (p) resolvedProjectName = p.name;
   }
 
-  let itemsData: any[] | null = null;
   let computedTotal = existing.totalAmount;
-
   if (Array.isArray(items)) {
-    itemsData = items.map((item: any) => ({
-      description: String(item.description || '').trim(),
-      quantity: Number(item.quantity) || 1,
-      unitPrice: Number(item.unitPrice) || 0,
-      currency: item.currency || currency || existing.currency || 'RSD',
-    }));
-    computedTotal = itemsData.reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0);
+    computedTotal = items.reduce(
+      (sum: number, it: any) => sum + (Number(it.quantity) || 1) * (Number(it.unitPrice) || 0),
+      0
+    );
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    if (itemsData !== null) {
-      await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
-      if (itemsData.length > 0) {
-        await tx.invoiceItem.createMany({
-          data: itemsData.map((item) => ({
-            invoiceId: id,
-            ...item,
-          })),
+  const updated = await auditedTransaction(async (tx) => {
+    if (Array.isArray(items)) {
+      const incomingItemIds = new Set(
+        items.filter((it: any) => Boolean(it.id)).map((it: any) => String(it.id))
+      );
+      const existingItemIds = new Set(existing.items.map((it) => it.id));
+
+      // 1. Delete items present in DB but missing from payload
+      const toDeleteIds = existing.items
+        .filter((it) => !incomingItemIds.has(it.id))
+        .map((it) => it.id);
+
+      if (toDeleteIds.length > 0) {
+        await tx.invoiceItem.deleteMany({
+          where: { id: { in: toDeleteIds } },
         });
+      }
+
+      // 2. Update existing items or insert new items
+      for (const item of items) {
+        const itemData = {
+          description: String(item.description || '').trim(),
+          quantity: Number(item.quantity) || 1,
+          unitPrice: Number(item.unitPrice) || 0,
+          currency: item.currency || currency || existing.currency || 'RSD',
+        };
+
+        if (item.id && existingItemIds.has(String(item.id))) {
+          await tx.invoiceItem.update({
+            where: { id: String(item.id) },
+            data: itemData,
+          });
+        } else {
+          await tx.invoiceItem.create({
+            data: {
+              ...itemData,
+              invoiceId: id,
+            },
+          });
+        }
       }
     }
 

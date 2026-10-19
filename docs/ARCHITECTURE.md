@@ -196,7 +196,6 @@ The app factory performs, in order:
 ### Middleware (`src/middleware/auth.ts`)
 
 - **`requireAuth`**: Extracts JWT from `Authorization: Bearer <token>` header. Resolves user from database. Attaches `req.authUser`. Returns 401 if invalid.
-- **Impersonation**: Admin/Manager users can send `X-User-Id` header alongside their JWT to act as another user.
 - **Force logout**: In-memory `userForceLogoutMap` stores force-logout timestamps. Tokens issued before the timestamp are rejected.
 
 ### Role-Based Access Control (RBAC)

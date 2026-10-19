@@ -26,7 +26,7 @@ A **REST API server** for managing environmental services projects (waste manage
 ### Middleware (`src/middleware/`)
 | File | Purpose | Key Exports |
 |---|---|---|
-| `auth.ts` | JWT auth resolution, `requireAuth` middleware, force-logout, impersonation | `requireAuth`, `getAuthUser`, `userForceLogoutMap` |
+| `auth.ts` | JWT auth resolution, `requireAuth` middleware, force-logout | `requireAuth`, `getAuthUser`, `userForceLogoutMap` |
 | `errorHandler.ts` | `asyncHandler` wrapper + global error handler (Prisma P2002/P2025) | `asyncHandler`, `errorHandler` |
 | `validate.ts` | `sanitizeString()`, `validatePassword()` | `sanitizeString`, `validatePassword` |
 

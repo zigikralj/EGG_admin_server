@@ -32,6 +32,7 @@ export const API_ROUTES = {
     BASE: '/api/activity-logs',
     ANALYTICS: '/api/activity-logs/analytics',
   },
+  HISTORY: '/api/history',
   IMPORT: '/api/import',
 } as const;
 

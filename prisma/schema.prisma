@@ -356,3 +356,43 @@ model SystemSetting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model ChangeSet {
+  id        String          @id @default(uuid())
+  userId    String?
+  userName  String?
+  sessionId String?
+  requestId String?
+  method    String?
+  route     String?
+  source    String          @default("api") // api, import, seed, restore, system
+  reason    String?
+  createdAt DateTime        @default(now())
+  versions  EntityVersion[]
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+model EntityVersion {
+  id            BigInt    @id @default(autoincrement())
+  changeSetId   String
+  entityType    String    // e.g. "Project", "Invoice", "Client"
+  entityId      String    // String PK of the record
+  version       Int       // 1, 2, 3... per entity
+  op            String    // I (Insert), U (Update), D (Delete), B (Baseline)
+  kind          String    // S (Snapshot / Keyframe), D (Delta)
+  data          Json      // Forward delta { field: newVal } or full row snapshot
+  changedFields String[]  // For indexed search & quick filtering
+  parentType    String?   // e.g. "Invoice" for InvoiceItem
+  parentId      String?   // e.g. invoiceId for InvoiceItem
+  createdAt     DateTime  @default(now())
+
+  changeSet ChangeSet @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, entityId, version])
+  @@index([entityType, entityId, createdAt])
+  @@index([parentType, parentId, createdAt])
+  @@index([changeSetId])
+}
+
