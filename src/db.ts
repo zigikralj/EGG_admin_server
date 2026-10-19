@@ -102,7 +102,14 @@ const compactValue = (v: unknown): unknown => {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === 'string') {
-    const text = /<[a-z][\s\S]*>/i.test(v) ? v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : v;
+    const text = /<[a-z][\s\S]*>/i.test(v)
+      ? v
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
+          .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+      : v;
     return text.length > MAX_STRING_LENGTH ? text.slice(0, MAX_STRING_LENGTH) + '…' : text;
   }
   if (typeof v === 'object') {

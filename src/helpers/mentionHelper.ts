@@ -20,7 +20,10 @@ export async function extractMentionedUserIds(content: string | null | undefined
     select: { id: true, name: true, email: true },
   });
 
-  const plainText = content.replace(/<[^>]*>/g, " ");
+  const plainText = content
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(?:nbsp|#160|#xa0);/gi, " ")
+    .replace(/[\u00a0\u200B\uFEFF]/g, " ");
   for (const u of allUsers) {
     if (!userIds.has(u.id)) {
       if (u.name && plainText.toLowerCase().includes("@" + u.name.toLowerCase())) {
