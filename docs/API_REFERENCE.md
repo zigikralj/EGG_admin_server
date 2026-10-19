@@ -849,17 +849,79 @@ Ingest client activity events (e.g. `PAGE_VIEW`, `LOGIN`, `LOGOUT`).
 - Identity is derived from the authenticated user token.
 - Returns `202 Accepted` immediately; events are ignored if logging is deactivated, otherwise persisted asynchronously.
 
+### `GET /api/activity-logs/analytics`
+Compute comprehensive activity and usage analytics. **Administrator only.**
+Results are cached in-memory with a 60-second TTL (invalidated immediately on log deletion).
+
+- **Query params:**
+  - `from` (optional): ISO date string start range (default: 30 days ago).
+  - `to` (optional): ISO date string end range (default: current time).
+  - `tz` (optional): Valid IANA timezone string (e.g. `'Europe/Belgrade'`, default: `'UTC'`).
+  - `granularity` (optional): `'day' | 'week' | 'month'` (auto-calculated if omitted: ≤45d = day, ≤180d = week, >180d = month).
+  - `userIds` (optional): Comma-separated user UUIDs to filter by.
+  - `roles` (optional): Comma-separated role names to filter by.
+  - `excludeAdminPages` (optional): `'false'` to include administrative routes (default: `'true'`).
+  - `compare` (optional): `'false'` to skip prior-period trend comparisons (default: `'true'`).
+
+- **Response 200:**
+  ```json
+  {
+    "kpis": {
+      "totalEvents": 4820,
+      "eventsDeltaPercent": 14.2,
+      "activeUsers": 12,
+      "activeUsersDeltaPercent": 0,
+      "totalSessions": 340,
+      "sessionsDeltaPercent": 8.5,
+      "totalDurationHours": 182.4,
+      "durationDeltaPercent": 5.1,
+      "avgDailyDurationMinutes": 45.6,
+      "topPage": "/data-management/projects",
+      "stickinessRatio": 0.42
+    },
+    "timeline": [
+      { "period": "2026-10-12", "events": 140, "sessions": 15, "durationMinutes": 120, "activeUsers": 8 }
+    ],
+    "topPages": [
+      { "path": "/data-management/projects", "views": 1250, "uniqueUsers": 11, "avgDurationSeconds": 48.2, "percentage": 28.5 }
+    ],
+    "actionsByEntity": [
+      { "entity": "Project", "creates": 25, "edits": 84, "deletes": 2, "total": 111 }
+    ],
+    "userUsage": [
+      { "userId": "uuid", "userName": "Jovan Jovanović", "role": "Manager", "totalSessions": 42, "totalEvents": 580, "totalDurationMinutes": 310, "topPage": "/data-management/projects" }
+    ],
+    "userPageBreakdown": [...],
+    "heatmap": [
+      { "dayOfWeek": 1, "hour": 9, "count": 48 }
+    ],
+    "sessionDurationDistribution": [
+      { "bucket": "<1m", "count": 22 },
+      { "bucket": "1-5m", "count": 85 },
+      { "bucket": "5-15m", "count": 120 },
+      { "bucket": "15-30m", "count": 64 },
+      { "bucket": "30-60m", "count": 35 },
+      { "bucket": ">60m", "count": 14 }
+    ],
+    "transitions": [
+      { "from": "/data-management/projects", "to": "/data-management/invoices", "count": 84 }
+    ],
+    "featureAdoption": [...],
+    "editedFields": [...]
+  }
+  ```
+
 ### `DELETE /api/activity-logs/clear-all`
-Deletes all activity logs. **Administrator only.**
+Deletes all activity logs. **Administrator only.** Invalidates analytics cache.
 
 ### `POST /api/activity-logs/bulk-delete`
-Deletes specific activity logs by IDs. Body: `{ ids: string[] }`. **Administrator only.**
+Deletes specific activity logs by IDs. Body: `{ ids: string[] }`. **Administrator only.** Invalidates analytics cache.
 
 ### `DELETE /api/activity-logs/session/:sessionId`
-Deletes all activity logs for a specific session. **Administrator only.**
+Deletes all activity logs for a specific session. **Administrator only.** Invalidates analytics cache.
 
 ### `DELETE /api/activity-logs/:id`
-Deletes an individual activity log. **Administrator only.**
+Deletes an individual activity log. **Administrator only.** Invalidates analytics cache.
 
 ---
 

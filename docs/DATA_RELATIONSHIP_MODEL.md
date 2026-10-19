@@ -849,10 +849,10 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `timestamp` | `DateTime` | Required | `@default(now())` | Event occurrence timestamp |
 
 **Indexes & Constraints:**
-- `@@index([userId])`
-- `@@index([timestamp])`
-- `@@index([type])`
-- `@@index([sessionId])`
+- `@@index([userId, timestamp])` — Optimized user timeline lookups
+- `@@index([timestamp])` — Chronological sorting & date range queries
+- `@@index([sessionId])` — Fast session grouping and session purges
+- `@@index([type, timestamp])` — High-performance activity analytics aggregation
 - `onDelete: Cascade` to `User`
 
 
@@ -927,6 +927,7 @@ Indexes are optimized for foreign key lookups, frequent status filtering, and so
 | `PermitWaste` | `[wasteCatalogId]` | INDEX | Find all permits authorizing waste code |
 | `Category` | `code` | UNIQUE | Category code identifier |
 | `SystemSetting` | `key` | UNIQUE | Setting lookup |
-| `ActivityLog` | `[userId]` | INDEX | User activity filter |
-| `ActivityLog` | `[timestamp]` | INDEX | Chronological sorting |
-| `ActivityLog` | `[type]` | INDEX | Event type filtering |
+| `ActivityLog` | `[userId, timestamp]` | INDEX | User activity filter and chronological timeline |
+| `ActivityLog` | `[timestamp]` | INDEX | Chronological sorting and date range queries |
+| `ActivityLog` | `[sessionId]` | INDEX | Session tracking and cleanup |
+| `ActivityLog` | `[type, timestamp]` | INDEX | Composite index for activity analytics aggregations |
