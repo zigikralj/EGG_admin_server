@@ -21,6 +21,11 @@ export async function extractMentionedUserIds(content: string | null | undefined
   });
 
   const plainText = content
+    .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<xml[\s\S]*?<\/xml>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<[^>]*>/g, " ")
     .replace(/&(?:nbsp|#160|#xa0);/gi, " ")
     .replace(/[\u00a0\u200B\uFEFF]/g, " ");

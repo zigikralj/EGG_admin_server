@@ -102,8 +102,13 @@ const compactValue = (v: unknown): unknown => {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === 'string') {
-    const text = /<[a-z][\s\S]*>/i.test(v)
+    const text = /<[a-z!][\s\S]*>/i.test(v)
       ? v
+          .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
+          .replace(/<!--[\s\S]*?-->/g, '')
+          .replace(/<xml[\s\S]*?<\/xml>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
           .replace(/<[^>]+>/g, ' ')
           .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
           .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
