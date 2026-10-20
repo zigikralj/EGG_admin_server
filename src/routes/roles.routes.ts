@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, invalidateUserAuthCache } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { prisma } from '../db';
 
@@ -62,6 +62,7 @@ router.post('/', asyncHandler(async (req, res) => {
     },
   });
 
+  invalidateUserAuthCache();
   res.status(201).json(role);
 }));
 
@@ -110,6 +111,7 @@ router.put('/:name', asyncHandler(async (req, res) => {
     },
   });
 
+  invalidateUserAuthCache();
   res.json(updatedRole);
 }));
 
@@ -146,6 +148,7 @@ router.delete('/:name', asyncHandler(async (req, res) => {
   }
 
   await prisma.role.delete({ where: { name } });
+  invalidateUserAuthCache();
 
   res.json({ success: true });
 }));

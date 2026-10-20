@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
-import { requireAuth, userForceLogoutMap } from '../middleware/auth';
+import { requireAuth, userForceLogoutMap, invalidateUserAuthCache } from '../middleware/auth';
 import { generateTempPassword, hashPassword, verifyPassword } from '../authUtils';
 import { validatePassword } from '../middleware/validate';
 import { UserRole, hasPermission } from '../types';
@@ -42,6 +42,7 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
   }
 
   userForceLogoutMap.set(targetId, Date.now());
+  invalidateUserAuthCache(targetId);
 
   res.json({ success: true, message: `User ${targetUser.name} has been forced to log out.` });
 }));
@@ -219,6 +220,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
     data: updatedData,
     include: { roleEntity: true },
   });
+  invalidateUserAuthCache(id);
   const { password: _, ...userWithoutPassword } = updated;
   res.json(userWithoutPassword);
 }));
@@ -249,6 +251,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
     },
     include: { roleEntity: true },
   });
+  invalidateUserAuthCache(id);
 
   const { password: _, ...userWithoutPassword } = updatedUser;
   res.json(userWithoutPassword);
@@ -275,6 +278,7 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
   }
 
   await prisma.user.delete({ where: { id } });
+  invalidateUserAuthCache(id);
   res.json({ message: 'Registration rejected and account removed.' });
 }));
 
@@ -300,6 +304,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   }
 
   await prisma.user.delete({ where: { id } });
+  invalidateUserAuthCache(id);
   res.json({ message: 'User deleted successfully' });
 }));
 
