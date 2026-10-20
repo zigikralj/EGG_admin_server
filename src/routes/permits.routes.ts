@@ -71,14 +71,32 @@ router.get("/", asyncHandler(async (req, res) => {
     ],
   } : {};
 
+  if (req.query.fields === "summary") {
+    const permits = await prisma.permit.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        permitNumber: true,
+        clientId: true,
+        validFrom: true,
+        validTo: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    res.json(permits);
+    return;
+  }
+
   const permits = await prisma.permit.findMany({
     where,
     orderBy: { createdAt: "desc" },
     include: {
-      client: true,
-      reminders: true,
+      client: { select: { id: true, name: true } },
+      reminders: { select: { id: true, title: true, dueDate: true, status: true } },
       clientExtraData: {
-        include: { client: true },
+        include: { client: { select: { id: true, name: true } } },
       },
       permitWastes: {
         include: { wasteCatalog: true },

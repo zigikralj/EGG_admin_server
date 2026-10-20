@@ -75,10 +75,10 @@ router.get('/', asyncHandler(async (req, res) => {
     where,
     orderBy: { createdAt: 'desc' },
     include: {
-      service: true,
-      client: true,
-      project: true,
-      invoice: true,
+      service: { select: { id: true, code: true, name: true, group: true, frequency: true } },
+      client: { select: { id: true, name: true } },
+      project: { select: { id: true, name: true, done: true } },
+      invoice: { select: { id: true, invoiceNumber: true } },
     },
   });
 

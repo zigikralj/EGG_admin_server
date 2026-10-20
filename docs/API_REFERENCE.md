@@ -259,9 +259,18 @@ Delete a role. Requires `roles` delete permission or System Administrator.
 **All routes require auth.**
 
 ### `GET /api/projects`
-List all projects. Supports `?search=` query parameter (searches name, clientName, responsible).
+List all projects. Supports `?search=` and optional `?done=true|false` query parameters.
+Returns lightweight rows containing `notesPreview` (up to 300 plain text characters) instead of full rich-text HTML `notes`.
 
 **Response 200:** Array of project objects (includes `client` relation).
+
+---
+
+### `GET /api/projects/:id`
+Get full details of a single project by ID, including complete rich-text HTML `notes`.
+
+**Response 200:** Project object.
+**Response 404:** `{ "error": "Project not found" }`
 
 ---
 
@@ -831,8 +840,57 @@ List activity logs. **Administrator only.** By default excludes the heavy `detai
   - `userId` (optional): Filter by specific user UUID.
   - `sessionId` (optional): Filter by specific session ID.
   - `from` (optional): ISO date string (`YYYY-MM-DDTHH:mm:ss.sssZ`). Only returns logs at or after this timestamp.
-  - `limit` (optional): Number of records (default 1000, max 5000).
+  - `before` (optional): ISO date string (`YYYY-MM-DDTHH:mm:ss.sssZ`). Cursor for pagination.
+  - `beforeId` (optional): UUID of the last item on the previous page for composite tie-breaking cursor.
+  - `limit` (optional): Number of records (default 50, max 250).
   - `includeDetails` (optional): `'true'` to include the JSON diff `details` field.
+
+### `GET /api/activity-logs/summary`
+Postgres-aggregated summary of activity logs for KPI cards and per-user activity headers without transferring raw log rows. **Administrator only.**
+Results are cached in-memory with a 30-second TTL.
+
+- **Query params:**
+  - `from` (required/recommended): ISO date string (e.g. start of today, 7 days ago, or 30 days ago).
+- **Response 200:**
+  ```json
+  {
+    "kpiStats": {
+      "totalUsers": 5,
+      "activeToday": 3,
+      "totalSessions": 34,
+      "totalTrackedSeconds": 43200,
+      "topModule": "/data-management/projects",
+      "topModulePercent": 41
+    },
+    "userSummaries": [
+      {
+        "userId": "usr_123",
+        "userName": "Petar Petrović",
+        "totalDurationSeconds": 15400,
+        "totalSessionsCount": 12,
+        "totalActivitiesCount": 180,
+        "lastActive": "2026-10-20T13:45:00.000Z",
+        "hasActiveSession": true,
+        "topModules": [
+          { "path": "/data-management/projects", "seconds": 9240, "percentage": 60 }
+        ]
+      }
+    ]
+  }
+  ```
+
+---
+
+### `GET /api/activity-logs/monthly-stats`
+Fetch pre-aggregated historical monthly rollup statistics from `ActivityLogMonthlyStats` (zero raw log rows transferred). **Administrator only.**
+
+- **Query params:**
+  - `userId` (optional): Filter to a specific user UUID.
+  - `fromYearMonth` (optional): e.g. `'2025-01'`.
+  - `toYearMonth` (optional): e.g. `'2026-10'`.
+- **Response 200:** Array of monthly rollup objects including `moduleBreakdown`, `totalDurationSeconds`, `sessionCount`, and `actionCount`.
+
+---
 
 ### `GET /api/activity-logs/:id`
 Fetch a single activity log including its full `details` (lazy loaded for diff views). **Administrator only.**

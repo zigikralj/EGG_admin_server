@@ -17,6 +17,7 @@ import {
 } from "../helpers/activityLogger";
 import { getAnalyticsCache, setAnalyticsCache, clearAnalyticsCache } from "../helpers/analyticsCache";
 import { getActivityAnalytics } from "../services/activityAnalytics.service";
+import { getCanonicalPagePath } from "../helpers/pathUtils";
 
 const router = Router();
 router.use(requireAuth);
@@ -103,18 +104,17 @@ router.patch("/status", asyncHandler(async (req, res) => {
 }));
 
 // GET /api/activity-logs — Administrator only
-// Query: userId, sessionId, from (ISO date), limit (≤5000), includeDetails ('true' to include the details column)
+// Query: userId, sessionId, from (ISO date), before (ISO date), beforeId (UUID), limit (default 50, ≤250), includeDetails ('true' to include the details column)
 router.get("/", asyncHandler(async (req, res) => {
   if (!isUserAdmin(req.authUser)) {
     res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
     return;
   }
 
-  // Make sure freshly buffered entries are visible to the viewer and purge short lifecycle-only sessions
+  // Make sure freshly buffered entries are visible to the viewer
   await flushActivityLogs();
-  await purgeShortLifecycleSessions();
 
-  const { userId, sessionId, limit, from, includeDetails } = req.query;
+  const { userId, sessionId, limit, from, before, beforeId, includeDetails } = req.query;
   const where: any = {};
   if (userId && typeof userId === "string") {
     where.userId = userId;
@@ -125,16 +125,26 @@ router.get("/", asyncHandler(async (req, res) => {
   if (from && typeof from === "string") {
     const fromDate = new Date(from);
     if (!isNaN(fromDate.getTime())) {
-      where.timestamp = { gte: fromDate };
+      where.timestamp = { ...(where.timestamp ?? {}), gte: fromDate };
+    }
+  }
+  if (typeof before === "string") {
+    const beforeDate = new Date(before);
+    if (!isNaN(beforeDate.getTime())) {
+      const cursorCond = typeof beforeId === "string"
+        ? { OR: [{ timestamp: { lt: beforeDate } }, { timestamp: beforeDate, id: { lt: beforeId } }] }
+        : { timestamp: { lt: beforeDate } };
+      where.AND = [...(where.AND ?? []), cursorCond];
     }
   }
 
-  const take = limit ? Math.min(parseInt(limit as string, 10) || 1000, 5000) : 1000;
+  const parsed = parseInt(String(limit ?? ''), 10);
+  const take = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 250) : 50;
   const withDetails = includeDetails === "true";
 
   const logs = await prisma.activityLog.findMany({
     where,
-    orderBy: { timestamp: "desc" },
+    orderBy: [{ timestamp: "desc" }, { id: "desc" }],
     take,
     ...(withDetails ? {} : { select: LIST_SELECT }),
   });
@@ -232,6 +242,212 @@ router.get("/analytics", asyncHandler(async (req, res) => {
 
   setAnalyticsCache(cacheKey, result);
   res.json(result);
+}));
+
+// GET /api/activity-logs/summary — Administrator only
+// Query: from (ISO date)
+router.get("/summary", asyncHandler(async (req, res) => {
+  if (!isUserAdmin(req.authUser)) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+    return;
+  }
+
+  await flushActivityLogs();
+
+  const fromParam = req.query.from as string;
+  const fromDate = fromParam ? new Date(fromParam) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const validFrom = isNaN(fromDate.getTime()) ? new Date(Date.now() - 24 * 60 * 60 * 1000) : fromDate;
+
+  const cacheKey = `summary:${validFrom.toISOString()}`;
+  const cached = getAnalyticsCache(cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  interface UserClusterRow {
+    userId: string;
+    userName: string | null;
+    totalSessionsCount: number;
+    totalDurationSeconds: number;
+    totalActivitiesCount: number;
+    lastActive: Date | string | null;
+    lastType: string | null;
+  }
+
+  const userStats = await prisma.$queryRaw<UserClusterRow[]>`
+    WITH ordered AS (
+      SELECT "userId", "userName", "type", "durationSeconds", "timestamp",
+             LAG("timestamp") OVER w AS prev_ts,
+             LAG("type")      OVER w AS prev_type
+      FROM "ActivityLog"
+      WHERE "timestamp" >= ${validFrom}
+      WINDOW w AS (PARTITION BY "userId" ORDER BY "timestamp")
+    ), flagged AS (
+      SELECT *,
+        CASE WHEN prev_ts IS NULL
+               OR prev_type = 'LOGOUT'
+               OR "timestamp" - prev_ts > INTERVAL '30 minutes'
+               OR ("type" = 'LOGIN' AND "timestamp" - prev_ts > INTERVAL '5 minutes')
+             THEN 1 ELSE 0 END AS is_new_session
+      FROM ordered
+    )
+    SELECT "userId",
+           MAX("userName")                                                    AS "userName",
+           SUM(is_new_session)::int                                           AS "totalSessionsCount",
+           COALESCE(SUM("durationSeconds"), 0)::int                           AS "totalDurationSeconds",
+           COUNT(*) FILTER (WHERE "type" NOT IN ('LOGIN','LOGOUT','ONLINE','OFFLINE'))::int AS "totalActivitiesCount",
+           MAX("timestamp")                                                   AS "lastActive",
+           (ARRAY_AGG("type" ORDER BY "timestamp" DESC))[1]                   AS "lastType"
+    FROM flagged
+    GROUP BY "userId"
+    ORDER BY "totalDurationSeconds" DESC;
+  `;
+
+  interface ModuleBreakdownRow {
+    userId: string;
+    path: string;
+    seconds: number;
+  }
+
+  const moduleBreakdown = await prisma.$queryRaw<ModuleBreakdownRow[]>`
+    SELECT "userId", "path", COALESCE(SUM("durationSeconds"), 0)::int AS seconds
+    FROM "ActivityLog"
+    WHERE "timestamp" >= ${validFrom} AND "path" IS NOT NULL
+      AND "type" NOT IN ('LOGIN','LOGOUT','ONLINE','OFFLINE')
+    GROUP BY "userId", "path";
+  `;
+
+  const globalModuleMap = new Map<string, number>();
+  const userModuleMap = new Map<string, Map<string, number>>();
+
+  for (const row of moduleBreakdown) {
+    const canonical = getCanonicalPagePath(row.path);
+    const s = Number(row.seconds) || 0;
+    globalModuleMap.set(canonical, (globalModuleMap.get(canonical) || 0) + s);
+
+    let uMap = userModuleMap.get(row.userId);
+    if (!uMap) {
+      uMap = new Map<string, number>();
+      userModuleMap.set(row.userId, uMap);
+    }
+    uMap.set(canonical, (uMap.get(canonical) || 0) + s);
+  }
+
+  const now = Date.now();
+  const todayDateStr = new Date().toDateString();
+
+  const userSummaries = userStats.map((u) => {
+    const uMap = userModuleMap.get(u.userId);
+    const topModules: Array<{ path: string; seconds: number; percentage: number }> = [];
+    const totalUserDuration = Number(u.totalDurationSeconds) || 0;
+
+    if (uMap) {
+      const sorted = Array.from(uMap.entries()).sort((a, b) => b[1] - a[1]);
+      for (const [p, sec] of sorted.slice(0, 3)) {
+        const pct = totalUserDuration > 0 ? Math.round((sec / totalUserDuration) * 100) : 0;
+        topModules.push({ path: p, seconds: sec, percentage: pct });
+      }
+    }
+
+    const lastActiveDate = u.lastActive ? new Date(u.lastActive) : null;
+    const isRecent = lastActiveDate ? now - lastActiveDate.getTime() <= 10 * 60 * 1000 : false;
+    const hasActiveSession = Boolean(
+      isRecent && u.lastType && u.lastType !== "OFFLINE" && u.lastType !== "LOGOUT"
+    );
+
+    return {
+      userId: u.userId,
+      userName: u.userName || "Unknown",
+      totalDurationSeconds: totalUserDuration,
+      totalSessionsCount: Number(u.totalSessionsCount) || 0,
+      totalActivitiesCount: Number(u.totalActivitiesCount) || 0,
+      lastActive: lastActiveDate ? lastActiveDate.toISOString() : new Date().toISOString(),
+      hasActiveSession,
+      topModules,
+    };
+  });
+
+  const totalUsers = userSummaries.length;
+  const activeToday = userStats.filter((u) => {
+    return u.lastActive && new Date(u.lastActive).toDateString() === todayDateStr;
+  }).length;
+  const totalSessions = userSummaries.reduce((sum, u) => sum + u.totalSessionsCount, 0);
+  const totalTrackedSeconds = userSummaries.reduce((sum, u) => sum + u.totalDurationSeconds, 0);
+
+  let topModule: string | null = null;
+  let topModuleSeconds = 0;
+  for (const [p, sec] of globalModuleMap.entries()) {
+    if (sec > topModuleSeconds) {
+      topModuleSeconds = sec;
+      topModule = p;
+    }
+  }
+
+  const topModulePercent =
+    totalTrackedSeconds > 0 ? Math.round((topModuleSeconds / totalTrackedSeconds) * 100) : 0;
+
+  const result = {
+    kpiStats: {
+      totalUsers,
+      activeToday,
+      totalSessions,
+      totalTrackedSeconds,
+      topModule,
+      topModulePercent,
+    },
+    userSummaries,
+  };
+
+  setAnalyticsCache(cacheKey, result, 30_000);
+  res.json(result);
+}));
+
+// GET /api/activity-logs/monthly-stats — Administrator only
+// Query: userId?, fromYearMonth?, toYearMonth?
+router.get("/monthly-stats", asyncHandler(async (req, res) => {
+  if (!isUserAdmin(req.authUser)) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+    return;
+  }
+
+  const { userId, fromYearMonth, toYearMonth } = req.query;
+
+  const where: any = {};
+  if (userId && typeof userId === "string") {
+    where.userId = userId;
+  }
+  if (fromYearMonth && typeof fromYearMonth === "string") {
+    where.yearMonth = { ...(where.yearMonth || {}), gte: fromYearMonth };
+  }
+  if (toYearMonth && typeof toYearMonth === "string") {
+    where.yearMonth = { ...(where.yearMonth || {}), lte: toYearMonth };
+  }
+
+  const stats = await prisma.activityLogMonthlyStats.findMany({
+    where,
+    orderBy: [{ yearMonth: "desc" }, { totalDurationSeconds: "desc" }],
+    include: {
+      user: {
+        select: { id: true, name: true, email: true },
+      },
+    },
+  });
+
+  const formatted = stats.map((s) => ({
+    id: s.id,
+    userId: s.userId,
+    userName: s.user?.name || s.user?.email || "Unknown",
+    yearMonth: s.yearMonth,
+    totalDurationSeconds: s.totalDurationSeconds,
+    sessionCount: s.sessionCount,
+    actionCount: s.actionCount,
+    moduleBreakdown: s.moduleBreakdown,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+  }));
+
+  res.json(formatted);
 }));
 
 // GET /api/activity-logs/:id — single log including details (Administrator only)

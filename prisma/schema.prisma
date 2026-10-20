@@ -19,6 +19,7 @@ model Project {
   progress      Int      @default(0)
   done          Boolean  @default(false)
   notes         String?
+  notesPreview  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -69,8 +70,9 @@ model User {
   projects      Project[]
   preferences   UserPreference[]
   reminders     Reminder[]
-  notifications Notification[]
-  activityLogs  ActivityLog[]
+  notifications         Notification[]
+  activityLogs          ActivityLog[]
+  activityMonthlyStats  ActivityLogMonthlyStats[]
 }
 
 model UserPreference {
@@ -393,5 +395,22 @@ model EntityVersion {
   @@index([entityType, entityId, createdAt])
   @@index([parentType, parentId, createdAt])
   @@index([changeSetId])
+}
+
+model ActivityLogMonthlyStats {
+  id                   String   @id @default(uuid())
+  userId               String
+  yearMonth            String   // e.g., "2026-10"
+  totalDurationSeconds Int      @default(0)
+  sessionCount         Int      @default(0)
+  actionCount          Int      @default(0)
+  moduleBreakdown      Json?    // { "/projects": 1200, "/invoices": 650, ... } — canonical path -> seconds
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, yearMonth])
+  @@index([yearMonth])
 }
 

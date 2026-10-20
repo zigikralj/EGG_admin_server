@@ -28,6 +28,13 @@ function isProjectOwnerOrCan(
   return isOwner;
 }
 
+export function extractNotesPreview(notes?: string | null): string | null {
+  if (!notes) return null;
+  const plainText = notes.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!plainText) return null;
+  return plainText.length > 300 ? plainText.slice(0, 300) : plainText;
+}
+
 // ----------------------------------------------------
 // PROJECTS CRUD
 // ----------------------------------------------------
@@ -56,22 +63,61 @@ router.get('/', asyncHandler(async (req, res) => {
     ]
   } : undefined;
 
-  let where: any = {};
-  if (ownerCondition && searchCondition) {
-    where = { AND: [ownerCondition, searchCondition] };
-  } else if (ownerCondition) {
-    where = ownerCondition;
-  } else if (searchCondition) {
-    where = searchCondition;
-  }
+  const doneParam = req.query.done;
+  const doneCondition = (doneParam === 'true' || doneParam === 'false')
+    ? { done: doneParam === 'true' }
+    : undefined;
+
+  const conditions = [ownerCondition, searchCondition, doneCondition].filter(Boolean);
+  const where = conditions.length > 1
+    ? { AND: conditions }
+    : (conditions[0] || {});
 
   const projects = await prisma.project.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: { client: true },
+    select: {
+      id: true,
+      name: true,
+      clientId: true,
+      clientName: true,
+      responsible: true,
+      responsibleId: true,
+      type: true,
+      start: true,
+      deadline: true,
+      progress: true,
+      done: true,
+      notesPreview: true,
+      createdAt: true,
+      updatedAt: true,
+      client: {
+        select: { id: true, name: true, city: true },
+      },
+    },
   });
 
   res.json(projects);
+}));
+
+// GET /api/projects/:id
+router.get('/:id', asyncHandler(async (req, res) => {
+  const id = req.params.id as string;
+  const project = await prisma.project.findUnique({
+    where: { id },
+    include: {
+      client: {
+        select: { id: true, name: true, city: true },
+      },
+    },
+  });
+
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  res.json(project);
 }));
 
 // POST /api/projects
@@ -118,6 +164,7 @@ router.post('/', asyncHandler(async (req, res) => {
       progress: progVal,
       done: isDone,
       notes: notes || null,
+      notesPreview: extractNotesPreview(notes),
     },
   });
 
@@ -180,6 +227,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       progress: progVal,
       done: isDone,
       notes: notes !== undefined ? (notes || null) : existing.notes,
+      notesPreview: notes !== undefined ? extractNotesPreview(notes) : existing.notesPreview,
     },
   });
 

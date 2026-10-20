@@ -36,7 +36,7 @@ let retentionTimer: NodeJS.Timeout | null = null;
 let flushing: Promise<void> | null = null;
 let droppedCount = 0;
 let loggingEnabled = true;
-let retentionDays = 90;
+let retentionDays = 30;
 
 export const SETTING_KEY_ACTIVITY_LOGS = 'activity_logging_enabled';
 export const SETTING_KEY_ACTIVITY_RETENTION = 'activity_log_retention_days';
@@ -207,11 +207,32 @@ export async function purgeOldActivityLogs(): Promise<number> {
   await purgeShortLifecycleSessions();
   const cutoff = new Date(Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000);
   try {
-    const result = await client.activityLog.deleteMany({ where: { timestamp: { lt: cutoff } } });
-    if (result.count > 0) {
-      console.log(`[activityLogger] Retention: removed ${result.count} logs older than ${getRetentionDays()} days.`);
+    const result = await client.$transaction(async (tx) => {
+      // 1. Roll up logs older than retention cutoff into monthly stats
+      await tx.$executeRaw`
+        INSERT INTO "ActivityLogMonthlyStats" (id, "userId", "yearMonth", "totalDurationSeconds", "actionCount", "updatedAt")
+        SELECT gen_random_uuid()::text, "userId", to_char("timestamp", 'YYYY-MM'),
+               COALESCE(SUM("durationSeconds"), 0)::int,
+               COUNT(*) FILTER (WHERE "type" NOT IN ('LOGIN','LOGOUT','ONLINE','OFFLINE'))::int,
+               NOW()
+        FROM "ActivityLog"
+        WHERE "timestamp" < ${cutoff}
+        GROUP BY "userId", to_char("timestamp", 'YYYY-MM')
+        ON CONFLICT ("userId", "yearMonth") DO UPDATE SET
+          "totalDurationSeconds" = "ActivityLogMonthlyStats"."totalDurationSeconds" + EXCLUDED."totalDurationSeconds",
+          "actionCount"          = "ActivityLogMonthlyStats"."actionCount" + EXCLUDED."actionCount",
+          "updatedAt"            = NOW();
+      `;
+
+      // 2. Delete raw logs older than retention cutoff
+      const deleted = await tx.activityLog.deleteMany({ where: { timestamp: { lt: cutoff } } });
+      return deleted.count;
+    });
+
+    if (result > 0) {
+      console.log(`[activityLogger] Retention: aggregated & removed ${result} logs older than ${getRetentionDays()} days.`);
     }
-    return result.count;
+    return result;
   } catch (err) {
     console.error('[activityLogger] Retention purge failed', err);
     return 0;

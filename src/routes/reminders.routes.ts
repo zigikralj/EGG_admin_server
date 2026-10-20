@@ -26,7 +26,12 @@ router.get('/', asyncHandler(async (req, res) => {
   const reminders = await prisma.reminder.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: { project: true, client: true, responsibleUser: true, permit: true },
+    include: {
+      project: { select: { id: true, name: true, done: true } },
+      client: { select: { id: true, name: true } },
+      responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
+      permit: { select: { id: true, permitNumber: true } },
+    },
   });
 
   res.json(reminders);
