@@ -30,7 +30,21 @@ function isProjectOwnerOrCan(
 
 export function extractNotesPreview(notes?: string | null): string | null {
   if (!notes) return null;
-  const plainText = notes.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const plainText = notes
+    .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
+    .replace(/&(?:amp|#38);/gi, '&')
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .replace(/&(?:lt|#60);/gi, '<')
+    .replace(/&(?:gt|#62);/gi, '>')
+    .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!plainText) return null;
   return plainText.length > 300 ? plainText.slice(0, 300) : plainText;
 }
@@ -260,6 +274,48 @@ router.patch('/:id/toggle-done', asyncHandler(async (req, res) => {
     where: { id },
     data: { done: newDone, progress: newProgress },
   });
+
+  res.json(updated);
+}));
+
+// PATCH /api/projects/:id/notes
+router.patch('/:id/notes', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  const { notes } = req.body;
+
+  const existing = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, name: true, notes: true, responsible: true, responsibleId: true },
+  });
+  if (!existing) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  if (!isProjectOwnerOrCan(authUser, existing, "edit")) {
+    res.status(403).json({ error: 'Permission denied. You can only edit projects you own or have permission to edit.' });
+    return;
+  }
+
+  const notesVal = notes !== undefined ? (notes || null) : existing.notes;
+  const updated = await prisma.project.update({
+    where: { id },
+    data: {
+      notes: notesVal,
+      notesPreview: extractNotesPreview(notesVal),
+    },
+    select: {
+      id: true,
+      notes: true,
+      notesPreview: true,
+      updatedAt: true,
+    },
+  });
+
+  if (updated.notes) {
+    await handleProjectNotesMentions(updated.id, existing.name, updated.notes, existing.notes, authUser);
+  }
 
   res.json(updated);
 }));

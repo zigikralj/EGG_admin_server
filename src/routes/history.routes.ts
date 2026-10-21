@@ -9,6 +9,7 @@ import {
   getChangeSetDetails,
   restoreVersion,
   normalizeEntityType,
+  resolveVersionsByDate,
 } from '../services/versioning.service';
 
 const router = Router();
@@ -40,7 +41,7 @@ router.get(
   })
 );
 
-// GET /api/history/:entityType/:id/diff — field-by-field diff between two versions
+// GET /api/history/:entityType/:id/diff — field-by-field diff between two versions or dates
 router.get(
   '/:entityType/:id/diff',
   asyncHandler(async (req, res) => {
@@ -51,19 +52,36 @@ router.get(
 
     const entityType = String(req.params.entityType);
     const id = String(req.params.id);
-    const fromStr = req.query.from as string;
-    const toStr = req.query.to as string;
+    const fromStr = req.query.from as string | undefined;
+    const toStr = req.query.to as string | undefined;
+    const dateFrom = req.query.dateFrom as string | undefined;
+    const dateTo = req.query.dateTo as string | undefined;
 
-    const from = parseInt(fromStr, 10);
-    const to = parseInt(toStr, 10);
+    let from: number;
+    let to: number;
 
-    if (isNaN(from) || isNaN(to)) {
-      res.status(400).json({ error: 'Both "from" and "to" version query parameters must be valid integers.' });
-      return;
+    if (dateFrom || dateTo) {
+      const resolved = await resolveVersionsByDate(entityType, id, dateFrom, dateTo);
+      from = resolved.from;
+      to = resolved.to;
+    } else {
+      from = parseInt(fromStr || '', 10);
+      to = parseInt(toStr || '', 10);
+
+      if (isNaN(from) || isNaN(to)) {
+        res.status(400).json({
+          error: 'Either "from" and "to" version numbers, or "dateFrom" and "dateTo" parameters must be provided.',
+        });
+        return;
+      }
     }
 
     const diff = await diffVersions(entityType, id, from, to);
-    res.json(diff);
+    res.json({
+      ...diff,
+      dateFrom,
+      dateTo,
+    });
   })
 );
 

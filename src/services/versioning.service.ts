@@ -312,3 +312,59 @@ export async function restoreVersion(
     }
   );
 }
+
+export async function resolveVersionsByDate(
+  entityType: string,
+  entityId: string,
+  dateFromStr?: string,
+  dateToStr?: string
+): Promise<{ from: number; to: number; dateFrom?: string; dateTo?: string }> {
+  const normType = normalizeEntityType(entityType);
+  if (!normType) throw new Error(`Unsupported entity type: ${entityType}`);
+
+  const versions = await basePrisma.entityVersion.findMany({
+    where: { entityType: normType, entityId },
+    select: { version: true, createdAt: true },
+    orderBy: { version: 'asc' },
+  });
+
+  if (versions.length === 0) {
+    throw new Error(`No history versions found for ${normType} ${entityId}`);
+  }
+
+  const minVersion = versions[0].version;
+  const maxVersion = versions[versions.length - 1].version;
+
+  let resolvedFrom = minVersion;
+  let resolvedTo = maxVersion;
+
+  if (dateFromStr) {
+    const fromDate = new Date(dateFromStr);
+    const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
+    if (matching.length > 0) {
+      resolvedFrom = matching[matching.length - 1].version;
+    } else {
+      resolvedFrom = minVersion;
+    }
+  }
+
+  if (dateToStr) {
+    const toDate = new Date(dateToStr);
+    if (dateToStr.length === 10) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+    const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
+    if (matching.length > 0) {
+      resolvedTo = matching[matching.length - 1].version;
+    } else {
+      resolvedTo = maxVersion;
+    }
+  }
+
+  return {
+    from: resolvedFrom,
+    to: resolvedTo,
+    dateFrom: dateFromStr,
+    dateTo: dateToStr,
+  };
+}
