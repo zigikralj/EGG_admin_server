@@ -83,7 +83,7 @@ const MUTATION_OPERATIONS = new Set([
 ]);
 
 /** Models never audited: the log itself and high-frequency / low-value side-effect records. */
-const AUDIT_SKIP_MODELS = new Set(['ActivityLog', 'UserPreference', 'Notification', 'SystemSetting', 'ChangeSet', 'EntityVersion']);
+const AUDIT_SKIP_MODELS = new Set(['ActivityLog', 'UserPreference', 'Notification', 'SystemSetting', 'ChangeSet', 'EntityVersion', 'ProjectNote', 'ProjectNoteVersion']);
 const AUDIT_OPERATIONS = new Set(['create', 'update', 'delete']);
 /** Fields that must never be written to the activity log. */
 const SENSITIVE_FIELD_RE = /password|token|secret/i;

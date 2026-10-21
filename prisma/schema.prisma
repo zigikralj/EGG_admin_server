@@ -18,7 +18,6 @@ model Project {
   deadline      String?
   progress      Int      @default(0)
   done          Boolean  @default(false)
-  notes         String?
   notesPreview  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -29,6 +28,7 @@ model Project {
   notifications    Notification[]
   invoices         Invoice[]
   providedServices ProvidedService[]
+  note             ProjectNote?
 
   @@index([clientId])
   @@index([responsibleId])
@@ -73,6 +73,7 @@ model User {
   notifications         Notification[]
   activityLogs          ActivityLog[]
   activityMonthlyStats  ActivityLogMonthlyStats[]
+  updatedProjectNotes   ProjectNote[]
 }
 
 model UserPreference {
@@ -413,4 +414,41 @@ model ActivityLogMonthlyStats {
   @@unique([userId, yearMonth])
   @@index([yearMonth])
 }
+
+model ProjectNote {
+  id          String   @id @default(uuid())
+  projectId   String   @unique
+  content     String?  @db.Text
+  version     Int      @default(1)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  versions    ProjectNoteVersion[]
+
+  @@index([projectId])
+}
+
+model ProjectNoteVersion {
+  id          BigInt   @id @default(autoincrement())
+  noteId      String
+  version     Int
+  kind        String   // 'S' = Full Snapshot (Keyframe), 'D' = Text Delta Patch
+  content     String?  @db.Text // Populated only when kind = 'S'
+  patch       String?  @db.Text // Unified text diff patch when kind = 'D'
+  charDelta   Int      @default(0) // Net characters added (+) or removed (-)
+  authorId    String?
+  authorName  String?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  note        ProjectNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, version])
+  @@index([noteId, kind, version])
+  @@index([noteId, createdAt])
+}
+
 

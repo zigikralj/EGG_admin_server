@@ -4,6 +4,13 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission, isRestrictedToOwn } from '../types';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
+import {
+  saveNoteRevision,
+  getNoteRevisionsList,
+  diffNoteVersions,
+  resolveNoteVersionsByDate,
+  restoreNoteVersion,
+} from '../services/noteDelta.service';
 
 const router = Router();
 
@@ -14,7 +21,7 @@ router.use(requireAuth);
 function isProjectOwnerOrCan(
   user: any,
   project: { responsible?: string | null; responsibleId?: string | null },
-  action: "edit" | "delete"
+  action: "view" | "edit" | "delete"
 ): boolean {
   if (user.role === "Administrator" || user.roleEntity?.isSystemAdmin) return true;
   const isOwner = Boolean(
@@ -123,6 +130,9 @@ router.get('/:id', asyncHandler(async (req, res) => {
       client: {
         select: { id: true, name: true, city: true },
       },
+      note: {
+        select: { content: true, version: true, updatedAt: true },
+      },
     },
   });
 
@@ -131,7 +141,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  res.json(project);
+  // Backward compatibility: provide `notes` from note relation
+  res.json({
+    ...project,
+    notes: project.note?.content || null,
+  });
 }));
 
 // POST /api/projects
@@ -177,16 +191,24 @@ router.post('/', asyncHandler(async (req, res) => {
       deadline: deadline || null,
       progress: progVal,
       done: isDone,
-      notes: notes || null,
       notesPreview: extractNotesPreview(notes),
     },
   });
 
-  if (project.notes) {
-    await handleProjectNotesMentions(project.id, project.name, project.notes, null, authUser);
+  if (notes) {
+    await saveNoteRevision({
+      projectId: project.id,
+      newContent: notes,
+      authorId: authUser.id,
+      authorName: authUser.name,
+      reason: 'Initial Note Creation',
+    });
   }
 
-  res.status(201).json(project);
+  res.status(201).json({
+    ...project,
+    notes: notes || null,
+  });
 }));
 
 // PUT /api/projects/:id
@@ -240,16 +262,25 @@ router.put('/:id', asyncHandler(async (req, res) => {
       deadline: deadline !== undefined ? (deadline || null) : existing.deadline,
       progress: progVal,
       done: isDone,
-      notes: notes !== undefined ? (notes || null) : existing.notes,
       notesPreview: notes !== undefined ? extractNotesPreview(notes) : existing.notesPreview,
     },
   });
 
-  if (updated.notes) {
-    await handleProjectNotesMentions(updated.id, updated.name, updated.notes, existing.notes, authUser);
+  let currentNoteContent: string | null = null;
+  if (notes !== undefined) {
+    const noteRes = await saveNoteRevision({
+      projectId: updated.id,
+      newContent: notes || '',
+      authorId: authUser.id,
+      authorName: authUser.name,
+    });
+    currentNoteContent = noteRes.content;
   }
 
-  res.json(updated);
+  res.json({
+    ...updated,
+    notes: currentNoteContent,
+  });
 }));
 
 // PATCH /api/projects/:id/toggle-done
@@ -278,7 +309,7 @@ router.patch('/:id/toggle-done', asyncHandler(async (req, res) => {
   res.json(updated);
 }));
 
-// PATCH /api/projects/:id/notes
+// PATCH /api/projects/:id/notes (Backward compatibility alias)
 router.patch('/:id/notes', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
   const id = req.params.id as string;
@@ -286,7 +317,7 @@ router.patch('/:id/notes', asyncHandler(async (req, res) => {
 
   const existing = await prisma.project.findUnique({
     where: { id },
-    select: { id: true, name: true, notes: true, responsible: true, responsibleId: true },
+    select: { id: true, name: true, responsible: true, responsibleId: true },
   });
   if (!existing) {
     res.status(404).json({ error: 'Project not found' });
@@ -298,26 +329,224 @@ router.patch('/:id/notes', asyncHandler(async (req, res) => {
     return;
   }
 
-  const notesVal = notes !== undefined ? (notes || null) : existing.notes;
-  const updated = await prisma.project.update({
-    where: { id },
-    data: {
-      notes: notesVal,
-      notesPreview: extractNotesPreview(notesVal),
-    },
-    select: {
-      id: true,
-      notes: true,
-      notesPreview: true,
-      updatedAt: true,
-    },
+  const result = await saveNoteRevision({
+    projectId: id,
+    newContent: notes || '',
+    authorId: authUser.id,
+    authorName: authUser.name,
   });
 
-  if (updated.notes) {
-    await handleProjectNotesMentions(updated.id, existing.name, updated.notes, existing.notes, authUser);
+  res.json({
+    id: existing.id,
+    notes: result.content,
+    notesPreview: result.notesPreview,
+    version: result.version,
+    updatedAt: new Date().toISOString(),
+  });
+}));
+
+// GET /api/projects/:id/note
+router.get('/:id/note', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, responsible: true, responsibleId: true },
+  });
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
   }
 
-  res.json(updated);
+  if (!isProjectOwnerOrCan(authUser, project, "view")) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  const note = await prisma.projectNote.findUnique({
+    where: { projectId: id },
+  });
+
+  if (!note) {
+    res.json({
+      id: null,
+      projectId: id,
+      content: '',
+      version: 0,
+      updatedAt: null,
+    });
+    return;
+  }
+
+  res.json(note);
+}));
+
+// PATCH /api/projects/:id/note
+router.patch('/:id/note', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  const { content, reason } = req.body;
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, responsible: true, responsibleId: true },
+  });
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  if (!isProjectOwnerOrCan(authUser, project, "edit")) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  const result = await saveNoteRevision({
+    projectId: id,
+    newContent: typeof content === 'string' ? content : '',
+    authorId: authUser.id,
+    authorName: authUser.name,
+    reason,
+  });
+
+  res.json({
+    id: result.id,
+    projectId: id,
+    content: result.content,
+    version: result.version,
+    notesPreview: result.notesPreview,
+    updatedAt: new Date().toISOString(),
+  });
+}));
+
+// GET /api/projects/:id/note/history
+router.get('/:id/note/history', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, responsible: true, responsibleId: true },
+  });
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  if (!isProjectOwnerOrCan(authUser, project, "view")) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  const note = await prisma.projectNote.findUnique({
+    where: { projectId: id },
+    select: { id: true },
+  });
+
+  if (!note) {
+    res.json({ total: 0, versions: [] });
+    return;
+  }
+
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+  const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+
+  const history = await getNoteRevisionsList(note.id, limit, offset);
+  res.json(history);
+}));
+
+// GET /api/projects/:id/note/diff
+router.get('/:id/note/diff', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, responsible: true, responsibleId: true },
+  });
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  if (!isProjectOwnerOrCan(authUser, project, "view")) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  const note = await prisma.projectNote.findUnique({
+    where: { projectId: id },
+    select: { id: true },
+  });
+
+  if (!note) {
+    res.status(404).json({ error: 'Project note not found' });
+    return;
+  }
+
+  const { vFrom, vTo, dateFrom, dateTo } = req.query;
+
+  let resolvedFrom: number;
+  let resolvedTo: number;
+
+  if (dateFrom || dateTo) {
+    const resolved = await resolveNoteVersionsByDate(
+      note.id,
+      dateFrom as string | undefined,
+      dateTo as string | undefined
+    );
+    resolvedFrom = resolved.from;
+    resolvedTo = resolved.to;
+  } else {
+    resolvedFrom = parseInt(vFrom as string, 10);
+    resolvedTo = parseInt(vTo as string, 10);
+
+    if (isNaN(resolvedFrom) || isNaN(resolvedTo)) {
+      res.status(400).json({ error: 'Either vFrom/vTo integers or dateFrom/dateTo strings must be provided' });
+      return;
+    }
+  }
+
+  const diffResult = await diffNoteVersions(note.id, resolvedFrom, resolvedTo);
+  res.json({
+    ...diffResult,
+    dateFrom,
+    dateTo,
+  });
+}));
+
+// POST /api/projects/:id/note/restore/:v
+router.post('/:id/note/restore/:v', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  const targetVersion = parseInt(req.params.v as string, 10);
+
+  if (isNaN(targetVersion) || targetVersion < 1) {
+    res.status(400).json({ error: 'Invalid version number' });
+    return;
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, responsible: true, responsibleId: true },
+  });
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  if (!isProjectOwnerOrCan(authUser, project, "edit")) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  const result = await restoreNoteVersion(id, targetVersion, {
+    id: authUser.id,
+    name: authUser.name,
+  });
+
+  res.json(result);
 }));
 
 // DELETE /api/projects/:id

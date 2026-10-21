@@ -17,35 +17,35 @@ export function cleanWordHtml(html: string): string {
 }
 
 async function main() {
-  const projects = await basePrisma.project.findMany({
+  const notes = await basePrisma.projectNote.findMany({
     where: {
       OR: [
-        { notes: { contains: '<!--[if' } },
-        { notes: { contains: '<xml' } },
-        { notes: { contains: 'Style Definitions' } },
-        { notes: { contains: 'SR-LATN-RS' } },
+        { content: { contains: '<!--[if' } },
+        { content: { contains: '<xml' } },
+        { content: { contains: 'Style Definitions' } },
+        { content: { contains: 'SR-LATN-RS' } },
       ],
     },
-    select: { id: true, name: true, notes: true },
+    select: { id: true, projectId: true, content: true },
   });
 
-  console.log(`Found ${projects.length} projects with Word/Office metadata.`);
+  console.log(`Found ${notes.length} project notes with Word/Office metadata.`);
   let cleanedCount = 0;
 
-  for (const p of projects) {
-    if (!p.notes) continue;
-    const cleaned = cleanWordHtml(p.notes);
-    if (cleaned !== p.notes) {
-      await basePrisma.project.update({
-        where: { id: p.id },
-        data: { notes: cleaned || null },
+  for (const n of notes) {
+    if (!n.content) continue;
+    const cleaned = cleanWordHtml(n.content);
+    if (cleaned !== n.content) {
+      await basePrisma.projectNote.update({
+        where: { id: n.id },
+        data: { content: cleaned || null },
       });
       cleanedCount++;
-      console.log(`✓ Cleaned [${p.id}] ${p.name} (${p.notes.length} bytes -> ${cleaned.length} bytes)`);
+      console.log(`✓ Cleaned [${n.id}] Project [${n.projectId}] (${n.content.length} bytes -> ${cleaned.length} bytes)`);
     }
   }
 
-  console.log(`Successfully cleaned ${cleanedCount} projects.`);
+  console.log(`Successfully cleaned ${cleanedCount} project notes.`);
 }
 
 if (process.argv[1]?.endsWith('cleanWordNotes.ts')) {
