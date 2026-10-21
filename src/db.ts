@@ -98,23 +98,27 @@ const isScalarAssignment = (val: unknown): boolean =>
   typeof val === 'boolean' ||
   val instanceof Date;
 
-const compactValue = (v: unknown): unknown => {
+export const cleanText = (v: string): string => {
+  return /<[a-z!][\s\S]*>/i.test(v)
+    ? v
+        .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<xml[\s\S]*?<\/xml>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
+        .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    : v.trim();
+};
+
+export const compactValue = (v: unknown): unknown => {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === 'string') {
-    const text = /<[a-z!][\s\S]*>/i.test(v)
-      ? v
-          .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
-          .replace(/<!--[\s\S]*?-->/g, '')
-          .replace(/<xml[\s\S]*?<\/xml>/gi, '')
-          .replace(/<style[\s\S]*?<\/style>/gi, '')
-          .replace(/<script[\s\S]*?<\/script>/gi, '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
-          .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-      : v;
+    const text = cleanText(v);
     return text.length > MAX_STRING_LENGTH ? text.slice(0, MAX_STRING_LENGTH) + '…' : text;
   }
   if (typeof v === 'object') {
@@ -122,6 +126,59 @@ const compactValue = (v: unknown): unknown => {
     return json.length > MAX_STRING_LENGTH ? json.slice(0, MAX_STRING_LENGTH) + '…' : v;
   }
   return v;
+};
+
+export const compactDiffPair = (
+  oldVal: unknown,
+  newVal: unknown
+): { old: unknown; new: unknown } => {
+  if (typeof oldVal !== 'string' || typeof newVal !== 'string') {
+    return { old: compactValue(oldVal), new: compactValue(newVal) };
+  }
+
+  const oldText = cleanText(oldVal);
+  const newText = cleanText(newVal);
+
+  if (oldText === newText) {
+    const preview = compactValue(oldText) || '(empty)';
+    return { old: preview, new: `${preview} (formatting)` };
+  }
+
+  let diffStart = 0;
+  while (
+    diffStart < oldText.length &&
+    diffStart < newText.length &&
+    oldText[diffStart] === newText[diffStart]
+  ) {
+    diffStart++;
+  }
+
+  if (diffStart <= 40) {
+    const oldPrefix = oldText.length > MAX_STRING_LENGTH ? oldText.slice(0, MAX_STRING_LENGTH) + '…' : oldText;
+    const newPrefix = newText.length > MAX_STRING_LENGTH ? newText.slice(0, MAX_STRING_LENGTH) + '…' : newText;
+    if (oldPrefix !== newPrefix) {
+      return { old: oldPrefix, new: newPrefix };
+    }
+  }
+
+  const contextBefore = 30;
+  const contextAfter = 70;
+  const startIdx = Math.max(0, diffStart - contextBefore);
+  const oldEndIdx = Math.min(oldText.length, diffStart + contextAfter);
+  const newEndIdx = Math.min(newText.length, diffStart + contextAfter);
+
+  const prefix = startIdx > 0 ? '…' : '';
+  const oldSuffix = oldEndIdx < oldText.length ? '…' : '';
+  const newSuffix = newEndIdx < newText.length ? '…' : '';
+
+  const oldSnippet = prefix + oldText.slice(startIdx, oldEndIdx) + oldSuffix;
+  const newSnippet = prefix + newText.slice(startIdx, newEndIdx) + newSuffix;
+
+  if (oldSnippet === newSnippet) {
+    return { old: oldSnippet, new: `${newSnippet} (modified)` };
+  }
+
+  return { old: oldSnippet, new: newSnippet };
 };
 
 /** Compact snapshot of a record: scalar fields only, secrets redacted, long text truncated. */
@@ -194,9 +251,10 @@ export const prisma = basePrisma.$extends({
 
                 if (JSON.stringify(normOld) === JSON.stringify(normNew)) continue;
 
-                diff[key] = SENSITIVE_FIELD_RE.test(key)
+                const logKey = model === 'Project' && key === 'notesPreview' ? 'notes' : key;
+                diff[logKey] = SENSITIVE_FIELD_RE.test(key)
                   ? { old: '[redacted]', new: '[redacted]' }
-                  : { old: compactValue(oldVal), new: compactValue(newVal) };
+                  : compactDiffPair(oldVal, newVal);
               }
 
               if (Object.keys(diff).length === 0) {

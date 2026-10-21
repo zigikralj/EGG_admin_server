@@ -186,7 +186,7 @@ export async function diffVersions(
 
   const diff: Record<string, { old: any; new: any }> = {};
   for (const key of allKeys) {
-    if (key === 'updatedAt') continue;
+    if (key === 'updatedAt' || key === 'id' || key === 'createdAt' || key === 'notesPreview') continue;
     const oldVal = fromState.state[key] ?? null;
     const newVal = toState.state[key] ?? null;
 

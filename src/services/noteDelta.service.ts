@@ -1,8 +1,10 @@
 import { diff_match_patch } from 'diff-match-patch';
-import { basePrisma } from '../db';
+import { basePrisma, compactDiffPair } from '../db';
 import { extractNotesPreview } from '../routes/projects.routes';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
 import { cleanWordHtml } from '../cleanWordNotes';
+import { enqueueActivityLog, isActivityLoggingEnabled } from '../helpers/activityLogger';
+import { requestContext } from '../context';
 
 const dmp = new diff_match_patch();
 const KEYFRAME_INTERVAL = 15;
@@ -15,8 +17,9 @@ export async function saveNoteRevision(params: {
   authorId?: string;
   authorName?: string;
   reason?: string;
+  skipActivityLog?: boolean;
 }): Promise<{ id: string; content: string; version: number; notesPreview: string | null }> {
-  const { projectId, authorId, authorName, reason } = params;
+  const { projectId, authorId, authorName, reason, skipActivityLog } = params;
   const rawContent = params.newContent || '';
   // Defense-in-depth: strip MS Word/Office metadata and comments
   const newContent = cleanWordHtml(rawContent);
@@ -162,6 +165,35 @@ export async function saveNoteRevision(params: {
     }
   }
 
+  // Activity log tracking for standalone note updates
+  if (
+    !skipActivityLog &&
+    isActivityLoggingEnabled() &&
+    authorId &&
+    result.previousContent !== null &&
+    result.previousContent !== result.content
+  ) {
+    try {
+      const diffPair = compactDiffPair(result.previousContent, result.content);
+      enqueueActivityLog({
+        userId: authorId,
+        userName: authorName || 'Unknown',
+        type: 'UPDATE',
+        path: '/api/projects',
+        details: JSON.stringify({
+          model: 'Project',
+          action: 'update',
+          diff: {
+            notes: diffPair,
+          },
+        }),
+        sessionId: requestContext.getStore()?.sessionId || null,
+      });
+    } catch (e) {
+      console.error('Failed to enqueue activity log for note revision', e);
+    }
+  }
+
   return {
     id: result.id,
     content: result.content,
@@ -247,6 +279,28 @@ export async function getNoteRevisionsList(noteId: string, limit: number = 50, o
   };
 }
 
+export function stripHtmlToText(html?: string | null): string {
+  if (!html) return '';
+  return html
+    .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|blockquote|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
+    .replace(/&(?:amp|#38);/gi, '&')
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .replace(/&(?:lt|#60);/gi, '<')
+    .replace(/&(?:gt|#62);/gi, '>')
+    .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+}
+
 export async function diffNoteVersions(
   noteId: string,
   vFrom: number,
@@ -263,7 +317,10 @@ export async function diffNoteVersions(
     reconstructNoteVersion(noteId, vTo),
   ]);
 
-  const diffTuples = dmp.diff_main(fromVer.content, toVer.content);
+  const fromText = stripHtmlToText(fromVer.content);
+  const toText = stripHtmlToText(toVer.content);
+
+  const diffTuples = dmp.diff_main(fromText, toText);
   dmp.diff_cleanupSemantic(diffTuples);
 
   const diff = diffTuples.map(([opCode, text]) => {

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma } from '../db';
+import { prisma, basePrisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission, isRestrictedToOwn } from '../types';
@@ -10,7 +10,12 @@ import {
   diffNoteVersions,
   resolveNoteVersionsByDate,
   restoreNoteVersion,
+  stripHtmlToText,
 } from '../services/noteDelta.service';
+import {
+  resolveVersionsByDate,
+  diffVersions,
+} from '../services/versioning.service';
 
 const router = Router();
 
@@ -119,6 +124,306 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 
   res.json(projects);
+}));
+
+// GET /api/projects/updates
+router.get('/updates', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+
+  // Default range: yesterday 00:00:00 to now
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(0, 0, 0, 0);
+
+  const fromDate = req.query.dateFrom ? new Date(req.query.dateFrom as string) : yesterday;
+  let toDate = req.query.dateTo ? new Date(req.query.dateTo as string) : now;
+  if (typeof req.query.dateTo === 'string' && req.query.dateTo.length === 10) {
+    toDate.setHours(23, 59, 59, 999);
+  }
+
+  const responsibleId = req.query.responsibleId as string | undefined;
+  const search = ((req.query.search as string) || '').trim();
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string, 10) || 50, 1), 200);
+  const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
+
+  // 1. Gather all activity within date range across:
+  // a) ProjectNoteVersion
+  // b) EntityVersion for Project
+  // c) Reminders updated/created with projectId
+  // d) Invoices updated/created with projectId
+  const [noteVersions, projectEntityVersions, remindersInRange, invoicesInRange] = await Promise.all([
+    basePrisma.projectNoteVersion.findMany({
+      where: { createdAt: { gte: fromDate, lte: toDate } },
+      select: {
+        note: { select: { projectId: true } },
+        charDelta: true,
+        authorName: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    basePrisma.entityVersion.findMany({
+      where: {
+        entityType: 'Project',
+        createdAt: { gte: fromDate, lte: toDate },
+      },
+      include: {
+        changeSet: { select: { userName: true, userId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.reminder.findMany({
+      where: {
+        projectId: { not: null },
+        OR: [
+          { createdAt: { gte: fromDate, lte: toDate } },
+          { updatedAt: { gte: fromDate, lte: toDate } },
+        ],
+      },
+      select: { id: true, projectId: true, createdAt: true, updatedAt: true },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        projectId: { not: null },
+        OR: [
+          { createdAt: { gte: fromDate, lte: toDate } },
+          { updatedAt: { gte: fromDate, lte: toDate } },
+        ],
+      },
+      select: { id: true, projectId: true, createdAt: true, updatedAt: true },
+    }),
+  ]);
+
+  interface AggregatedUpdate {
+    lastModifiedAt: Date;
+    lastModifiedBy?: string;
+    revisionCount: number;
+    changedFields: Set<string>;
+    noteCharDelta: number;
+    addedRemindersCount: number;
+    updatedRemindersCount: number;
+    addedInvoicesCount: number;
+    updatedInvoicesCount: number;
+  }
+
+  const updatesMap = new Map<string, AggregatedUpdate>();
+
+  const getOrCreate = (pid: string, defaultDate: Date): AggregatedUpdate => {
+    let agg = updatesMap.get(pid);
+    if (!agg) {
+      agg = {
+        lastModifiedAt: defaultDate,
+        revisionCount: 0,
+        changedFields: new Set<string>(),
+        noteCharDelta: 0,
+        addedRemindersCount: 0,
+        updatedRemindersCount: 0,
+        addedInvoicesCount: 0,
+        updatedInvoicesCount: 0,
+      };
+      updatesMap.set(pid, agg);
+    }
+    return agg;
+  };
+
+  // Process note versions
+  for (const nv of noteVersions) {
+    const pid = nv.note?.projectId;
+    if (!pid) continue;
+    const agg = getOrCreate(pid, nv.createdAt);
+    if (nv.createdAt > agg.lastModifiedAt) {
+      agg.lastModifiedAt = nv.createdAt;
+      if (nv.authorName) agg.lastModifiedBy = nv.authorName;
+    } else if (!agg.lastModifiedBy && nv.authorName) {
+      agg.lastModifiedBy = nv.authorName;
+    }
+    agg.revisionCount += 1;
+    agg.changedFields.add('notes');
+    agg.noteCharDelta += nv.charDelta || 0;
+  }
+
+  // Process project entity versions
+  for (const ev of projectEntityVersions) {
+    const pid = ev.entityId;
+    const meaningfulFields = Array.isArray(ev.changedFields)
+      ? ev.changedFields.filter(
+          (f) =>
+            typeof f === 'string' &&
+            f !== 'updatedAt' &&
+            f !== 'id' &&
+            f !== 'createdAt' &&
+            f !== 'notesPreview'
+        )
+      : [];
+
+    if (meaningfulFields.length === 0) continue;
+
+    const agg = getOrCreate(pid, ev.createdAt);
+    if (ev.createdAt > agg.lastModifiedAt) {
+      agg.lastModifiedAt = ev.createdAt;
+      if (ev.changeSet?.userName) agg.lastModifiedBy = ev.changeSet.userName;
+    } else if (!agg.lastModifiedBy && ev.changeSet?.userName) {
+      agg.lastModifiedBy = ev.changeSet.userName;
+    }
+    agg.revisionCount += 1;
+    for (const f of meaningfulFields) {
+      agg.changedFields.add(f);
+    }
+  }
+
+  // Process reminders
+  for (const rem of remindersInRange) {
+    if (!rem.projectId) continue;
+    const remDate = rem.updatedAt || rem.createdAt;
+    const agg = getOrCreate(rem.projectId, remDate);
+    if (remDate > agg.lastModifiedAt) {
+      agg.lastModifiedAt = remDate;
+    }
+    if (rem.createdAt >= fromDate && rem.createdAt <= toDate) {
+      agg.addedRemindersCount += 1;
+      agg.changedFields.add('reminders');
+    } else {
+      agg.updatedRemindersCount += 1;
+      agg.changedFields.add('reminders');
+    }
+  }
+
+  // Process invoices
+  for (const inv of invoicesInRange) {
+    if (!inv.projectId) continue;
+    const invDate = inv.updatedAt || inv.createdAt;
+    const agg = getOrCreate(inv.projectId, invDate);
+    if (invDate > agg.lastModifiedAt) {
+      agg.lastModifiedAt = invDate;
+    }
+    if (inv.createdAt >= fromDate && inv.createdAt <= toDate) {
+      agg.addedInvoicesCount += 1;
+      agg.changedFields.add('invoices');
+    } else {
+      agg.updatedInvoicesCount += 1;
+      agg.changedFields.add('invoices');
+    }
+  }
+
+  // Only consider projects with actual visible changes
+  const allUpdatedProjectIds = Array.from(updatesMap.entries())
+    .filter(([_, agg]) =>
+      agg.changedFields.size > 0 ||
+      agg.addedRemindersCount > 0 ||
+      agg.updatedRemindersCount > 0 ||
+      agg.addedInvoicesCount > 0 ||
+      agg.updatedInvoicesCount > 0
+    )
+    .map(([pid]) => pid);
+
+  if (allUpdatedProjectIds.length === 0) {
+    res.json({
+      total: 0,
+      dateFrom: fromDate.toISOString(),
+      dateTo: toDate.toISOString(),
+      limit,
+      offset,
+      updates: [],
+    });
+    return;
+  }
+
+  // 2. Query Project records with ownership & search filtering
+  const where: any = {
+    id: { in: allUpdatedProjectIds },
+  };
+
+  if (responsibleId) {
+    where.responsibleId = responsibleId;
+  }
+
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { clientName: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  if (isRestrictedToOwn(authUser, "projects")) {
+    const ownerConditions = [
+      { responsible: authUser.name },
+      { responsibleId: authUser.id },
+    ];
+    if (where.OR) {
+      where.AND = [
+        { OR: where.OR },
+        { OR: ownerConditions },
+      ];
+      delete where.OR;
+    } else {
+      where.OR = ownerConditions;
+    }
+  }
+
+  const matchedProjects = await prisma.project.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      clientId: true,
+      clientName: true,
+      responsible: true,
+      responsibleId: true,
+      type: true,
+      start: true,
+      deadline: true,
+      progress: true,
+      done: true,
+      notesPreview: true,
+      updatedAt: true,
+      client: {
+        select: { id: true, name: true, city: true },
+      },
+    },
+  });
+
+  const enriched = matchedProjects.map((proj) => {
+    const agg = updatesMap.get(proj.id)!;
+    return {
+      id: proj.id,
+      name: proj.name,
+      clientId: proj.clientId,
+      clientName: proj.clientName,
+      responsible: proj.responsible,
+      responsibleId: proj.responsibleId,
+      type: proj.type,
+      start: proj.start,
+      deadline: proj.deadline,
+      progress: proj.progress,
+      done: proj.done,
+      notesPreview: proj.notesPreview,
+      client: proj.client,
+      lastModifiedAt: agg.lastModifiedAt.toISOString(),
+      lastModifiedBy: agg.lastModifiedBy || proj.responsible || 'Sistem',
+      revisionCount: agg.revisionCount || 1,
+      changedFields: Array.from(agg.changedFields),
+      noteCharDelta: agg.noteCharDelta,
+      addedRemindersCount: agg.addedRemindersCount,
+      updatedRemindersCount: agg.updatedRemindersCount,
+      addedInvoicesCount: agg.addedInvoicesCount,
+      updatedInvoicesCount: agg.updatedInvoicesCount,
+    };
+  });
+
+  enriched.sort((a, b) => new Date(b.lastModifiedAt).getTime() - new Date(a.lastModifiedAt).getTime());
+
+  const total = enriched.length;
+  const paginated = enriched.slice(offset, offset + limit);
+
+  res.json({
+    total,
+    dateFrom: fromDate.toISOString(),
+    dateTo: toDate.toISOString(),
+    limit,
+    offset,
+    updates: paginated,
+  });
 }));
 
 // GET /api/projects/:id
@@ -273,6 +578,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       newContent: notes || '',
       authorId: authUser.id,
       authorName: authUser.name,
+      skipActivityLog: true,
     });
     currentNoteContent = noteRes.content;
   }
@@ -513,6 +819,159 @@ router.get('/:id/note/diff', asyncHandler(async (req, res) => {
     ...diffResult,
     dateFrom,
     dateTo,
+  });
+}));
+
+// GET /api/projects/:id/updates-diff
+router.get('/:id/updates-diff', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    include: {
+      client: { select: { id: true, name: true } },
+    },
+  });
+
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  if (!isProjectOwnerOrCan(authUser, project, "view")) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  const { dateFrom: dateFromStr, dateTo: dateToStr } = req.query;
+
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(0, 0, 0, 0);
+
+  const fromDate = dateFromStr ? new Date(dateFromStr as string) : yesterday;
+  let toDate = dateToStr ? new Date(dateToStr as string) : now;
+  if (typeof dateToStr === 'string' && dateToStr.length === 10) {
+    toDate.setHours(23, 59, 59, 999);
+  }
+
+  // 1. Field diffs from versioning service
+  let fieldDiffs: Record<string, { old: any; new: any }> = {};
+  try {
+    const resolved = await resolveVersionsByDate(
+      'Project',
+      id,
+      fromDate.toISOString(),
+      toDate.toISOString()
+    );
+    if (resolved.from !== resolved.to) {
+      const diffResult = await diffVersions('Project', id, resolved.from, resolved.to);
+      fieldDiffs = diffResult.diff;
+    }
+  } catch {
+    // If no entity versions exist, fieldDiffs remains empty
+  }
+
+  // 2. Rich text note diff
+  let notesDiffResult: any = null;
+  const note = await prisma.projectNote.findUnique({
+    where: { projectId: id },
+    select: { id: true, content: true },
+  });
+
+  if (note) {
+    try {
+      const resolvedNote = await resolveNoteVersionsByDate(
+        note.id,
+        fromDate.toISOString(),
+        toDate.toISOString()
+      );
+      if (resolvedNote.from !== resolvedNote.to) {
+        notesDiffResult = await diffNoteVersions(note.id, resolvedNote.from, resolvedNote.to);
+      } else {
+        const plainNote = stripHtmlToText(note.content || '');
+        notesDiffResult = {
+          vFrom: resolvedNote.from,
+          vTo: resolvedNote.to,
+          diff: [],
+          oldContent: plainNote,
+          newContent: plainNote,
+        };
+      }
+    } catch {
+      notesDiffResult = null;
+    }
+  }
+
+  // 3. Reminders created or modified in range
+  const reminders = await prisma.reminder.findMany({
+    where: {
+      projectId: id,
+      OR: [
+        { createdAt: { gte: fromDate, lte: toDate } },
+        { updatedAt: { gte: fromDate, lte: toDate } },
+      ],
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      id: true,
+      title: true,
+      dueDate: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  const remindersResult = reminders.map((r) => ({
+    id: r.id,
+    title: r.title,
+    dueDate: r.dueDate,
+    status: r.status,
+    isNew: r.createdAt >= fromDate && r.createdAt <= toDate,
+  }));
+
+  // 4. Invoices created or modified in range
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      projectId: id,
+      OR: [
+        { createdAt: { gte: fromDate, lte: toDate } },
+        { updatedAt: { gte: fromDate, lte: toDate } },
+      ],
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      status: true,
+      totalAmount: true,
+      currency: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  const invoicesResult = invoices.map((inv) => ({
+    id: inv.id,
+    invoiceNumber: inv.invoiceNumber,
+    status: inv.status,
+    total: inv.totalAmount,
+    currency: inv.currency,
+    isNew: inv.createdAt >= fromDate && inv.createdAt <= toDate,
+  }));
+
+  res.json({
+    projectId: id,
+    projectName: project.name,
+    dateFrom: fromDate.toISOString(),
+    dateTo: toDate.toISOString(),
+    fieldDiffs,
+    notesDiff: notesDiffResult,
+    reminders: remindersResult,
+    invoices: invoicesResult,
   });
 }));
 
