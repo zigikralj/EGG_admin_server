@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { getReferenceCache, setReferenceCache, invalidateReferenceCachePrefix } from '../helpers/referenceCache';
+import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 
 const router = Router();
 
@@ -96,10 +97,39 @@ async function ensureSeed() {
 router.get('/', asyncHandler(async (req, res) => {
   await ensureSeed();
 
+  const sinceDate = parseSince(req.query.since);
   const search = ((req.query.search as string) || '').trim();
   const isPaginated = req.query.limit !== undefined || req.query.page !== undefined;
   const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
   const limit = req.query.limit === 'all' ? undefined : Math.max(1, parseInt((req.query.limit as string) || '20', 10));
+
+  const orderBy = [
+    { frequent: { sort: 'asc' as const, nulls: 'last' as const } },
+    { code: 'asc' as const },
+  ];
+
+  if (sinceDate) {
+    const deltaWhere: any = {
+      updatedAt: { gt: sinceDate },
+      ...(search ? {
+        OR: [
+          { code: { contains: search, mode: 'insensitive' as const } },
+          { description: { contains: search, mode: 'insensitive' as const } },
+        ]
+      } : {}),
+    };
+
+    const [items, deletedIds] = await Promise.all([
+      prisma.wasteCatalog.findMany({
+        where: deltaWhere,
+        orderBy,
+      }),
+      fetchDeletedIds('WasteCatalog', sinceDate),
+    ]);
+
+    res.json(buildDeltaResponse(items, deletedIds, sinceDate));
+    return;
+  }
 
   let cacheKey: string | null = null;
   if (!search) {
@@ -124,11 +154,6 @@ router.get('/', asyncHandler(async (req, res) => {
       { description: { contains: search, mode: 'insensitive' as const } },
     ]
   } : {};
-
-  const orderBy = [
-    { frequent: { sort: 'asc' as const, nulls: 'last' as const } },
-    { code: 'asc' as const },
-  ];
 
   if (isPaginated) {
     const skip = limit ? (page - 1) * limit : undefined;
@@ -250,6 +275,25 @@ router.post('/', asyncHandler(async (req, res) => {
 
   invalidateReferenceCachePrefix('reference:wasteCatalog');
   res.status(201).json(item);
+}));
+
+// DELETE /api/waste-catalog/:id
+router.delete('/:id', asyncHandler(async (req, res) => {
+  if (!hasPermission(req.authUser, 'permits', 'delete')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to delete waste catalog items.' });
+    return;
+  }
+
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const existing = await prisma.wasteCatalog.findUnique({ where: { id } });
+  if (!existing) {
+    res.status(404).json({ error: 'Waste catalog item not found.' });
+    return;
+  }
+
+  await prisma.wasteCatalog.delete({ where: { id } });
+  invalidateReferenceCachePrefix('reference:wasteCatalog');
+  res.status(204).send();
 }));
 
 export default router;
