@@ -259,18 +259,113 @@ Delete a role. Requires `roles` delete permission or System Administrator.
 **All routes require auth.**
 
 ### `GET /api/projects`
-List all projects. Supports `?search=` and optional `?done=true|false` query parameters.
-Returns lightweight rows containing `notesPreview` (up to 300 plain text characters) instead of full rich-text HTML `notes`.
+List all projects. Supports `?search=`, `?done=true|false`, `?clientId=`, and `?since=` query parameters.
+- When `?since=<ISO_TIMESTAMP>` is passed, returns a **Delta Response Envelope** `{ delta: true, items: [...], deletedIds: string[], syncedAt: string }` containing only projects modified since that timestamp plus tombstones of deleted projects.
+- Returns lightweight rows containing `notesPreview` (up to 300 plain text characters) instead of full rich-text HTML `notes`.
+- Supports pagination via `?page=` and `?limit=`.
 
-**Response 200:** Array of project objects (includes `client` relation).
+**Response 200 (standard):** Array of project objects (includes `client` relation).
+**Response 200 (delta):**
+```json
+{
+  "delta": true,
+  "items": [ ... ],
+  "deletedIds": [ "proj-uuid-1" ],
+  "syncedAt": "2026-10-23T01:00:00.000Z"
+}
+```
+
+---
+
+### `GET /api/projects/updates`
+Retrieve aggregated activity stream of recent project updates across the organization.
+- **Query parameters:** `?limit=50`, `?offset=0`, `?projectId=` (filter for a specific project)
+- Returns chronologically ordered update events derived from audit logs, project changes, note revisions, and task completions.
+
+**Response 200:** Array of update items with author, action, timestamp, target entity, and change summary.
 
 ---
 
 ### `GET /api/projects/:id`
 Get full details of a single project by ID, including complete rich-text HTML `notes`.
+- **Query parameters:** `?version=` (optional: reconstruct project snapshot at a specific version)
 
 **Response 200:** Project object.
 **Response 404:** `{ "error": "Project not found" }`
+
+---
+
+### `GET /api/projects/:id/note`
+Get the current rich-text note content for a project from the `ProjectNote` table.
+
+**Response 200:**
+```json
+{
+  "projectId": "uuid",
+  "content": "<p>Project notes HTML...</p>",
+  "version": 4,
+  "updatedAt": "2026-10-23T01:00:00.000Z"
+}
+```
+
+---
+
+### `GET /api/projects/:id/note/history`
+Get the version history timeline for a project's notes.
+- **Query parameters:** `?limit=50`, `?offset=0`
+
+**Response 200:** Array of note versions:
+```json
+[
+  {
+    "version": 4,
+    "kind": "D",
+    "charDelta": 45,
+    "authorName": "Nemanja Stanojevic",
+    "createdAt": "2026-10-23T00:30:00.000Z"
+  },
+  {
+    "version": 1,
+    "kind": "S",
+    "charDelta": 210,
+    "authorName": "Nemanja Stanojevic",
+    "createdAt": "2026-10-21T16:00:00.000Z"
+  }
+]
+```
+
+---
+
+### `GET /api/projects/:id/note/diff`
+Get field-level or text diff between two versions or dates for a project note.
+- **Query parameters:** `?from=1&to=4` OR `?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD`
+
+**Response 200:**
+```json
+{
+  "fromVersion": 1,
+  "toVersion": 4,
+  "diff": "--- v1\n+++ v4\n@@ ... @@\n...",
+  "addedCount": 5,
+  "removedCount": 2
+}
+```
+
+---
+
+### `GET /api/projects/:id/updates-diff`
+Get detailed visual diff of entity state changes for a specific update event.
+- **Query parameters:** `?from=<timestamp|version>&to=<timestamp|version>`
+
+**Response 200:** Detailed diff breakdown of modified fields and values.
+
+---
+
+### `POST /api/projects/:id/note/restore/:v`
+Restore a project's note to a specific historical version number `:v`.
+Creates a new revision record maintaining full audit history.
+
+**Response 200:** `{ "success": true, "version": 5, "content": "..." }`
 
 ---
 
@@ -301,6 +396,7 @@ Create a project.
 
 ### `PUT /api/projects/:id`
 Update a project. Requires ownership or Admin/Manager role.
+Automatically tracks note revisions and delta history when the `notes` field is modified.
 
 **Response 200:** Updated project object.
 
@@ -311,12 +407,10 @@ Toggle project done/undone status. Requires ownership or Admin/Manager.
 
 **Response 200:** Updated project object.
 
-
-
 ---
 
 ### `DELETE /api/projects/:id`
-Delete a project. Requires ownership or Admin/Manager.
+Delete a project. Requires ownership or Admin/Manager. Creates an `EntityVersion` tombstone (`op: 'D'`) to notify delta sync clients.
 
 **Response 200:** `{ "message": "Project deleted successfully" }`
 
@@ -716,6 +810,14 @@ Toggle or set the "frequent" rank for a waste catalog entry.
 
 ---
 
+### `DELETE /api/waste-catalog/:id`
+Delete a waste catalog entry. **Admin/Manager only.**
+Creates an `EntityVersion` tombstone (`op: 'D'`) to notify delta sync clients and invalidates the in-memory reference cache.
+
+**Response 200:** `{ "message": "Waste catalog item deleted successfully" }`
+
+---
+
 ## Notifications (`/api/notifications`)
 
 **All routes require auth.** Users can only manage their own notifications.
@@ -974,6 +1076,152 @@ Deletes all activity logs for a specific session. **Administrator only.** Invali
 
 ### `DELETE /api/activity-logs/:id`
 Deletes an individual activity log. **Administrator only.** Invalidates analytics cache.
+
+---
+
+## History & Data Versioning (`/api/history`)
+
+**All routes require auth.** Requires `history` `view` permission (or Administrator). Restore actions require `history` `restore` permission.
+
+### `GET /api/history/:entityType/:id`
+Retrieve the complete historical version timeline for a specific entity.
+- **Path parameters:**
+  - `entityType` — supported entities: `Project`, `Invoice`, `Client`, `Permit`, `Reminder`, `ProvidedService`, etc. (case-insensitive)
+  - `id` — UUID of the entity
+- **Query parameters:**
+  - `?limit=50` (default 50)
+  - `?offset=0`
+  - `?includeChildren=true|false` (e.g. include `InvoiceItem` versions when querying `Invoice`)
+
+**Response 200:**
+```json
+{
+  "entityType": "Project",
+  "entityId": "uuid",
+  "currentVersion": 5,
+  "versions": [
+    {
+      "version": 5,
+      "op": "U",
+      "kind": "D",
+      "changedFields": ["progress", "deadline"],
+      "createdAt": "2026-10-22T21:00:00.000Z",
+      "changeSet": {
+        "id": "cs-uuid",
+        "userName": "Nemanja Stanojevic",
+        "route": "/api/projects/uuid",
+        "method": "PUT"
+      }
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/history/:entityType/:id/diff`
+Compute field-by-field differences between two versions or two point-in-time timestamps.
+- **Query parameters:**
+  - `?from=1&to=5` (version numbers), OR
+  - `?dateFrom=2026-10-20&dateTo=2026-10-22` (ISO dates, automatically resolves corresponding version numbers)
+
+**Response 200:**
+```json
+{
+  "entityType": "Project",
+  "entityId": "uuid",
+  "fromVersion": 1,
+  "toVersion": 5,
+  "changes": [
+    {
+      "field": "progress",
+      "oldValue": 20,
+      "newValue": 85
+    },
+    {
+      "field": "deadline",
+      "oldValue": "2026-11-01",
+      "newValue": "2026-11-15"
+    }
+  ],
+  "dateFrom": "2026-10-20",
+  "dateTo": "2026-10-22"
+}
+```
+
+---
+
+### `GET /api/history/:entityType/:id/versions/:v`
+Reconstruct the complete state snapshot of an entity at a specific version `:v`.
+
+**Response 200:** Reconstructed entity state object at version `:v`.
+**Response 404:** `{ "error": "Version 3 not found for Project uuid" }`
+
+---
+
+### `GET /api/history/changesets/:id`
+Inspect a transaction-level ChangeSet grouping all entity mutations across a single HTTP request or migration.
+
+**Response 200:** ChangeSet details with child `versions` list.
+
+---
+
+### `POST /api/history/:entityType/:id/restore/:v`
+Restore an entity to its state at version `:v`. Requires `history` `restore` permission.
+Creates a new revision record maintaining continuous non-destructive history.
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "restoredVersion": 4,
+  "newVersion": 6,
+  "entity": { ... }
+}
+```
+
+---
+
+## Delta Synchronization (`?since=`)
+
+All primary entity collection endpoints support incremental synchronization via the `?since=` query parameter:
+- `/api/projects?since=<ISO_TIMESTAMP>`
+- `/api/clients?since=<ISO_TIMESTAMP>`
+- `/api/invoices?since=<ISO_TIMESTAMP>`
+- `/api/permits?since=<ISO_TIMESTAMP>`
+- `/api/reminders?since=<ISO_TIMESTAMP>`
+- `/api/provided-services?since=<ISO_TIMESTAMP>`
+- `/api/waste-catalog?since=<ISO_TIMESTAMP>`
+
+### Delta Response Envelope
+When `?since=` is supplied with a valid timestamp within 30 days (`MAX_DELTA_AGE_DAYS`), the API responds with a Delta Envelope:
+```json
+{
+  "delta": true,
+  "items": [ ... ],
+  "deletedIds": [ "deleted-uuid-1", "deleted-uuid-2" ],
+  "syncedAt": "2026-10-23T01:15:00.000Z"
+}
+```
+- **`items`**: Entities updated or created since `since`.
+- **`deletedIds`**: IDs of entities deleted since `since` (retrieved from `EntityVersion` audit records where `op = 'D'`).
+- **`syncedAt`**: Current server timestamp to record for the subsequent delta sync request.
+- **Retention fallback**: If the provided `since` timestamp is older than 30 days, the server safely falls back to a full fresh snapshot (`delta: false`) to prevent missing tombstones.
+
+---
+
+## Network Optimization & In-Memory Caching
+
+1. **HTTP Response Compression**:
+   - Gzip and Deflate compression middleware (`compression`) active across all API routes with a threshold of 1024 bytes.
+2. **In-Memory Reference Data Caching (`referenceCache.ts`)**:
+   - Slowly changing reference records (`/api/services`, `/api/categories`, `/api/company-info`, `/api/roles`, `/api/waste-catalog`) are cached in server memory with a 10-minute default TTL (`DEFAULT_REFERENCE_TTL_MS = 600000`).
+   - Mutations (`POST`, `PUT`, `DELETE`, `PATCH`) automatically invalidate the respective cache key or prefix.
+3. **User Auth & Role Caching (`auth.ts`)**:
+   - User authentication and role entities are cached in-memory with a 60-second TTL to eliminate redundant database queries on rapid concurrent requests.
+   - Force logout or role updates immediately invalidate the user auth cache.
+4. **Analytics Aggregation Caching (`analyticsCache.ts`)**:
+   - High-computation analytics queries (`/api/activity-logs/analytics`) are cached with a 60-second TTL and automatically invalidated upon any activity log deletion or purge.
 
 ---
 

@@ -43,29 +43,36 @@ Every route file follows the same pattern:
 | `auth.routes.ts` | `/api/auth` | Login, register, /me. Login/register are public. |
 | `roles.routes.ts` | `/api/roles` | Dynamic role CRUD and granular permissions management. Admin only. |
 | `users.routes.ts` | `/api/users` | User CRUD, approve/reject, force-logout. Admin/Manager write. |
-| `projects.routes.ts` | `/api/projects` | Project CRUD, toggle-done. Owner or Admin/Manager write. |
-| `clients.routes.ts` | `/api/clients` | Client CRUD with permit linking via `ClientExtraData`. Admin/Manager write. |
-| `invoices.routes.ts` | `/api/invoices` | Invoice CRUD with line items (`InvoiceItem`). Admin/Manager/Accountant write. |
-| `services.routes.ts` | `/api/services` | Service type definitions. Admin/Manager write. |
-| `categories.routes.ts` | `/api/categories` | Category CRUD. Admin/Manager write. |
-| `providedServices.routes.ts` | `/api/provided-services` | Service delivery records. Validates FK references. Admin/Manager write. |
-| `reminders.routes.ts` | `/api/reminders` | Reminders/tasks linked to project/client/permit. Owner or Admin/Manager write. |
-| `permits.routes.ts` | `/api/permits` | Permit CRUD with waste catalog junction. Admin/Manager write. |
-| `wasteCatalog.routes.ts` | `/api/waste-catalog` | Serbian waste index catalog. Auto-seeds. Supports pagination. Admin/Manager write. |
+| `projects.routes.ts` | `/api/projects` | Project CRUD, note revisions/diffs, updates feed, delta sync. Owner or Admin/Manager write. |
+| `clients.routes.ts` | `/api/clients` | Client CRUD with permit linking via `ClientExtraData`, delta sync support. Admin/Manager write. |
+| `invoices.routes.ts` | `/api/invoices` | Invoice CRUD with line items (`InvoiceItem`), delta sync support. Admin/Manager/Accountant write. |
+| `services.routes.ts` | `/api/services` | Service type definitions with reference caching. Admin/Manager write. |
+| `categories.routes.ts` | `/api/categories` | Category CRUD with reference caching. Admin/Manager write. |
+| `providedServices.routes.ts` | `/api/provided-services` | Service delivery records, delta sync support. Validates FK references. Admin/Manager write. |
+| `reminders.routes.ts` | `/api/reminders` | Reminders/tasks linked to project/client/permit, delta sync support. Owner or Admin/Manager write. |
+| `permits.routes.ts` | `/api/permits` | Permit CRUD with waste catalog junction, delta sync support. Admin/Manager write. |
+| `wasteCatalog.routes.ts` | `/api/waste-catalog` | Serbian waste index catalog. Auto-seeds, delta sync, reference cache. Supports pagination & delete. Admin/Manager write. |
+| `history.routes.ts` | `/api/history` | Entity version timeline, diffs by version/date, snapshot inspection, and point-in-time restoration. |
 | `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions. Own notifications only. |
-| `companyInfo.routes.ts` | `/api/company-info` | Singleton company record. Admin/Manager write. |
+| `companyInfo.routes.ts` | `/api/company-info` | Singleton company record with reference caching. Admin/Manager write. |
 | `preferences.routes.ts` | `/api/preferences` | Per-user key-value settings. Own preferences only. |
-| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, lazy diff loading, purge, and `/analytics` endpoint. |
-| `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts. Optional auth. |
+| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, lazy diff loading, monthly rollups, purge, and `/analytics` endpoint. |
+| `stats.routes.ts` | `/api/projects/stats` | Dashboard aggregate counts with in-memory caching. Optional auth. |
 
 ### Services & Helper Utilities (`src/services/`, `src/helpers/`)
 | File | Purpose |
 |---|---|
+| `src/services/versioning.service.ts` | Entity version resolution, timeline aggregation, field-level diff calculation, and point-in-time entity restoration |
+| `src/services/noteDelta.service.ts` | Delta-based note revision tracking, keyframe snapshots ('S') vs diff patches ('D'), character deltas, and note restoration |
 | `src/services/activityAnalytics.service.ts` | Activity Analytics aggregation engine (KPIs, timelines, top pages, actions by entity, user usage, heatmap, session duration distribution, transitions, stickiness) |
+| `src/helpers/deltaSync.ts` | Delta sync utilities: `parseSince()`, `fetchDeletedIds()` via `EntityVersion` tombstones (`op: 'D'`), `buildDeltaResponse()`, and `purgeOldEntityVersions()` |
+| `src/helpers/referenceCache.ts` | In-memory cache with 10m TTL for slowly changing reference data (Services, Categories, CompanyInfo, Roles, WasteCatalog) |
 | `src/helpers/analyticsCache.ts` | In-memory 60-second TTL cache for analytics queries with automatic invalidation on activity log deletions |
 | `src/helpers/activityLogger.ts` | Non-blocking batched in-memory activity log buffer with auto-flush (5s / 50 items) and daily retention purge |
 | `src/helpers/dateUtils.ts` | `addMonths()`, `daysUntil()`, `isStale()` — date arithmetic for project scheduling |
 | `src/helpers/mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes, creates Notification records |
+| `src/cleanWordNotes.ts` / `src/cleanWordHtml.ts` | Utilities to sanitize and clean Microsoft Word metadata, XML, and non-breaking spaces from rich text notes |
+| `src/purgeLogs.ts` | Command-line and automated maintenance utility to purge expired activity logs and optimize storage |
 | `src/helpers/prismaErrors.ts` | `handlePrismaError()` — legacy inline Prisma error handler (mostly superseded by global errorHandler) |
 
 ### Import Scripts (standalone, run via `npm run`)
@@ -79,7 +86,7 @@ Every route file follows the same pattern:
 ### Database Schema
 | File | Purpose |
 |---|---|
-| `prisma/schema.prisma` | **Source of truth** for all database models. 19 models. PostgreSQL. Uses UUID primary keys. |
+| `prisma/schema.prisma` | **Source of truth** for all database models. 24 models. PostgreSQL. Uses UUID primary keys. |
 | `prisma.config.ts` | Prisma config — loads env vars for `DATABASE_URL` |
 
 ---
@@ -143,7 +150,8 @@ const where = search ? {
 > See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for full ERD, field constraints, cascade rules, and domain walkthroughs.
 
 ### Core Business Entities
-- **Project** — central entity. Links to Client, User (responsible), has Reminders, Invoices, ProvidedServices
+- **Project** — central entity. Links to Client, User (responsible), has Reminders, Invoices, ProvidedServices, ProjectNote. (Note: `nextSample` field is deprecated and removed in favor of `Reminder`).
+- **ProjectNote** + **ProjectNoteVersion** — delta-compressed project notes with full keyframe snapshots ('S') and unified diff patches ('D').
 - **Client** — company clients. Has ClientExtraData for permit linking
 - **Invoice** + **InvoiceItem** — billing. Invoice has line items
 - **Service** — service type definitions (with frequency in months)
@@ -160,12 +168,15 @@ const where = search ? {
 - **UserPreference** — KV store per user (unique userId+key)
 - **Notification** — @mention notifications
 
-### Other
+### Audit, Analytics & Versioning
+- **ChangeSet** — transaction-level container grouping entity version changes by request, user, route, and method.
+- **EntityVersion** — field-level delta and snapshot tracking for entity modifications and deletion tombstones (`op: 'I'|'U'|'D'|'B'`).
+- **ActivityLog** — user audit and navigation logs (Administrator only)
+- **ActivityLogMonthlyStats** — monthly rolled-up session and duration metrics per user and module.
+- **SystemSetting** — global key-value application settings (e.g. `activity_logging_enabled`, `activity_log_retention_days`)
 - **Category** — project categories
 - **CompanyInfo** — singleton with company legal details
 - **Reminder** — tasks linked to projects/clients/permits/users
-- **ActivityLog** — user audit and navigation logs (Administrator only)
-- **SystemSetting** — global key-value application settings (e.g. `activity_logging_enabled`, `activity_log_retention_days`)
 
 ---
 
