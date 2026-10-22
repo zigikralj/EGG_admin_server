@@ -34,6 +34,7 @@ model Project {
   @@index([responsibleId])
   @@index([done])
   @@index([type])
+  @@index([updatedAt])
 }
 
 model Client {
@@ -51,6 +52,8 @@ model Client {
   providedServices ProvidedService[]
   extraData        ClientExtraData?
   permits          Permit[]
+
+  @@index([updatedAt])
 }
 
 model User {
@@ -130,6 +133,7 @@ model Reminder {
   @@index([responsibleId])
   @@index([status])
   @@index([permitId])
+  @@index([updatedAt])
 }
 
 model Category {
@@ -171,6 +175,7 @@ model Invoice {
   @@index([projectId])
   @@index([status])
   @@index([parentInvoiceId])
+  @@index([updatedAt])
 }
 
 model InvoiceItem {
@@ -215,6 +220,7 @@ model ProvidedService {
   @@index([projectId])
   @@index([invoiceId])
   @@index([status])
+  @@index([updatedAt])
 }
 
 model CompanyInfo {
@@ -290,6 +296,7 @@ model Permit {
 
   @@index([permitNumber])
   @@index([clientId])
+  @@index([updatedAt])
 }
 
 model WasteCatalog {

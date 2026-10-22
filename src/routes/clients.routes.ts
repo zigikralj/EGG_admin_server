@@ -4,6 +4,7 @@ import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission } from "../types";
 import { formatPermit } from "./permits.routes";
+import { parseSince, fetchDeletedIds, buildDeltaResponse } from "../helpers/deltaSync";
 
 const router = Router();
 
@@ -22,38 +23,44 @@ function formatClientPermits(permits: any[], fallbackPermit?: any) {
 }
 
 // GET /api/clients
-router.get("/", asyncHandler(async (_req, res) => {
-  const clients = await prisma.client.findMany({
-    orderBy: { name: "asc" },
-    include: {
-      projects: true,
-      permits: {
-        include: {
-          permitWastes: {
-            include: { wasteCatalog: true },
+router.get("/", asyncHandler(async (req, res) => {
+  const sinceDate = parseSince(req.query.since);
+
+  const [clients, deletedIds] = await Promise.all([
+    prisma.client.findMany({
+      where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
+      orderBy: { name: "asc" },
+      include: {
+        projects: true,
+        permits: {
+          include: {
+            permitWastes: {
+              include: { wasteCatalog: true },
+            },
           },
         },
-      },
-      extraData: {
-        include: {
-          permit: {
-            include: {
-              permitWastes: {
-                include: { wasteCatalog: true },
+        extraData: {
+          include: {
+            permit: {
+              include: {
+                permitWastes: {
+                  include: { wasteCatalog: true },
+                },
               },
             },
           },
         },
       },
-    },
-  });
+    }),
+    sinceDate ? fetchDeletedIds("Client", sinceDate) : Promise.resolve([]),
+  ]);
 
   const formatted = clients.map((c) => ({
     ...c,
     ...formatClientPermits(c.permits, c.extraData?.permit),
   }));
 
-  res.json(formatted);
+  res.json(buildDeltaResponse(formatted, deletedIds, sinceDate));
 }));
 
 // POST /api/clients

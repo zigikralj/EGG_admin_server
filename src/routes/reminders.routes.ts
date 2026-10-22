@@ -3,6 +3,7 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
+import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 
 const router = Router();
 
@@ -12,7 +13,7 @@ router.use(requireAuth);
 // GET /api/reminders
 router.get('/', asyncHandler(async (req, res) => {
   const search = ((req.query.search as string) || '').trim();
-  const where = search ? {
+  const searchCondition = search ? {
     OR: [
       { title: { contains: search, mode: 'insensitive' as const } },
       { projectName: { contains: search, mode: 'insensitive' as const } },
@@ -21,20 +22,34 @@ router.get('/', asyncHandler(async (req, res) => {
       { status: { contains: search, mode: 'insensitive' as const } },
       { notes: { contains: search, mode: 'insensitive' as const } },
     ]
-  } : {};
+  } : undefined;
 
-  const reminders = await prisma.reminder.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      project: { select: { id: true, name: true, done: true } },
-      client: { select: { id: true, name: true } },
-      responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
-      permit: { select: { id: true, permitNumber: true } },
-    },
-  });
+  const sinceDate = parseSince(req.query.since);
+  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
 
-  res.json(reminders);
+  const conditions: any[] = [];
+  if (searchCondition) conditions.push(searchCondition);
+  if (deltaCondition) conditions.push(deltaCondition);
+
+  const where: any = conditions.length > 1
+    ? { AND: conditions }
+    : (conditions[0] || {});
+
+  const [reminders, deletedIds] = await Promise.all([
+    prisma.reminder.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        project: { select: { id: true, name: true, done: true } },
+        client: { select: { id: true, name: true } },
+        responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
+        permit: { select: { id: true, permitNumber: true } },
+      },
+    }),
+    sinceDate ? fetchDeletedIds('Reminder', sinceDate) : Promise.resolve([]),
+  ]);
+
+  res.json(buildDeltaResponse(reminders, deletedIds, sinceDate));
 }));
 
 // POST /api/reminders

@@ -3,6 +3,7 @@ import { prisma, auditedTransaction } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
+import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 
 const router = Router();
 
@@ -37,17 +38,25 @@ router.get('/', asyncHandler(async (req, res) => {
     ];
   }
 
-  const invoices = await prisma.invoice.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      client: { select: { id: true, name: true } },
-      project: { select: { id: true, name: true, done: true } },
-      items: true,
-    },
-  });
+  const sinceDate = parseSince(req.query.since);
+  if (sinceDate) {
+    where.updatedAt = { gt: sinceDate };
+  }
 
-  res.json(invoices);
+  const [invoices, deletedIds] = await Promise.all([
+    prisma.invoice.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        client: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true, done: true } },
+        items: true,
+      },
+    }),
+    sinceDate ? fetchDeletedIds('Invoice', sinceDate) : Promise.resolve([]),
+  ]);
+
+  res.json(buildDeltaResponse(invoices, deletedIds, sinceDate));
 }));
 
 // GET /api/invoices/:id

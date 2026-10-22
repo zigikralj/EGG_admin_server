@@ -2,6 +2,13 @@
 
 All notable changes to the backend server project will be documented in this file.
 
+## [Unreleased]
+
+- feat: SQL-level delta synchronization optimization via `?since=` query parameter across all primary entity endpoints (`/api/projects`, `/api/invoices`, `/api/clients`, `/api/permits`, `/api/reminders`, `/api/provided-services`).
+- feat: tombstone deletion tracking querying PostgreSQL `EntityVersion` audit records (`op: 'D'`) to communicate deleted entity IDs to clients.
+- perf: add B-tree indexes on `[updatedAt]` across `Project`, `Invoice`, `Client`, `Permit`, `Reminder`, and `ProvidedService` tables for high-throughput range scans.
+- feat: delta synchronization helper (`src/helpers/deltaSync.ts`) maintaining 100% backward compatibility when `since` query parameter is omitted.
+
 ## [v1.3.0] - 2026-10-18
 
 - feat: add comprehensive activity analytics engine (`activityAnalytics.service.ts`) with KPI computation, trend deltas, timeline aggregations, and transition mapping.

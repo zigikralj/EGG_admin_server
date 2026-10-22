@@ -16,6 +16,11 @@ import {
   resolveVersionsByDate,
   diffVersions,
 } from '../services/versioning.service';
+import {
+  parseSince,
+  fetchDeletedIds,
+  buildDeltaResponse,
+} from '../helpers/deltaSync';
 
 const router = Router();
 
@@ -94,36 +99,47 @@ router.get('/', asyncHandler(async (req, res) => {
     ? { done: doneParam === 'true' }
     : undefined;
 
-  const conditions = [ownerCondition, searchCondition, doneCondition].filter(Boolean);
-  const where = conditions.length > 1
+  const sinceDate = parseSince(req.query.since);
+  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
+
+  const conditions: any[] = [];
+  if (ownerCondition) conditions.push(ownerCondition);
+  if (searchCondition) conditions.push(searchCondition);
+  if (doneCondition) conditions.push(doneCondition);
+  if (deltaCondition) conditions.push(deltaCondition);
+
+  const where: any = conditions.length > 1
     ? { AND: conditions }
     : (conditions[0] || {});
 
-  const projects = await prisma.project.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      name: true,
-      clientId: true,
-      clientName: true,
-      responsible: true,
-      responsibleId: true,
-      type: true,
-      start: true,
-      deadline: true,
-      progress: true,
-      done: true,
-      notesPreview: true,
-      createdAt: true,
-      updatedAt: true,
-      client: {
-        select: { id: true, name: true, city: true },
+  const [projects, deletedIds] = await Promise.all([
+    prisma.project.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        clientId: true,
+        clientName: true,
+        responsible: true,
+        responsibleId: true,
+        type: true,
+        start: true,
+        deadline: true,
+        progress: true,
+        done: true,
+        notesPreview: true,
+        createdAt: true,
+        updatedAt: true,
+        client: {
+          select: { id: true, name: true, city: true },
+        },
       },
-    },
-  });
+    }),
+    sinceDate ? fetchDeletedIds('Project', sinceDate) : Promise.resolve([]),
+  ]);
 
-  res.json(projects);
+  res.json(buildDeltaResponse(projects, deletedIds, sinceDate));
 }));
 
 // GET /api/projects/updates
