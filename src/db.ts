@@ -15,6 +15,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { requestContext } from './context';
 import { initActivityLogger, enqueueActivityLog, isActivityLoggingEnabled } from './helpers/activityLogger';
 import { PRISMA_MODEL_TO_API_ROUTE } from './constants/apiRoutes';
+import { stripHtmlToText } from './helpers/htmlUtils';
 
 // Enable BigInt serialization in JSON.stringify
 if (!(BigInt.prototype as any).toJSON) {
@@ -99,18 +100,9 @@ const isScalarAssignment = (val: unknown): boolean =>
   val instanceof Date;
 
 export const cleanText = (v: string): string => {
-  return /<[a-z!][\s\S]*>/i.test(v)
-    ? v
-        .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
-        .replace(/<!--[\s\S]*?-->/g, '')
-        .replace(/<xml[\s\S]*?<\/xml>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
-        .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
+  if (!v) return '';
+  return /<[a-z!]/i.test(v)
+    ? stripHtmlToText(v).replace(/\s+/g, ' ').trim()
     : v.trim();
 };
 

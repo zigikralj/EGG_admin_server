@@ -47,21 +47,7 @@ function isProjectOwnerOrCan(
 
 export function extractNotesPreview(notes?: string | null): string | null {
   if (!notes) return null;
-  const plainText = notes
-    .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
-    .replace(/&(?:amp|#38);/gi, '&')
-    .replace(/&(?:quot|#34);/gi, '"')
-    .replace(/&(?:apos|#39);/gi, "'")
-    .replace(/&(?:lt|#60);/gi, '<')
-    .replace(/&(?:gt|#62);/gi, '>')
-    .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const plainText = stripHtmlToText(notes).replace(/\s+/g, ' ').trim();
   if (!plainText) return null;
   return plainText.length > 300 ? plainText.slice(0, 300) : plainText;
 }
@@ -807,7 +793,10 @@ router.get('/:id/note/diff', asyncHandler(async (req, res) => {
     return;
   }
 
-  const { vFrom, vTo, dateFrom, dateTo } = req.query;
+  const vFromStr = typeof req.query.vFrom === 'string' ? req.query.vFrom : undefined;
+  const vToStr = typeof req.query.vTo === 'string' ? req.query.vTo : undefined;
+  const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+  const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
 
   let resolvedFrom: number;
   let resolvedTo: number;
@@ -815,14 +804,14 @@ router.get('/:id/note/diff', asyncHandler(async (req, res) => {
   if (dateFrom || dateTo) {
     const resolved = await resolveNoteVersionsByDate(
       note.id,
-      dateFrom as string | undefined,
-      dateTo as string | undefined
+      dateFrom,
+      dateTo
     );
     resolvedFrom = resolved.from;
     resolvedTo = resolved.to;
   } else {
-    resolvedFrom = parseInt(vFrom as string, 10);
-    resolvedTo = parseInt(vTo as string, 10);
+    resolvedFrom = parseInt(vFromStr || '', 10);
+    resolvedTo = parseInt(vToStr || '', 10);
 
     if (isNaN(resolvedFrom) || isNaN(resolvedTo)) {
       res.status(400).json({ error: 'Either vFrom/vTo integers or dateFrom/dateTo strings must be provided' });
@@ -860,16 +849,20 @@ router.get('/:id/updates-diff', asyncHandler(async (req, res) => {
     return;
   }
 
-  const { dateFrom: dateFromStr, dateTo: dateToStr } = req.query;
+  const dateFromStr = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+  const dateToStr = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
 
   const now = new Date();
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   yesterday.setHours(0, 0, 0, 0);
 
-  const fromDate = dateFromStr ? new Date(dateFromStr as string) : yesterday;
-  let toDate = dateToStr ? new Date(dateToStr as string) : now;
-  if (typeof dateToStr === 'string' && dateToStr.length === 10) {
+  const parsedFrom = dateFromStr ? new Date(dateFromStr) : null;
+  const fromDate = parsedFrom && !isNaN(parsedFrom.getTime()) ? parsedFrom : yesterday;
+
+  const parsedTo = dateToStr ? new Date(dateToStr) : null;
+  let toDate = parsedTo && !isNaN(parsedTo.getTime()) ? parsedTo : now;
+  if (dateToStr && dateToStr.length === 10) {
     toDate.setHours(23, 59, 59, 999);
   }
 

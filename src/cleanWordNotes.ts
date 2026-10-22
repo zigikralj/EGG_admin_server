@@ -1,20 +1,7 @@
 import { basePrisma } from './db';
+import { cleanWordHtml } from './helpers/htmlUtils';
 
-/**
- * Strips Microsoft Word and Office specific metadata, XML blocks, conditional comments,
- * and style tags to prevent raw XML and style definitions from polluting notes.
- */
-export function cleanWordHtml(html: string): string {
-  if (!html) return '';
-  return html
-    .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<xml[\s\S]*?<\/xml>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<(meta|link|title)[\s\S]*?\/?>/gi, '')
-    .trim();
-}
+export { cleanWordHtml };
 
 async function main() {
   const notes = await basePrisma.projectNote.findMany({

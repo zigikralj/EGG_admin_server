@@ -338,33 +338,40 @@ export async function resolveVersionsByDate(
   let resolvedFrom = minVersion;
   let resolvedTo = maxVersion;
 
-  if (dateFromStr) {
-    const fromDate = new Date(dateFromStr);
-    const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
-    if (matching.length > 0) {
-      resolvedFrom = matching[matching.length - 1].version;
-    } else {
-      resolvedFrom = minVersion;
+  const safeDateFrom = typeof dateFromStr === 'string' ? dateFromStr.trim() : undefined;
+  const safeDateTo = typeof dateToStr === 'string' ? dateToStr.trim() : undefined;
+
+  if (safeDateFrom) {
+    const fromDate = new Date(safeDateFrom);
+    if (!isNaN(fromDate.getTime())) {
+      const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
+      if (matching.length > 0) {
+        resolvedFrom = matching[matching.length - 1].version;
+      } else {
+        resolvedFrom = minVersion;
+      }
     }
   }
 
-  if (dateToStr) {
-    const toDate = new Date(dateToStr);
-    if (dateToStr.length === 10) {
-      toDate.setHours(23, 59, 59, 999);
-    }
-    const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
-    if (matching.length > 0) {
-      resolvedTo = matching[matching.length - 1].version;
-    } else {
-      resolvedTo = maxVersion;
+  if (safeDateTo) {
+    const toDate = new Date(safeDateTo);
+    if (!isNaN(toDate.getTime())) {
+      if (safeDateTo.length === 10) {
+        toDate.setHours(23, 59, 59, 999);
+      }
+      const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
+      if (matching.length > 0) {
+        resolvedTo = matching[matching.length - 1].version;
+      } else {
+        resolvedTo = maxVersion;
+      }
     }
   }
 
   return {
     from: resolvedFrom,
     to: resolvedTo,
-    dateFrom: dateFromStr,
-    dateTo: dateToStr,
+    dateFrom: safeDateFrom,
+    dateTo: safeDateTo,
   };
 }

@@ -52,10 +52,10 @@ router.get(
 
     const entityType = String(req.params.entityType);
     const id = String(req.params.id);
-    const fromStr = req.query.from as string | undefined;
-    const toStr = req.query.to as string | undefined;
-    const dateFrom = req.query.dateFrom as string | undefined;
-    const dateTo = req.query.dateTo as string | undefined;
+    const fromStr = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const toStr = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+    const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
 
     let from: number;
     let to: number;

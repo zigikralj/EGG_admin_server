@@ -2,7 +2,7 @@ import { diff_match_patch } from 'diff-match-patch';
 import { basePrisma, compactDiffPair } from '../db';
 import { extractNotesPreview } from '../routes/projects.routes';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
-import { cleanWordHtml } from '../cleanWordNotes';
+import { cleanWordHtml, stripHtmlToText } from '../helpers/htmlUtils';
 import { enqueueActivityLog, isActivityLoggingEnabled } from '../helpers/activityLogger';
 import { requestContext } from '../context';
 
@@ -279,27 +279,7 @@ export async function getNoteRevisionsList(noteId: string, limit: number = 50, o
   };
 }
 
-export function stripHtmlToText(html?: string | null): string {
-  if (!html) return '';
-  return html
-    .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|blockquote|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
-    .replace(/&(?:amp|#38);/gi, '&')
-    .replace(/&(?:quot|#34);/gi, '"')
-    .replace(/&(?:apos|#39);/gi, "'")
-    .replace(/&(?:lt|#60);/gi, '<')
-    .replace(/&(?:gt|#62);/gi, '>')
-    .replace(/[\u00a0\u200B\uFEFF]/g, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n\s*\n+/g, '\n')
-    .trim();
-}
+export { stripHtmlToText };
 
 export async function diffNoteVersions(
   noteId: string,
@@ -358,20 +338,27 @@ export async function resolveNoteVersionsByDate(
   let resolvedFrom = minVersion;
   let resolvedTo = maxVersion;
 
-  if (dateFromStr) {
-    const fromDate = new Date(dateFromStr);
-    const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
-    resolvedFrom = matching.length > 0 ? matching[matching.length - 1].version : minVersion;
+  const safeDateFrom = typeof dateFromStr === 'string' ? dateFromStr.trim() : undefined;
+  const safeDateTo = typeof dateToStr === 'string' ? dateToStr.trim() : undefined;
+
+  if (safeDateFrom) {
+    const fromDate = new Date(safeDateFrom);
+    if (!isNaN(fromDate.getTime())) {
+      const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
+      resolvedFrom = matching.length > 0 ? matching[matching.length - 1].version : minVersion;
+    }
   }
 
-  if (dateToStr) {
-    const toDate = new Date(dateToStr);
-    if (dateToStr.length === 10) toDate.setHours(23, 59, 59, 999);
-    const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
-    resolvedTo = matching.length > 0 ? matching[matching.length - 1].version : maxVersion;
+  if (safeDateTo) {
+    const toDate = new Date(safeDateTo);
+    if (!isNaN(toDate.getTime())) {
+      if (safeDateTo.length === 10) toDate.setHours(23, 59, 59, 999);
+      const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
+      resolvedTo = matching.length > 0 ? matching[matching.length - 1].version : maxVersion;
+    }
   }
 
-  return { from: resolvedFrom, to: resolvedTo, dateFrom: dateFromStr, dateTo: dateToStr };
+  return { from: resolvedFrom, to: resolvedTo, dateFrom: safeDateFrom, dateTo: safeDateTo };
 }
 
 export async function restoreNoteVersion(
