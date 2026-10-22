@@ -25,6 +25,8 @@
     "db:import-waste-catalog:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importWasteCatalogCsv.ts",
     "db:clean-word-notes": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/cleanWordNotes.ts",
     "db:clean-word-notes:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/cleanWordNotes.ts",
+    "db:purge-logs": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/purgeLogs.ts",
+    "db:purge-logs:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/purgeLogs.ts",
     "release:patch": "npm version patch && git push && git push --tags",
     "release:minor": "npm version minor && git push && git push --tags",
     "release:major": "npm version major && git push && git push --tags"
@@ -33,6 +35,7 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.2",
     "cors": "^2.8.5",
     "diff-match-patch": "^1.0.5",
     "dotenv": "^18.0.7",
@@ -44,6 +47,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",
     "@types/diff-match-patch": "^1.0.36",
     "@types/express": "^5.0.0",

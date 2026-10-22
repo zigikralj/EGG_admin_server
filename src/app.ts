@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { errorHandler } from './middleware/errorHandler';
 
 // Route imports
@@ -43,6 +44,7 @@ export function createApp() {
 
   // Middleware
   app.use(cors());
+  app.use(compression({ threshold: 1024 }));
   
   // Override for import endpoints (applied before the import route handlers)
   app.use(API_ROUTES.IMPORT, express.json({ limit: '10mb' })); 

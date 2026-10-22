@@ -2,19 +2,25 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { prisma } from '../db';
+import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
 const router = Router();
+const ROLES_CACHE_KEY = 'reference:roles';
+
 router.use(requireAuth);
 
 router.get('/', asyncHandler(async (req, res) => {
+  const cached = getReferenceCache(ROLES_CACHE_KEY);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
 
   const roles = await prisma.role.findMany({
     orderBy: { createdAt: 'asc' },
-    include: {
-      _count: { select: { users: true } }
-    }
   });
 
+  setReferenceCache(ROLES_CACHE_KEY, roles);
   res.json(roles);
 }));
 
@@ -62,6 +68,7 @@ router.post('/', asyncHandler(async (req, res) => {
     },
   });
 
+  invalidateReferenceCache(ROLES_CACHE_KEY);
   res.status(201).json(role);
 }));
 
@@ -110,6 +117,7 @@ router.put('/:name', asyncHandler(async (req, res) => {
     },
   });
 
+  invalidateReferenceCache(ROLES_CACHE_KEY);
   res.json(updatedRole);
 }));
 
@@ -147,6 +155,7 @@ router.delete('/:name', asyncHandler(async (req, res) => {
 
   await prisma.role.delete({ where: { name } });
 
+  invalidateReferenceCache(ROLES_CACHE_KEY);
   res.json({ success: true });
 }));
 

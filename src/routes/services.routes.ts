@@ -3,17 +3,26 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
+import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
 const router = Router();
+const SERVICES_CACHE_KEY = 'reference:services';
 
 // Require authentication for all services routes
 router.use(requireAuth);
 
 // GET /api/services
 router.get('/', asyncHandler(async (_req, res) => {
+  const cached = getReferenceCache(SERVICES_CACHE_KEY);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
   const services = await prisma.service.findMany({
     orderBy: { name: 'asc' },
   });
+  setReferenceCache(SERVICES_CACHE_KEY, services);
   res.json(services);
 }));
 
@@ -62,6 +71,7 @@ router.post('/', asyncHandler(async (req, res) => {
       customDataModel: customDataModel !== undefined ? customDataModel : null,
     },
   });
+  invalidateReferenceCache(SERVICES_CACHE_KEY);
   res.status(201).json(service);
 }));
 
@@ -100,6 +110,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       customDataModel: customDataModel !== undefined ? customDataModel : undefined,
     },
   });
+  invalidateReferenceCache(SERVICES_CACHE_KEY);
   res.json(updated);
 }));
 
@@ -113,6 +124,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 
   const id = req.params.id as string;
   await prisma.service.delete({ where: { id } });
+  invalidateReferenceCache(SERVICES_CACHE_KEY);
   res.json({ message: 'Service deleted successfully' });
 }));
 
