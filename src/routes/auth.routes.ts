@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { generateToken, hashPassword, verifyPassword, SESSION_DURATION_SECONDS } from '../authUtils';
 import { asyncHandler } from '../middleware/errorHandler';
-import { requireAuth, userForceLogoutMap } from '../middleware/auth';
+import { requireAuth, userForceLogoutMap, invalidateUserAuthCache } from '../middleware/auth';
 import { validatePassword, sanitizeString } from '../middleware/validate';
 
 const router = Router();
@@ -77,6 +77,7 @@ router.post('/login', asyncHandler(async (req, res) => {
   }
 
   userForceLogoutMap.delete(user.id);
+  invalidateUserAuthCache(user.id);
   const token = generateToken(user);
   const { password: _, ...userWithoutPassword } = user;
   res.json({ user: userWithoutPassword, token, expiresIn: SESSION_DURATION_SECONDS });

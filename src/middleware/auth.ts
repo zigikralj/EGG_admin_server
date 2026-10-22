@@ -20,19 +20,55 @@ declare global {
 // ---------------------------------------------------------------------------
 // In-memory maps for online-status tracking and force-logout revocation.
 // ---------------------------------------------------------------------------
-// In-memory store for force-logout timestamps.
+// In-memory store for force-logout timestamps and user auth cache.
 // NOTE: These are process-local and reset on server restart.
 //       For multi-instance deployments, a shared store (e.g. Redis) is needed.
 // ---------------------------------------------------------------------------
 export const userForceLogoutMap = new Map<string, number>();
 
-// Periodic cleanup — purge entries older than 1 hour, runs every 5 minutes.
+interface CachedUser {
+  user: User & { roleEntity?: any };
+  expiresAt: number;
+}
+const userAuthCache = new Map<string, CachedUser>();
+const USER_AUTH_CACHE_TTL_MS = 60_000; // 60 seconds
+
+export function invalidateUserAuthCache(userId?: string): void {
+  if (userId) {
+    userAuthCache.delete(userId);
+  } else {
+    userAuthCache.clear();
+  }
+}
+
+// Periodic cleanup — purge entries older than 1 hour / expired cache, runs every 5 minutes.
 setInterval(() => {
-  const cutoff = Date.now() - 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - 60 * 60 * 1000;
   for (const [id, ts] of userForceLogoutMap) {
     if (ts < cutoff) userForceLogoutMap.delete(id);
   }
+  for (const [id, entry] of userAuthCache) {
+    if (entry.expiresAt < now) userAuthCache.delete(id);
+  }
 }, 5 * 60 * 1000).unref(); // .unref() so the interval doesn't block process exit
+
+async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?: any }) | null> {
+  const cached = userAuthCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.user;
+  }
+  const user = await prisma.user.findUnique({
+    include: { roleEntity: true },
+    where: { id: userId },
+  });
+  if (user) {
+    userAuthCache.set(userId, { user, expiresAt: Date.now() + USER_AUTH_CACHE_TTL_MS });
+  } else {
+    userAuthCache.delete(userId);
+  }
+  return user ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Auth resolution
@@ -57,16 +93,30 @@ export async function getAuthUser(req: Request): Promise<User | null> {
     const tokenIatMs = (payload as { iat?: number }).iat
       ? (payload as { iat?: number }).iat! * 1000
       : 0;
-    if (forceLogoutAt && tokenIatMs && tokenIatMs < forceLogoutAt) return null;
+    if (forceLogoutAt && tokenIatMs && tokenIatMs < forceLogoutAt) {
+      userAuthCache.delete(payload.userId);
+      return null;
+    }
 
-    const authDbUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: payload.userId } });
+    // Check if Administrator or Manager is switching user (impersonation / preview)
+    const xUserId = req.headers["x-user-id"] as string;
+    const authDbUser = await fetchUserWithRole(payload.userId);
+
+    if (authDbUser && xUserId && xUserId !== payload.userId) {
+      if (authDbUser.role === "Administrator" || authDbUser.role === "Manager") {
+        const impersonatedUser = await fetchUserWithRole(xUserId);
+        if (impersonatedUser && impersonatedUser.isApproved && impersonatedUser.status !== "BLOCKED") {
+          return impersonatedUser;
+        }
+      }
+    }
     return authDbUser ?? null;
   }
 
   // Fallback X-User-Id
   const fallbackXUserId = req.headers["x-user-id"] as string;
   if (fallbackXUserId) {
-    const fallbackUser = await prisma.user.findUnique({ include: { roleEntity: true }, where: { id: fallbackXUserId } });
+    const fallbackUser = await fetchUserWithRole(fallbackXUserId);
     return fallbackUser ?? null;
   }
 

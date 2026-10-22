@@ -6,10 +6,24 @@ import { isRestrictedToOwn } from '../types';
 
 const router = Router();
 
+interface CachedStats {
+  data: Record<string, number>;
+  expiresAt: number;
+}
+const statsCache = new Map<string, CachedStats>();
+const STATS_CACHE_TTL_MS = 30_000; // 30 seconds
+
 // GET /api/projects/stats
 router.get('/', asyncHandler(async (req, res) => {
   const authUser = await getAuthUser(req);
   const isOnlyOwn = isRestrictedToOwn(authUser, "projects");
+
+  const cacheKey = isOnlyOwn && authUser ? `own_${authUser.id}` : 'all';
+  const cached = statsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json(cached.data);
+    return;
+  }
 
   const cutoffStale = new Date();
   cutoffStale.setMonth(cutoffStale.getMonth() - 2);
@@ -53,7 +67,7 @@ router.get('/', asyncHandler(async (req, res) => {
     prisma.providedService.count(),
   ]);
 
-  res.json({
+  const result = {
     active,
     done,
     stale,
@@ -64,7 +78,10 @@ router.get('/', asyncHandler(async (req, res) => {
     categoriesCount,
     invoicesCount,
     providedServicesCount,
-  });
+  };
+
+  statsCache.set(cacheKey, { data: result, expiresAt: Date.now() + STATS_CACHE_TTL_MS });
+  res.json(result);
 }));
 
 export default router;
