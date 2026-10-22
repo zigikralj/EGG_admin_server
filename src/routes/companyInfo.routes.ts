@@ -3,8 +3,11 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
+import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
 const router = Router();
+const COMPANY_INFO_CACHE_KEY = 'reference:companyInfo';
+const COMPANY_INFO_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 // Require authentication for all company info routes
 router.use(requireAuth);
@@ -14,6 +17,12 @@ router.get('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
   if (!hasPermission(authUser, 'companyInfo', 'view')) {
     res.status(403).json({ error: 'FORBIDDEN', message: 'You do not have permission to view company information.' });
+    return;
+  }
+
+  const cached = getReferenceCache(COMPANY_INFO_CACHE_KEY);
+  if (cached) {
+    res.json(cached);
     return;
   }
 
@@ -44,6 +53,7 @@ router.get('/', asyncHandler(async (req, res) => {
       },
     });
   }
+  setReferenceCache(COMPANY_INFO_CACHE_KEY, info, COMPANY_INFO_TTL_MS);
   res.json(info);
 }));
 
@@ -103,6 +113,7 @@ router.put('/', asyncHandler(async (req, res) => {
     },
   });
 
+  invalidateReferenceCache(COMPANY_INFO_CACHE_KEY);
   res.json(info);
 }));
 

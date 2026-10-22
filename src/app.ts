@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { errorHandler } from './middleware/errorHandler';
 
 // Route imports
@@ -20,6 +21,7 @@ import statsRoutes from './routes/stats.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import permitsRoutes from './routes/permits.routes';
 import wasteCatalogRoutes from './routes/wasteCatalog.routes';
+import historyRoutes from './routes/history.routes';
 
 // Import rate limiters (currently defined in index.ts or authUtils, let's assume we need to import or recreate them)
 import rateLimit from 'express-rate-limit';
@@ -42,6 +44,7 @@ export function createApp() {
 
   // Middleware
   app.use(cors());
+  app.use(compression({ threshold: 1024 }));
   
   // Override for import endpoints (applied before the import route handlers)
   app.use(API_ROUTES.IMPORT, express.json({ limit: '10mb' })); 
@@ -87,6 +90,7 @@ export function createApp() {
   app.use(API_ROUTES.NOTIFICATIONS, notificationsRoutes);
   app.use(API_ROUTES.PERMITS, permitsRoutes);
   app.use(API_ROUTES.WASTE_CATALOG, wasteCatalogRoutes);
+  app.use(API_ROUTES.HISTORY, historyRoutes);
 
   // Handle undefined routes
   app.use((req, res) => {

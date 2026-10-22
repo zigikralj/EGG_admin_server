@@ -3,8 +3,10 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
+import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
 const router = Router();
+const CATEGORIES_CACHE_KEY = 'reference:categories';
 
 // Require authentication for all categories routes
 router.use(requireAuth);
@@ -19,9 +21,16 @@ const requireCategoryPermission = (action: string) => (req: any, res: any, next:
 
 // GET /api/categories
 router.get('/', asyncHandler(async (_req, res) => {
+  const cached = getReferenceCache(CATEGORIES_CACHE_KEY);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
   const categories = await prisma.category.findMany({
     orderBy: { createdAt: 'desc' },
   });
+  setReferenceCache(CATEGORIES_CACHE_KEY, categories);
   res.json(categories);
 }));
 
@@ -47,6 +56,7 @@ router.post('/', requireCategoryPermission('create'), asyncHandler(async (req, r
       description: description ? description.trim() : null,
     },
   });
+  invalidateReferenceCache(CATEGORIES_CACHE_KEY);
   res.status(201).json(category);
 }));
 
@@ -91,6 +101,7 @@ router.put('/:id', requireCategoryPermission('edit'), asyncHandler(async (req, r
       description: finalDesc,
     },
   });
+  invalidateReferenceCache(CATEGORIES_CACHE_KEY);
   res.json(category);
 }));
 
@@ -106,6 +117,7 @@ router.delete('/:id', requireCategoryPermission('delete'), asyncHandler(async (r
   await prisma.category.delete({
     where: { id },
   });
+  invalidateReferenceCache(CATEGORIES_CACHE_KEY);
   res.status(204).send();
 }));
 

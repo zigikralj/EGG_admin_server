@@ -18,8 +18,7 @@ model Project {
   deadline      String?
   progress      Int      @default(0)
   done          Boolean  @default(false)
-  nextSample    String?
-  notes         String?
+  notesPreview  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -29,11 +28,13 @@ model Project {
   notifications    Notification[]
   invoices         Invoice[]
   providedServices ProvidedService[]
+  note             ProjectNote?
 
   @@index([clientId])
   @@index([responsibleId])
   @@index([done])
   @@index([type])
+  @@index([updatedAt])
 }
 
 model Client {
@@ -51,6 +52,8 @@ model Client {
   providedServices ProvidedService[]
   extraData        ClientExtraData?
   permits          Permit[]
+
+  @@index([updatedAt])
 }
 
 model User {
@@ -70,8 +73,10 @@ model User {
   projects      Project[]
   preferences   UserPreference[]
   reminders     Reminder[]
-  notifications Notification[]
-  activityLogs  ActivityLog[]
+  notifications         Notification[]
+  activityLogs          ActivityLog[]
+  activityMonthlyStats  ActivityLogMonthlyStats[]
+  updatedProjectNotes   ProjectNote[]
 }
 
 model UserPreference {
@@ -128,6 +133,7 @@ model Reminder {
   @@index([responsibleId])
   @@index([status])
   @@index([permitId])
+  @@index([updatedAt])
 }
 
 model Category {
@@ -169,6 +175,7 @@ model Invoice {
   @@index([projectId])
   @@index([status])
   @@index([parentInvoiceId])
+  @@index([updatedAt])
 }
 
 model InvoiceItem {
@@ -213,6 +220,7 @@ model ProvidedService {
   @@index([projectId])
   @@index([invoiceId])
   @@index([status])
+  @@index([updatedAt])
 }
 
 model CompanyInfo {
@@ -288,6 +296,7 @@ model Permit {
 
   @@index([permitNumber])
   @@index([clientId])
+  @@index([updatedAt])
 }
 
 model WasteCatalog {
@@ -356,3 +365,97 @@ model SystemSetting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model ChangeSet {
+  id        String          @id @default(uuid())
+  userId    String?
+  userName  String?
+  sessionId String?
+  requestId String?
+  method    String?
+  route     String?
+  source    String          @default("api") // api, import, seed, restore, system
+  reason    String?
+  createdAt DateTime        @default(now())
+  versions  EntityVersion[]
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+model EntityVersion {
+  id            BigInt    @id @default(autoincrement())
+  changeSetId   String
+  entityType    String    // e.g. "Project", "Invoice", "Client"
+  entityId      String    // String PK of the record
+  version       Int       // 1, 2, 3... per entity
+  op            String    // I (Insert), U (Update), D (Delete), B (Baseline)
+  kind          String    // S (Snapshot / Keyframe), D (Delta)
+  data          Json      // Forward delta { field: newVal } or full row snapshot
+  changedFields String[]  // For indexed search & quick filtering
+  parentType    String?   // e.g. "Invoice" for InvoiceItem
+  parentId      String?   // e.g. invoiceId for InvoiceItem
+  createdAt     DateTime  @default(now())
+
+  changeSet ChangeSet @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, entityId, version])
+  @@index([entityType, entityId, createdAt])
+  @@index([parentType, parentId, createdAt])
+  @@index([changeSetId])
+}
+
+model ActivityLogMonthlyStats {
+  id                   String   @id @default(uuid())
+  userId               String
+  yearMonth            String   // e.g., "2026-10"
+  totalDurationSeconds Int      @default(0)
+  sessionCount         Int      @default(0)
+  actionCount          Int      @default(0)
+  moduleBreakdown      Json?    // { "/projects": 1200, "/invoices": 650, ... } — canonical path -> seconds
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, yearMonth])
+  @@index([yearMonth])
+}
+
+model ProjectNote {
+  id          String   @id @default(uuid())
+  projectId   String   @unique
+  content     String?  @db.Text
+  version     Int      @default(1)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  versions    ProjectNoteVersion[]
+
+  @@index([projectId])
+}
+
+model ProjectNoteVersion {
+  id          BigInt   @id @default(autoincrement())
+  noteId      String
+  version     Int
+  kind        String   // 'S' = Full Snapshot (Keyframe), 'D' = Text Delta Patch
+  content     String?  @db.Text // Populated only when kind = 'S'
+  patch       String?  @db.Text // Unified text diff patch when kind = 'D'
+  charDelta   Int      @default(0) // Net characters added (+) or removed (-)
+  authorId    String?
+  authorName  String?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  note        ProjectNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, version])
+  @@index([noteId, kind, version])
+  @@index([noteId, createdAt])
+}
+
+

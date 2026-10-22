@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { stripHtmlToText } from "./htmlUtils";
 
 export async function extractMentionedUserIds(content: string | null | undefined): Promise<string[]> {
   if (!content) return [];
@@ -20,7 +21,7 @@ export async function extractMentionedUserIds(content: string | null | undefined
     select: { id: true, name: true, email: true },
   });
 
-  const plainText = content.replace(/<[^>]*>/g, " ");
+  const plainText = stripHtmlToText(content);
   for (const u of allUsers) {
     if (!userIds.has(u.id)) {
       if (u.name && plainText.toLowerCase().includes("@" + u.name.toLowerCase())) {

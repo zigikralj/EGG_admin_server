@@ -1,16 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import type { User } from '@prisma/client';
 import { prisma } from '../db';
 import { verifyToken } from '../authUtils';
 import { requestContext } from '../context';
 
 // ---------------------------------------------------------------------------
-// Type extension — gives every Express Request a typed authUser property.
+// Type extension — gives every Express Request typed auth properties.
 // ---------------------------------------------------------------------------
 declare global {
   namespace Express {
     interface Request {
       authUser?: User & { roleEntity?: any };
+      requestId?: string;
     }
   }
 }
@@ -108,7 +110,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
         }
       }
     }
-
     return authDbUser ?? null;
   }
 
@@ -145,7 +146,28 @@ export async function requireAuth(
   req.authUser = user;
   
   const sessionId = req.headers['x-session-id'] as string | undefined;
-  requestContext.run({ userId: user.id, userName: user.name || "Unknown", sessionId }, () => {
-    next();
-  });
+  const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  req.requestId = requestId;
+
+  const userId = user.id;
+  const userName = user.name || 'Unknown';
+  const method = req.method;
+  const route = req.originalUrl || req.baseUrl || req.path;
+
+  requestContext.run(
+    {
+      userId,
+      userName,
+      sessionId,
+      requestId,
+      method,
+      route,
+      source: 'api',
+    },
+    () => {
+      next();
+    }
+  );
 }
+
+

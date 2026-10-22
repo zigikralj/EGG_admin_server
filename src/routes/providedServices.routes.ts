@@ -3,6 +3,7 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
+import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 
 function isWasteDisposalService(srv?: { code?: string | null; name?: string | null } | null): boolean {
   if (!srv) return false;
@@ -71,22 +72,31 @@ router.get('/', asyncHandler(async (req, res) => {
     ];
   }
 
-  let items = await prisma.providedService.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      service: true,
-      client: true,
-      project: true,
-      invoice: true,
-    },
-  });
+  const sinceDate = parseSince(req.query.since);
+  if (sinceDate) {
+    where.updatedAt = { gt: sinceDate };
+  }
 
+  const [rawItems, deletedIds] = await Promise.all([
+    prisma.providedService.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        service: { select: { id: true, code: true, name: true, group: true, frequency: true } },
+        client: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true, done: true } },
+        invoice: { select: { id: true, invoiceNumber: true } },
+      },
+    }),
+    sinceDate ? fetchDeletedIds('ProvidedService', sinceDate) : Promise.resolve([]),
+  ]);
+
+  let items = rawItems;
   if (!canViewAll && canViewWaste) {
     items = items.filter((item) => isWasteDisposalService(item.service));
   }
 
-  res.json(items);
+  res.json(buildDeltaResponse(items, deletedIds, sinceDate));
 }));
 
 // GET /api/provided-services/:id

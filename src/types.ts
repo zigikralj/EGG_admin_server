@@ -21,6 +21,12 @@ export function getDefaultResourcePermission(role?: string | null, resource?: st
   if (resource === 'activityLogs' || resource === 'activity_logs') {
     return role === UserRole.ADMINISTRATOR;
   }
+  if (resource === 'history') {
+    if (action === 'restore') {
+      return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
+    }
+    return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
+  }
   if (role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER) return true;
   return false;
 }

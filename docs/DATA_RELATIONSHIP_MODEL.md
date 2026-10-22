@@ -16,7 +16,7 @@ The database layer is managed with **Prisma ORM** connecting to a **PostgreSQL**
 
 2. **Temporal & Date Handling:**
    - **System Timestamps:** `createdAt` (`DateTime @default(now())`) and `updatedAt` (`DateTime @updatedAt`) are managed as native PostgreSQL timestamps with timezone.
-   - **Business Dates:** Dates such as `start`, `deadline`, `dueDate`, `paymentDate`, `scheduledDate`, `completionDate`, and `nextSample` are stored as **ISO 8601 Date Strings** (`String?`, format `YYYY-MM-DD`). This avoids time zone shifts and serialization mismatches across clients and external reporting systems.
+   - **Business Dates:** Dates such as `start`, `deadline`, `dueDate`, `paymentDate`, `scheduledDate`, and `completionDate` are stored as **ISO 8601 Date Strings** (`String?`, format `YYYY-MM-DD`). This avoids time zone shifts and serialization mismatches across clients and external reporting systems.
 
 3. **Read Optimization via Controlled Denormalization:**
    - To avoid expensive multi-table joins on list views and search filters, related display labels are snapshot on creation:
@@ -540,7 +540,6 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `deadline` | `String` | Optional | | Target completion date (`YYYY-MM-DD`) |
 | `progress` | `Int` | Required | `@default(0)` | Completion percentage (0–100) |
 | `done` | `Boolean` | Required | `@default(false)` | Completion status flag |
-| `nextSample` | `String` | Optional | | Next sampling date string (`YYYY-MM-DD`) |
 | `notes` | `String` | Optional | | Project operational notes |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
@@ -849,10 +848,10 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `timestamp` | `DateTime` | Required | `@default(now())` | Event occurrence timestamp |
 
 **Indexes & Constraints:**
-- `@@index([userId])`
-- `@@index([timestamp])`
-- `@@index([type])`
-- `@@index([sessionId])`
+- `@@index([userId, timestamp])` — Optimized user timeline lookups
+- `@@index([timestamp])` — Chronological sorting & date range queries
+- `@@index([sessionId])` — Fast session grouping and session purges
+- `@@index([type, timestamp])` — High-performance activity analytics aggregation
 - `onDelete: Cascade` to `User`
 
 
@@ -927,6 +926,7 @@ Indexes are optimized for foreign key lookups, frequent status filtering, and so
 | `PermitWaste` | `[wasteCatalogId]` | INDEX | Find all permits authorizing waste code |
 | `Category` | `code` | UNIQUE | Category code identifier |
 | `SystemSetting` | `key` | UNIQUE | Setting lookup |
-| `ActivityLog` | `[userId]` | INDEX | User activity filter |
-| `ActivityLog` | `[timestamp]` | INDEX | Chronological sorting |
-| `ActivityLog` | `[type]` | INDEX | Event type filtering |
+| `ActivityLog` | `[userId, timestamp]` | INDEX | User activity filter and chronological timeline |
+| `ActivityLog` | `[timestamp]` | INDEX | Chronological sorting and date range queries |
+| `ActivityLog` | `[sessionId]` | INDEX | Session tracking and cleanup |
+| `ActivityLog` | `[type, timestamp]` | INDEX | Composite index for activity analytics aggregations |

@@ -599,7 +599,6 @@ export async function seed(force = false) {
         deadline: '2026-10-31',
         progress: 65,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-06-01T08:00:00Z'),
         updatedAt: new Date(),
       },
@@ -612,7 +611,6 @@ export async function seed(force = false) {
         deadline: '2026-09-30',
         progress: 45,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-05-15T09:00:00Z'),
         updatedAt: new Date(),
       },
@@ -625,7 +623,7 @@ export async function seed(force = false) {
         deadline: '2026-09-15',
         progress: 35,
         done: false,
-        nextSample: addMonths(todayStr(), 0),
+        reminderDueDate: addMonths(todayStr(), 0),
         createdAt: new Date('2026-07-01T08:00:00Z'),
         updatedAt: new Date(),
       },
@@ -638,7 +636,6 @@ export async function seed(force = false) {
         deadline: '2026-10-15',
         progress: 25,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-07-10T09:30:00Z'),
         updatedAt: new Date(),
       },
@@ -651,7 +648,7 @@ export async function seed(force = false) {
         deadline: '2026-09-20',
         progress: 15,
         done: false,
-        nextSample: addMonths(todayStr(), 1),
+        reminderDueDate: addMonths(todayStr(), 1),
         createdAt: new Date('2026-08-01T08:00:00Z'),
         updatedAt: new Date(),
       },
@@ -664,7 +661,6 @@ export async function seed(force = false) {
         deadline: '2026-11-30',
         progress: 55,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-05-01T10:00:00Z'),
         updatedAt: new Date(),
       },
@@ -677,7 +673,7 @@ export async function seed(force = false) {
         deadline: '2026-09-10',
         progress: 40,
         done: false,
-        nextSample: addMonths(todayStr(), 0),
+        reminderDueDate: addMonths(todayStr(), 0),
         createdAt: new Date('2026-07-20T08:00:00Z'),
         updatedAt: new Date(),
       },
@@ -690,7 +686,6 @@ export async function seed(force = false) {
         deadline: '2026-10-01',
         progress: 50,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-06-15T09:00:00Z'),
         updatedAt: new Date(),
       },
@@ -703,7 +698,6 @@ export async function seed(force = false) {
         deadline: '2026-10-15',
         progress: 30,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-07-01T08:30:00Z'),
         updatedAt: new Date(),
       },
@@ -716,7 +710,7 @@ export async function seed(force = false) {
         deadline: '2026-09-25',
         progress: 20,
         done: false,
-        nextSample: addMonths(todayStr(), 1),
+        reminderDueDate: addMonths(todayStr(), 1),
         createdAt: new Date('2026-08-01T09:00:00Z'),
         updatedAt: new Date(),
       },
@@ -729,7 +723,6 @@ export async function seed(force = false) {
         deadline: '2026-10-10',
         progress: 10,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-08-05T08:00:00Z'),
         updatedAt: new Date(),
       },
@@ -742,7 +735,6 @@ export async function seed(force = false) {
         deadline: '2026-10-30',
         progress: 40,
         done: false,
-        nextSample: null,
         createdAt: new Date('2026-07-15T09:00:00Z'),
         updatedAt: new Date(),
       },
@@ -764,7 +756,6 @@ export async function seed(force = false) {
           deadline: p.deadline,
           progress: p.progress,
           done: p.done,
-          nextSample: p.nextSample || null,
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
         },
@@ -772,8 +763,8 @@ export async function seed(force = false) {
 
       projectMap[createdProj.name] = createdProj.id;
 
-      // If nextSample is present, also create a reminder
-      if (p.nextSample) {
+      // If reminderDueDate is present, create a reminder
+      if (p.reminderDueDate) {
         await prisma.reminder.create({
           data: {
             projectId: createdProj.id,
@@ -783,8 +774,8 @@ export async function seed(force = false) {
             responsibleId,
             responsible: p.responsible,
             status: 'Pending',
-            notes: `Periodično uzorkovanje za ${p.name}`,
-            dueDate: p.nextSample,
+            notes: `Periodični pregled za ${p.name}`,
+            dueDate: p.reminderDueDate,
           },
         });
       }

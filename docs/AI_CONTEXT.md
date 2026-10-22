@@ -7,7 +7,7 @@
 
 ## What Is This Project?
 
-A **REST API server** for managing environmental services projects (waste management, permits, sampling schedules) for Ekos Green Group, a Serbian environmental company. Built with **Express 5 + TypeScript + Prisma + PostgreSQL**.
+A **REST API server** for managing environmental services projects (waste management, permits, reminders) for Ekos Green Group, a Serbian environmental company. Built with **Express 5 + TypeScript + Prisma + PostgreSQL**.
 
 ---
 
@@ -21,11 +21,12 @@ A **REST API server** for managing environmental services projects (waste manage
 | `src/db.ts` | Prisma + pg Pool setup. Single source of database connection. | `prisma` |
 | `src/types.ts` | `UserRole` enum, `isAdminOrManager()`, `canManageInvoices()` | `UserRole`, `isAdminOrManager`, `canManageInvoices` |
 | `src/authUtils.ts` | JWT sign/verify, bcrypt hash/verify, temp password generation | `hashPassword`, `verifyPassword`, `generateToken`, `verifyToken`, `generateTempPassword` |
+| `src/constants/apiRoutes.ts` | Centralized API routes and Prisma model-to-route maps | `API_ROUTES`, `PRISMA_MODEL_TO_API_ROUTE` |
 
 ### Middleware (`src/middleware/`)
 | File | Purpose | Key Exports |
 |---|---|---|
-| `auth.ts` | JWT auth resolution, `requireAuth` middleware, force-logout, impersonation | `requireAuth`, `getAuthUser`, `userForceLogoutMap` |
+| `auth.ts` | JWT auth resolution, `requireAuth` middleware, force-logout | `requireAuth`, `getAuthUser`, `userForceLogoutMap` |
 | `errorHandler.ts` | `asyncHandler` wrapper + global error handler (Prisma P2002/P2025) | `asyncHandler`, `errorHandler` |
 | `validate.ts` | `sanitizeString()`, `validatePassword()` | `sanitizeString`, `validatePassword` |
 
@@ -40,8 +41,9 @@ Every route file follows the same pattern:
 | File | Mount Path | Purpose |
 |---|---|---|
 | `auth.routes.ts` | `/api/auth` | Login, register, /me. Login/register are public. |
+| `roles.routes.ts` | `/api/roles` | Dynamic role CRUD and granular permissions management. Admin only. |
 | `users.routes.ts` | `/api/users` | User CRUD, approve/reject, force-logout. Admin/Manager write. |
-| `projects.routes.ts` | `/api/projects` | Project CRUD, toggle-done, sample-advance. Owner or Admin/Manager write. |
+| `projects.routes.ts` | `/api/projects` | Project CRUD, toggle-done. Owner or Admin/Manager write. |
 | `clients.routes.ts` | `/api/clients` | Client CRUD with permit linking via `ClientExtraData`. Admin/Manager write. |
 | `invoices.routes.ts` | `/api/invoices` | Invoice CRUD with line items (`InvoiceItem`). Admin/Manager/Accountant write. |
 | `services.routes.ts` | `/api/services` | Service type definitions. Admin/Manager write. |
@@ -77,7 +79,7 @@ Every route file follows the same pattern:
 ### Database Schema
 | File | Purpose |
 |---|---|
-| `prisma/schema.prisma` | **Source of truth** for all database models. 16 models. PostgreSQL. Uses UUID primary keys. |
+| `prisma/schema.prisma` | **Source of truth** for all database models. 19 models. PostgreSQL. Uses UUID primary keys. |
 | `prisma.config.ts` | Prisma config — loads env vars for `DATABASE_URL` |
 
 ---
@@ -144,7 +146,7 @@ const where = search ? {
 - **Project** — central entity. Links to Client, User (responsible), has Reminders, Invoices, ProvidedServices
 - **Client** — company clients. Has ClientExtraData for permit linking
 - **Invoice** + **InvoiceItem** — billing. Invoice has line items
-- **Service** — service type definitions (with frequency for sampling)
+- **Service** — service type definitions (with frequency in months)
 - **ProvidedService** — individual service delivery records
 
 ### Permit/Waste System

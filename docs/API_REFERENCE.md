@@ -259,9 +259,18 @@ Delete a role. Requires `roles` delete permission or System Administrator.
 **All routes require auth.**
 
 ### `GET /api/projects`
-List all projects. Supports `?search=` query parameter (searches name, clientName, responsible).
+List all projects. Supports `?search=` and optional `?done=true|false` query parameters.
+Returns lightweight rows containing `notesPreview` (up to 300 plain text characters) instead of full rich-text HTML `notes`.
 
 **Response 200:** Array of project objects (includes `client` relation).
+
+---
+
+### `GET /api/projects/:id`
+Get full details of a single project by ID, including complete rich-text HTML `notes`.
+
+**Response 200:** Project object.
+**Response 404:** `{ "error": "Project not found" }`
 
 ---
 
@@ -280,7 +289,6 @@ Create a project.
   "deadline": "YYYY-MM-DD (optional)",
   "progress": "0-100 (optional, default 0)",
   "done": "boolean (optional)",
-  "nextSample": "YYYY-MM-DD (optional)",
   "notes": "string/HTML (optional — supports @mentions)"
 }
 ```
@@ -303,12 +311,7 @@ Toggle project done/undone status. Requires ownership or Admin/Manager.
 
 **Response 200:** Updated project object.
 
----
 
-### `PATCH /api/projects/:id/sample`
-Advance `nextSample` date by the service's frequency (in months). Requires ownership or Admin/Manager.
-
-**Response 200:** Updated project object.
 
 ---
 
@@ -813,7 +816,7 @@ Definitions:
 - **active**: Projects where `done = false`
 - **done**: Projects where `done = true`
 - **stale**: Active projects with `start` date >2 months ago
-- **monitor**: Projects with `nextSample` ≤ 14 days from now
+- **monitor**: Pending reminders with `dueDate` ≤ 14 days from now
 
 ---
 
@@ -837,8 +840,57 @@ List activity logs. **Administrator only.** By default excludes the heavy `detai
   - `userId` (optional): Filter by specific user UUID.
   - `sessionId` (optional): Filter by specific session ID.
   - `from` (optional): ISO date string (`YYYY-MM-DDTHH:mm:ss.sssZ`). Only returns logs at or after this timestamp.
-  - `limit` (optional): Number of records (default 1000, max 5000).
+  - `before` (optional): ISO date string (`YYYY-MM-DDTHH:mm:ss.sssZ`). Cursor for pagination.
+  - `beforeId` (optional): UUID of the last item on the previous page for composite tie-breaking cursor.
+  - `limit` (optional): Number of records (default 50, max 250).
   - `includeDetails` (optional): `'true'` to include the JSON diff `details` field.
+
+### `GET /api/activity-logs/summary`
+Postgres-aggregated summary of activity logs for KPI cards and per-user activity headers without transferring raw log rows. **Administrator only.**
+Results are cached in-memory with a 30-second TTL.
+
+- **Query params:**
+  - `from` (required/recommended): ISO date string (e.g. start of today, 7 days ago, or 30 days ago).
+- **Response 200:**
+  ```json
+  {
+    "kpiStats": {
+      "totalUsers": 5,
+      "activeToday": 3,
+      "totalSessions": 34,
+      "totalTrackedSeconds": 43200,
+      "topModule": "/data-management/projects",
+      "topModulePercent": 41
+    },
+    "userSummaries": [
+      {
+        "userId": "usr_123",
+        "userName": "Petar Petrović",
+        "totalDurationSeconds": 15400,
+        "totalSessionsCount": 12,
+        "totalActivitiesCount": 180,
+        "lastActive": "2026-10-20T13:45:00.000Z",
+        "hasActiveSession": true,
+        "topModules": [
+          { "path": "/data-management/projects", "seconds": 9240, "percentage": 60 }
+        ]
+      }
+    ]
+  }
+  ```
+
+---
+
+### `GET /api/activity-logs/monthly-stats`
+Fetch pre-aggregated historical monthly rollup statistics from `ActivityLogMonthlyStats` (zero raw log rows transferred). **Administrator only.**
+
+- **Query params:**
+  - `userId` (optional): Filter to a specific user UUID.
+  - `fromYearMonth` (optional): e.g. `'2025-01'`.
+  - `toYearMonth` (optional): e.g. `'2026-10'`.
+- **Response 200:** Array of monthly rollup objects including `moduleBreakdown`, `totalDurationSeconds`, `sessionCount`, and `actionCount`.
+
+---
 
 ### `GET /api/activity-logs/:id`
 Fetch a single activity log including its full `details` (lazy loaded for diff views). **Administrator only.**
@@ -849,17 +901,79 @@ Ingest client activity events (e.g. `PAGE_VIEW`, `LOGIN`, `LOGOUT`).
 - Identity is derived from the authenticated user token.
 - Returns `202 Accepted` immediately; events are ignored if logging is deactivated, otherwise persisted asynchronously.
 
+### `GET /api/activity-logs/analytics`
+Compute comprehensive activity and usage analytics. **Administrator only.**
+Results are cached in-memory with a 60-second TTL (invalidated immediately on log deletion).
+
+- **Query params:**
+  - `from` (optional): ISO date string start range (default: 30 days ago).
+  - `to` (optional): ISO date string end range (default: current time).
+  - `tz` (optional): Valid IANA timezone string (e.g. `'Europe/Belgrade'`, default: `'UTC'`).
+  - `granularity` (optional): `'day' | 'week' | 'month'` (auto-calculated if omitted: ≤45d = day, ≤180d = week, >180d = month).
+  - `userIds` (optional): Comma-separated user UUIDs to filter by.
+  - `roles` (optional): Comma-separated role names to filter by.
+  - `excludeAdminPages` (optional): `'false'` to include administrative routes (default: `'true'`).
+  - `compare` (optional): `'false'` to skip prior-period trend comparisons (default: `'true'`).
+
+- **Response 200:**
+  ```json
+  {
+    "kpis": {
+      "totalEvents": 4820,
+      "eventsDeltaPercent": 14.2,
+      "activeUsers": 12,
+      "activeUsersDeltaPercent": 0,
+      "totalSessions": 340,
+      "sessionsDeltaPercent": 8.5,
+      "totalDurationHours": 182.4,
+      "durationDeltaPercent": 5.1,
+      "avgDailyDurationMinutes": 45.6,
+      "topPage": "/data-management/projects",
+      "stickinessRatio": 0.42
+    },
+    "timeline": [
+      { "period": "2026-10-12", "events": 140, "sessions": 15, "durationMinutes": 120, "activeUsers": 8 }
+    ],
+    "topPages": [
+      { "path": "/data-management/projects", "views": 1250, "uniqueUsers": 11, "avgDurationSeconds": 48.2, "percentage": 28.5 }
+    ],
+    "actionsByEntity": [
+      { "entity": "Project", "creates": 25, "edits": 84, "deletes": 2, "total": 111 }
+    ],
+    "userUsage": [
+      { "userId": "uuid", "userName": "Jovan Jovanović", "role": "Manager", "totalSessions": 42, "totalEvents": 580, "totalDurationMinutes": 310, "topPage": "/data-management/projects" }
+    ],
+    "userPageBreakdown": [...],
+    "heatmap": [
+      { "dayOfWeek": 1, "hour": 9, "count": 48 }
+    ],
+    "sessionDurationDistribution": [
+      { "bucket": "<1m", "count": 22 },
+      { "bucket": "1-5m", "count": 85 },
+      { "bucket": "5-15m", "count": 120 },
+      { "bucket": "15-30m", "count": 64 },
+      { "bucket": "30-60m", "count": 35 },
+      { "bucket": ">60m", "count": 14 }
+    ],
+    "transitions": [
+      { "from": "/data-management/projects", "to": "/data-management/invoices", "count": 84 }
+    ],
+    "featureAdoption": [...],
+    "editedFields": [...]
+  }
+  ```
+
 ### `DELETE /api/activity-logs/clear-all`
-Deletes all activity logs. **Administrator only.**
+Deletes all activity logs. **Administrator only.** Invalidates analytics cache.
 
 ### `POST /api/activity-logs/bulk-delete`
-Deletes specific activity logs by IDs. Body: `{ ids: string[] }`. **Administrator only.**
+Deletes specific activity logs by IDs. Body: `{ ids: string[] }`. **Administrator only.** Invalidates analytics cache.
 
 ### `DELETE /api/activity-logs/session/:sessionId`
-Deletes all activity logs for a specific session. **Administrator only.**
+Deletes all activity logs for a specific session. **Administrator only.** Invalidates analytics cache.
 
 ### `DELETE /api/activity-logs/:id`
-Deletes an individual activity log. **Administrator only.**
+Deletes an individual activity log. **Administrator only.** Invalidates analytics cache.
 
 ---
 

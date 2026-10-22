@@ -1,7 +1,7 @@
 # Server Architecture Documentation
 
 > **Ekos Green Group — Project Tracker API Server**
-> Last updated: 2026-09-05
+> Last updated: 2026-10-19
 
 ---
 
@@ -31,7 +31,7 @@ The Ekos Project Tracker API Server is a REST API backend for managing environme
 
 The server provides:
 - **User management** with role-based access control (RBAC)
-- **Project lifecycle management** with sampling schedules
+- **Project lifecycle management** with progress tracking and reminders
 - **Client management** with permit associations
 - **Invoice management** with line items
 - **Permit management** linked to waste catalog entries
@@ -91,18 +91,25 @@ server/
 │   ├── importClientsCsv.ts         # CSV import: clients
 │   ├── importWasteCatalogCsv.ts    # CSV import: waste catalog
 │   ├── importWasteDisposalExcel.ts # Excel import: waste disposal quantities
+│   ├── constants/
+│   │   └── apiRoutes.ts            # Centralized API routes & Prisma model-to-route maps
 │   ├── middleware/
 │   │   ├── auth.ts                 # Authentication middleware (requireAuth)
 │   │   ├── errorHandler.ts         # Global error handler + asyncHandler
 │   │   └── validate.ts             # Input sanitization & password validation
+│   ├── services/
+│   │   └── activityAnalytics.service.ts # Activity analytics computation & aggregation engine
 │   ├── helpers/
+│   │   ├── activityLogger.ts       # Buffered in-memory activity logger & retention
+│   │   ├── analyticsCache.ts       # In-memory 60s TTL cache for analytics
 │   │   ├── dateUtils.ts            # Date arithmetic (addMonths, daysUntil, isStale)
 │   │   ├── mentionHelper.ts        # @mention extraction & notification creation
 │   │   └── prismaErrors.ts         # Prisma error code handler (legacy, mostly superseded)
 │   └── routes/
 │       ├── auth.routes.ts          # /api/auth — login, register, me
+│       ├── roles.routes.ts         # /api/roles — CRUD, permissions matrix
 │       ├── users.routes.ts         # /api/users — CRUD, approve, reject, force-logout
-│       ├── projects.routes.ts      # /api/projects — CRUD, toggle-done, sample advance
+│       ├── projects.routes.ts      # /api/projects — CRUD, toggle-done
 │       ├── clients.routes.ts       # /api/clients — CRUD with permit association
 │       ├── invoices.routes.ts      # /api/invoices — CRUD with line items, status
 │       ├── services.routes.ts      # /api/services — CRUD for service types
@@ -114,6 +121,7 @@ server/
 │       ├── notifications.routes.ts # /api/notifications — list, mark-read, clear
 │       ├── companyInfo.routes.ts   # /api/company-info — singleton get/put
 │       ├── preferences.routes.ts   # /api/preferences — per-user key-value store
+│       ├── activityLog.routes.ts   # /api/activity-logs — user activity & analytics
 │       └── stats.routes.ts         # /api/projects/stats — dashboard aggregates
 ├── .env.example                    # Environment variable template
 ├── .env.localhost                  # Local dev config
@@ -146,7 +154,7 @@ The app factory performs, in order:
 4. Health check endpoint (`GET /health`)
 5. Root endpoint (`GET /`)
 6. Auth-specific rate limiter (20 req / 15 min for login/register)
-7. All 15 API route groups
+7. All 17 API route groups (including roles and activity logs)
 8. 404 catch-all
 9. Global error handler
 
@@ -188,7 +196,6 @@ The app factory performs, in order:
 ### Middleware (`src/middleware/auth.ts`)
 
 - **`requireAuth`**: Extracts JWT from `Authorization: Bearer <token>` header. Resolves user from database. Attaches `req.authUser`. Returns 401 if invalid.
-- **Impersonation**: Admin/Manager users can send `X-User-Id` header alongside their JWT to act as another user.
 - **Force logout**: In-memory `userForceLogoutMap` stores force-logout timestamps. Tokens issued before the timestamp are rejected.
 
 ### Role-Based Access Control (RBAC)
@@ -314,7 +321,7 @@ erDiagram
 | **Role** | Dynamic roles & permissions | name (PK), description, isSystemAdmin, permissions (JSON) |
 | **User** | System users | name, email, password, role, status, isApproved |
 | **UserPreference** | Per-user settings (KV store) | userId, key, value (JSON string) |
-| **Project** | Environmental service projects | name, clientId, responsible, type, progress, done, nextSample |
+| **Project** | Environmental service projects | name, clientId, responsible, type, progress, done |
 | **Client** | Company clients | name, contactPerson, email, phone, city |
 | **ClientExtraData** | Client→Permit association | clientId (unique), permitId |
 | **Service** | Service type definitions | code (unique), name, group, frequency, customDataModel (JSON) |
@@ -337,7 +344,7 @@ erDiagram
 
 ### `src/helpers/dateUtils.ts`
 
-- **`addMonths(dateStr, months)`**: Advances an ISO date string by N months. Used for sample schedule advancement.
+- **`addMonths(dateStr, months)`**: Advances an ISO date string by N months.
 - **`daysUntil(dateStr)`**: Days from today to the given date. Negative = past.
 - **`isStale(project)`**: Project is stale if not done AND started >2 months ago.
 
@@ -349,8 +356,30 @@ erDiagram
 ### `src/helpers/activityLogger.ts`
 
 - **`enqueueActivityLog(entry)`**: Buffers an activity log entry in memory.
-- **`flushActivityLogs()`**: Persists buffered logs to the database in batches.
-- **`purgeOldActivityLogs()`**: Deletes logs older than the configured retention period.
+- **`flushActivityLogs()`**: Persists buffered logs to the database in batches (auto-flush at 50 items or 5 seconds).
+- **`purgeOldActivityLogs()`**: Deletes logs older than the configured retention period (`activity_log_retention_days`).
+- **`purgeShortLifecycleSessions()`**: Automatically purges bounce/abandoned sessions (duration < 3s with only 1 event) to keep analytics clean.
+
+### `src/services/activityAnalytics.service.ts`
+
+- **`getActivityAnalytics(options)`**: Core analytics computation engine (~730 lines). Aggregates:
+  - **KPIs with Trend Comparison**: Total events, unique active users, total sessions, duration, avg daily usage, top page, stickiness ratio (DAU/MAU proxy), and percentage deltas against the preceding equal-duration period.
+  - **Time Series Timeline**: Groups events, sessions, duration, and active users by `day`, `week`, or `month` respecting the client's timezone (`tz`).
+  - **Top Pages & Navigation Transitions**: Aggregates view counts, unique visitors, avg duration, percentage share, and page-to-page transitions.
+  - **Entity Mutation Breakdown**: CRUD distribution (creates, edits, deletes) across all core business entities (`Project`, `Client`, `Invoice`, `Permit`, etc.).
+  - **User Usage & Heatmap**: Per-user activity metrics and 7x24 weekly hour-by-day activity distribution matrices.
+  - **Session Duration Histogram**: Bucketed session lengths (`<1m`, `1-5m`, `5-15m`, `15-30m`, `30-60m`, `>60m`).
+  - **Feature Adoption & Edited Fields**: Identifies feature engagement and most frequently modified fields from audit log diffs.
+
+### `src/helpers/analyticsCache.ts`
+
+- **`getAnalyticsCache(key)`** / **`setAnalyticsCache(key, data)`**: High-speed in-memory LRU-like cache with 60-second TTL to prevent heavy database re-aggregations on frequent dashboard visits.
+- **`clearAnalyticsCache()`**: Automatically invoked whenever activity logs or sessions are purged or bulk-deleted to ensure stale data is never served.
+
+### `src/constants/apiRoutes.ts`
+
+- **`API_ROUTES`**: Centralized string constants for all API endpoints, parameterized URL generators, and base paths.
+- **`PRISMA_MODEL_TO_API_ROUTE`**: Mapping between Prisma database models and corresponding REST endpoints, ensuring unified audit trails and activity tracking without path mismatches.
 
 ### `src/helpers/prismaErrors.ts`
 
