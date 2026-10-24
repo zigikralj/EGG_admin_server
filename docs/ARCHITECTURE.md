@@ -55,6 +55,7 @@ The server provides:
 | **Database** | PostgreSQL | — |
 | **DB Adapter** | `@prisma/adapter-pg` (native `pg` pool) | 7.10 |
 | **Auth** | JWT (`jsonwebtoken`) + bcrypt (`bcryptjs`) | — |
+| **Performance** | `compression` (Gzip/Deflate), in-memory TTL caching | — |
 | **Security** | `helmet`, `express-rate-limit`, `cors` | — |
 | **Dev Server** | `tsx watch` (hot-reload) | 4.19 |
 | **Build** | `tsc` (TypeScript compiler) | — |
@@ -78,7 +79,7 @@ server/
 │   ├── dozvole_indeksi.csv         # Waste catalog import data
 │   └── 2026_EGG_Količine...xlsx   # Waste disposal quantities
 ├── prisma/
-│   ├── schema.prisma               # Database schema (source of truth)
+│   ├── schema.prisma               # Database schema (source of truth, 24 models)
 │   ├── migrations/                 # SQL migration history
 │   └── prisma.config.ts            # Prisma configuration with env loading
 ├── src/
@@ -88,18 +89,24 @@ server/
 │   ├── types.ts                    # Shared enums and role-check helpers
 │   ├── authUtils.ts                # JWT, bcrypt, password utilities
 │   ├── seed.ts                     # Database seed script
+│   ├── purgeLogs.ts                # Activity log retention & maintenance CLI
+│   ├── cleanWordNotes.ts           # Word metadata & XML sanitization CLI
 │   ├── importClientsCsv.ts         # CSV import: clients
 │   ├── importWasteCatalogCsv.ts    # CSV import: waste catalog
 │   ├── importWasteDisposalExcel.ts # Excel import: waste disposal quantities
 │   ├── constants/
 │   │   └── apiRoutes.ts            # Centralized API routes & Prisma model-to-route maps
 │   ├── middleware/
-│   │   ├── auth.ts                 # Authentication middleware (requireAuth)
+│   │   ├── auth.ts                 # Authentication middleware (requireAuth, userAuthCache)
 │   │   ├── errorHandler.ts         # Global error handler + asyncHandler
 │   │   └── validate.ts             # Input sanitization & password validation
 │   ├── services/
+│   │   ├── versioning.service.ts   # Entity version resolution, diff computation & restoration
+│   │   ├── noteDelta.service.ts    # Note delta compression, unified text diffs & keyframe snapshots
 │   │   └── activityAnalytics.service.ts # Activity analytics computation & aggregation engine
 │   ├── helpers/
+│   │   ├── deltaSync.ts            # Delta synchronization engine & tombstone query helpers
+│   │   ├── referenceCache.ts       # In-memory TTL caching for reference data
 │   │   ├── activityLogger.ts       # Buffered in-memory activity logger & retention
 │   │   ├── analyticsCache.ts       # In-memory 60s TTL cache for analytics
 │   │   ├── dateUtils.ts            # Date arithmetic (addMonths, daysUntil, isStale)
@@ -109,20 +116,21 @@ server/
 │       ├── auth.routes.ts          # /api/auth — login, register, me
 │       ├── roles.routes.ts         # /api/roles — CRUD, permissions matrix
 │       ├── users.routes.ts         # /api/users — CRUD, approve, reject, force-logout
-│       ├── projects.routes.ts      # /api/projects — CRUD, toggle-done
-│       ├── clients.routes.ts       # /api/clients — CRUD with permit association
-│       ├── invoices.routes.ts      # /api/invoices — CRUD with line items, status
-│       ├── services.routes.ts      # /api/services — CRUD for service types
-│       ├── categories.routes.ts    # /api/categories — CRUD for project categories
-│       ├── providedServices.routes.ts # /api/provided-services — CRUD
-│       ├── reminders.routes.ts     # /api/reminders — CRUD with status tracking
-│       ├── permits.routes.ts       # /api/permits — CRUD linked to waste catalog
-│       ├── wasteCatalog.routes.ts  # /api/waste-catalog — CRUD + auto-seed + pagination
+│       ├── projects.routes.ts      # /api/projects — CRUD, notes diff, updates feed, delta sync
+│       ├── clients.routes.ts       # /api/clients — CRUD with permit association, delta sync
+│       ├── invoices.routes.ts      # /api/invoices — CRUD with line items, status, delta sync
+│       ├── services.routes.ts      # /api/services — CRUD for service types (cached)
+│       ├── categories.routes.ts    # /api/categories — CRUD for project categories (cached)
+│       ├── providedServices.routes.ts # /api/provided-services — CRUD, delta sync
+│       ├── reminders.routes.ts     # /api/reminders — CRUD with status tracking, delta sync
+│       ├── permits.routes.ts       # /api/permits — CRUD linked to waste catalog, delta sync
+│       ├── wasteCatalog.routes.ts  # /api/waste-catalog — CRUD + auto-seed + pagination + delta sync + delete
+│       ├── history.routes.ts       # /api/history — version timelines, diffs, restoration
 │       ├── notifications.routes.ts # /api/notifications — list, mark-read, clear
-│       ├── companyInfo.routes.ts   # /api/company-info — singleton get/put
+│       ├── companyInfo.routes.ts   # /api/company-info — singleton get/put (cached)
 │       ├── preferences.routes.ts   # /api/preferences — per-user key-value store
 │       ├── activityLog.routes.ts   # /api/activity-logs — user activity & analytics
-│       └── stats.routes.ts         # /api/projects/stats — dashboard aggregates
+│       └── stats.routes.ts         # /api/projects/stats — dashboard aggregates (cached)
 ├── .env.example                    # Environment variable template
 ├── .env.localhost                  # Local dev config
 ├── .env.neon                       # Neon cloud DB config
@@ -269,13 +277,14 @@ All routes follow a consistent pattern:
 | `/api/notifications` | `notifications.routes.ts` | All routes require auth |
 | `/api/permits` | `permits.routes.ts` | All routes require auth |
 | `/api/waste-catalog` | `wasteCatalog.routes.ts` | All routes require auth |
+| `/api/history` | `history.routes.ts` | All routes require auth (history permissions) |
 | `/api/activity-logs` | `activityLog.routes.ts` | Admin only for viewing/managing |
 
 ---
 
 ## Data Models (Prisma Schema)
 
-> **Detailed Model Specification:** See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for a comprehensive field-by-field breakdown of all 19 entities, foreign key constraints, cascade rules, indices, and domain patterns.
+> **Detailed Model Specification:** See [`DATA_RELATIONSHIP_MODEL.md`](DATA_RELATIONSHIP_MODEL.md) for a comprehensive field-by-field breakdown of all 24 entities, foreign key constraints, cascade rules, indices, and domain patterns.
 
 ### Entity Relationship Diagram
 
@@ -286,6 +295,12 @@ erDiagram
     User ||--o{ UserPreference : has
     User ||--o{ Notification : receives
     User ||--o{ Reminder : "assigned to"
+    User ||--o{ ActivityLog : "performs"
+    User ||--o{ ActivityLogMonthlyStats : "aggregates"
+    User ||--o{ ProjectNote : "updates"
+
+    Project ||--|| ProjectNote : "has note"
+    ProjectNote ||--o{ ProjectNoteVersion : "revisions"
 
     Client ||--o{ Project : has
     Client ||--o{ Reminder : "associated with"
@@ -310,18 +325,20 @@ erDiagram
     WasteCatalog ||--o{ PermitWaste : "referenced by"
 
     ClientExtraData }o--|| Permit : "references"
-    
-    User ||--o{ ActivityLog : "performs"
+
+    ChangeSet ||--o{ EntityVersion : "contains"
 ```
 
-### Model Summary
+### Model Summary (24 Models)
 
 | Model | Purpose | Key Fields |
 |---|---|---|
 | **Role** | Dynamic roles & permissions | name (PK), description, isSystemAdmin, permissions (JSON) |
 | **User** | System users | name, email, password, role, status, isApproved |
 | **UserPreference** | Per-user settings (KV store) | userId, key, value (JSON string) |
-| **Project** | Environmental service projects | name, clientId, responsible, type, progress, done |
+| **Project** | Environmental service projects | name, clientId, responsible, type, progress, done (Note: `nextSample` removed in favor of `Reminder`) |
+| **ProjectNote** | Project rich text notes container | projectId (unique), content, version, updatedById |
+| **ProjectNoteVersion** | Delta-compressed note revisions | noteId, version, kind ('S' or 'D'), content, patch, charDelta, authorName |
 | **Client** | Company clients | name, contactPerson, email, phone, city |
 | **ClientExtraData** | Client→Permit association | clientId (unique), permitId |
 | **Service** | Service type definitions | code (unique), name, group, frequency, customDataModel (JSON) |
@@ -336,11 +353,33 @@ erDiagram
 | **WasteCatalog** | Serbian waste index catalog | code (unique), description, isHazardous, hazardListMark, frequent |
 | **PermitWaste** | Permit↔WasteCatalog junction | permitId, wasteCatalogId (unique together) |
 | **ActivityLog** | System audit and user activity | userId, type, details, timestamp |
+| **ActivityLogMonthlyStats** | Monthly rolled-up activity stats | userId, yearMonth, totalDurationSeconds, sessionCount, moduleBreakdown (JSON) |
 | **SystemSetting** | Global application settings | key (unique), value |
+| **ChangeSet** | Transaction audit change group | userId, userName, route, method, source, reason |
+| **EntityVersion** | Entity delta and snapshot version | changeSetId, entityType, entityId, version, op ('I','U','D','B'), kind ('S','D'), data (JSON), changedFields |
 
 ---
 
-## Helper Utilities
+## Helper Utilities & Core Services
+
+### `src/services/versioning.service.ts`
+- **`getEntityTimeline()`**: Queries and formats historical versions for any entity type.
+- **`rebuildEntityVersion()`**: Reconstructs an entity snapshot at a specific version by applying forward deltas onto baseline keyframes.
+- **`diffVersions()`**: Calculates field-level diffs between two versions or dates.
+- **`restoreVersion()`**: Restores an entity to a past version with transaction integrity.
+
+### `src/services/noteDelta.service.ts`
+- **`saveNoteRevision()`**: Automatically creates keyframe snapshots ('S') every 10 versions and unified diff patches ('D') for intervening versions.
+- **`getNoteAtVersion()`**: Fast reconstruction of note text using differential patch application.
+- **`diffNoteVersions()`**: Computes text diffs with addition and deletion character counts.
+
+### `src/helpers/deltaSync.ts`
+- **`parseSince()`**: Parses and validates the `since` query parameter with a 30-day safety retention cutoff.
+- **`fetchDeletedIds()`**: Fast lookup of deleted entity IDs via `EntityVersion` tombstones (`op: 'D'`).
+- **`buildDeltaResponse()`**: Wraps items and deleted tombstones in a standardized Delta Envelope.
+
+### `src/helpers/referenceCache.ts`
+- **`getReferenceCache()` / `setReferenceCache()`**: In-memory caching for low-churn reference catalogs with 10-minute TTL and prefix invalidation.
 
 ### `src/helpers/dateUtils.ts`
 

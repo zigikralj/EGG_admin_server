@@ -854,6 +854,122 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 - `@@index([type, timestamp])` — High-performance activity analytics aggregation
 - `onDelete: Cascade` to `User`
 
+---
+
+### 4.19. `ChangeSet`
+*Transaction-level audit grouping capturing multi-entity mutations within a single request or migration.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `userId` | `String` | Optional | | ID of acting user |
+| `userName` | `String` | Optional | | Name of acting user |
+| `sessionId` | `String` | Optional | | Client session ID |
+| `requestId` | `String` | Optional | | Distributed request correlation ID |
+| `method` | `String` | Optional | | HTTP method (POST, PUT, DELETE) |
+| `route` | `String` | Optional | | API endpoint route |
+| `source` | `String` | Required | `@default("api")` | Origin (`api`, `import`, `seed`, `restore`, `system`) |
+| `reason` | `String` | Optional | | User or system modification reason |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Commit timestamp |
+
+**Indexes & Constraints:**
+- `@@index([createdAt])` — Chronological audit feed
+- `@@index([userId, createdAt])` — User modification history
+
+---
+
+### 4.20. `EntityVersion`
+*Field-level version and delta tracking across entities with deletion tombstone capture.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `BigInt` | Required | `@id @default(autoincrement())` | Auto-incrementing identifier |
+| `changeSetId` | `String` | Required | FK to `ChangeSet.id` | Associated transaction change set |
+| `entityType` | `String` | Required | | Target model (e.g. `Project`, `Invoice`) |
+| `entityId` | `String` | Required | | Target record UUID |
+| `version` | `Int` | Required | | Incremental entity version number (1, 2, 3...) |
+| `op` | `String` | Required | | Operation: `I` (Insert), `U` (Update), `D` (Delete), `B` (Baseline) |
+| `kind` | `String` | Required | | Compression kind: `S` (Snapshot), `D` (Delta) |
+| `data` | `Json` | Required | | JSON snapshot or forward field diff |
+| `changedFields`| `String[]`| Required | | Array of changed field names for search & filtering |
+| `parentType` | `String` | Optional | | Parent model name for nested entities (e.g. `Invoice`) |
+| `parentId` | `String` | Optional | | Parent record UUID |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Record creation timestamp |
+
+**Indexes & Constraints:**
+- `@@unique([entityType, entityId, version])` — Version uniqueness constraint per entity
+- `@@index([entityType, entityId, createdAt])` — Point-in-time reconstruction queries
+- `@@index([parentType, parentId, createdAt])` — Child entity version queries
+- `@@index([changeSetId])` — Fast resolution of change set components
+- `onDelete: Cascade` to `ChangeSet`
+
+---
+
+### 4.21. `ActivityLogMonthlyStats`
+*Monthly rolled-up aggregate session, duration, and module metrics per user.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `userId` | `String` | Required | FK to `User.id` | User reference |
+| `yearMonth` | `String` | Required | | Calendar month format (`YYYY-MM`) |
+| `totalDurationSeconds` | `Int` | Required | `@default(0)` | Total active duration in month |
+| `sessionCount` | `Int` | Required | `@default(0)` | Total user sessions in month |
+| `actionCount` | `Int` | Required | `@default(0)` | Total audit events recorded |
+| `moduleBreakdown` | `Json` | Optional | | Canonical path duration map (`{ "/projects": 1200 }`) |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Record creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
+
+**Indexes & Constraints:**
+- `@@unique([userId, yearMonth])` — One rollup record per user per month
+- `@@index([yearMonth])` — Monthly cross-user analytics queries
+- `onDelete: Cascade` to `User`
+
+---
+
+### 4.22. `ProjectNote`
+*1:1 container for rich-text project notes with delta versioning integration.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `projectId` | `String` | Required | FK to `Project.id`, `@unique` | 1:1 project association |
+| `content` | `String` | Optional | `@db.Text` | Current HTML note content |
+| `version` | `Int` | Required | `@default(1)` | Current active revision version |
+| `updatedById` | `String` | Optional | FK to `User.id` | Last editor user reference |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
+
+**Indexes & Constraints:**
+- `@@index([projectId])`
+- `onDelete: Cascade` to `Project`
+- `onDelete: SetNull` to `User`
+
+---
+
+### 4.23. `ProjectNoteVersion`
+*Delta-compressed revision history for project notes.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `BigInt` | Required | `@id @default(autoincrement())` | Primary key |
+| `noteId` | `String` | Required | FK to `ProjectNote.id` | Parent note container reference |
+| `version` | `Int` | Required | | Sequential version number |
+| `kind` | `String` | Required | | `S` (Full Snapshot) or `D` (Unified Text Diff Patch) |
+| `content` | `String` | Optional | `@db.Text` | Populated on keyframe snapshots (`kind = 'S'`) |
+| `patch` | `String` | Optional | `@db.Text` | Unified diff patch (`kind = 'D'`) |
+| `charDelta` | `Int` | Required | `@default(0)` | Net characters added (+) or removed (-) |
+| `authorId` | `String` | Optional | | Editing author user UUID |
+| `authorName` | `String` | Optional | | Denormalized author name |
+| `reason` | `String` | Optional | | Edit or restore note |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Timestamp of revision |
+
+**Indexes & Constraints:**
+- `@@unique([noteId, version])` — Unique version per note
+- `@@index([noteId, createdAt])` — Timeline queries
+- `onDelete: Cascade` to `ProjectNote`
+
+---
 
 ## 5. Relationship & Foreign Key Quick Reference
 
@@ -861,6 +977,9 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 |---|---|---|---|---|
 | `Project` | `clientId` | `Client` | N:1 | *No Action (Default)* |
 | `Project` | `responsibleId` | `User` | N:1 | *No Action (Default)* |
+| `ProjectNote` | `projectId` | `Project` | 1:1 | **`Cascade`** |
+| `ProjectNote` | `updatedById` | `User` | N:1 | **`SetNull`** |
+| `ProjectNoteVersion` | `noteId` | `ProjectNote` | N:1 | **`Cascade`** |
 | `UserPreference` | `userId` | `User` | N:1 | **`Cascade`** |
 | `ClientExtraData` | `clientId` | `Client` | 1:1 | **`Cascade`** |
 | `ClientExtraData` | `permitId` | `Permit` | N:1 | **`SetNull`** |
@@ -880,6 +999,8 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `PermitWaste` | `permitId` | `Permit` | N:1 | **`Cascade`** |
 | `PermitWaste` | `wasteCatalogId` | `WasteCatalog` | N:1 | **`Restrict`** |
 | `ActivityLog` | `userId` | `User` | N:1 | **`Cascade`** |
+| `ActivityLogMonthlyStats` | `userId` | `User` | N:1 | **`Cascade`** |
+| `EntityVersion` | `changeSetId` | `ChangeSet` | N:1 | **`Cascade`** |
 
 ---
 

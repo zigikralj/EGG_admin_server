@@ -42,7 +42,10 @@ export function hasPermission(user: any, resource: string, action: string): bool
   }
   // Legacy fallback ONLY if the key is undefined in perms (e.g. older role schema before separation)
   if (perms && typeof perms === 'object') {
-    if (resource.startsWith('tracker_')) {
+    if (resource === 'tracker_updates') {
+      if (Array.isArray(perms.tracker_projects)) return perms.tracker_projects.includes(action);
+      if (Array.isArray(perms.projects)) return perms.projects.includes(action);
+    } else if (resource.startsWith('tracker_')) {
       const base = resource.replace('tracker_', '');
       if (Array.isArray(perms[base])) {
         return perms[base].includes(action);
@@ -81,7 +84,12 @@ export function isRestrictedToOwn(user: any, resource: string): boolean {
   if (checkOnlyOwn(directKey)) return true;
 
   // Legacy fallback ONLY if tracker_* is not configured
-  if (resource.startsWith("tracker_")) {
+  if (resource === 'tracker_updates') {
+    if (typeof perms.tracker_projects_onlyOwn === 'boolean') return perms.tracker_projects_onlyOwn;
+    if (checkOnlyOwn('tracker_projects_onlyOwn')) return true;
+    if (typeof perms.projects_onlyOwn === 'boolean') return perms.projects_onlyOwn;
+    if (checkOnlyOwn('projects_onlyOwn')) return true;
+  } else if (resource.startsWith("tracker_")) {
     const base = resource.replace("tracker_", "");
     if (typeof perms[`${base}_onlyOwn`] === 'boolean') {
       return perms[`${base}_onlyOwn`];

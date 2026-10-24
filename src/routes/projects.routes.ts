@@ -38,10 +38,11 @@ function isProjectOwnerOrCan(
     (project.responsible && project.responsible.trim().toLowerCase() === (user.name || "").trim().toLowerCase()) ||
     (project.responsibleId && project.responsibleId === user.id)
   );
-  if (isRestrictedToOwn(user, "projects")) {
+  if (isRestrictedToOwn(user, "projects") || isRestrictedToOwn(user, "tracker_projects") || isRestrictedToOwn(user, "tracker_updates")) {
     return isOwner;
   }
   if (hasPermission(user, "projects", action) || hasPermission(user, "tracker_projects", action)) return true;
+  if (action === "view" && hasPermission(user, "tracker_updates", "view")) return true;
   return isOwner;
 }
 
@@ -131,6 +132,11 @@ router.get('/', asyncHandler(async (req, res) => {
 // GET /api/projects/updates
 router.get('/updates', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
+
+  if (!hasPermission(authUser, 'tracker_updates', 'view')) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
 
   // Default range: yesterday 00:00:00 to now
   const now = new Date();
@@ -347,7 +353,7 @@ router.get('/updates', asyncHandler(async (req, res) => {
     ];
   }
 
-  if (isRestrictedToOwn(authUser, "projects")) {
+  if (isRestrictedToOwn(authUser, "tracker_updates") || isRestrictedToOwn(authUser, "tracker_projects") || isRestrictedToOwn(authUser, "projects")) {
     const ownerConditions = [
       { responsible: authUser.name },
       { responsibleId: authUser.id },
