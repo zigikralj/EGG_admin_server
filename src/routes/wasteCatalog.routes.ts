@@ -173,6 +173,7 @@ router.get('/', asyncHandler(async (req, res) => {
       total,
       page,
       limit: limit || total,
+      totalPages: limit ? Math.ceil(total / limit) : 1,
       hasMore: limit ? (skip || 0) + items.length < total : false,
     };
 

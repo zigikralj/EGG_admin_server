@@ -30,6 +30,9 @@ model Project {
   providedServices ProvidedService[]
   note             ProjectNote?
 
+  @@index([deadline])
+  @@index([start])
+  @@index([createdAt])
   @@index([clientId])
   @@index([responsibleId])
   @@index([done])
@@ -53,6 +56,9 @@ model Client {
   extraData        ClientExtraData?
   permits          Permit[]
 
+  @@index([name])
+  @@index([city])
+  @@index([createdAt])
   @@index([updatedAt])
 }
 
@@ -77,6 +83,11 @@ model User {
   activityLogs          ActivityLog[]
   activityMonthlyStats  ActivityLogMonthlyStats[]
   updatedProjectNotes   ProjectNote[]
+
+  @@index([role])
+  @@index([status])
+  @@index([name])
+  @@index([updatedAt])
 }
 
 model UserPreference {
@@ -128,10 +139,11 @@ model Reminder {
   responsibleUser User?    @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
   permit          Permit?  @relation(fields: [permitId], references: [id], onDelete: SetNull)
 
+  @@index([dueDate])
+  @@index([status])
+  @@index([responsibleId])
   @@index([projectId])
   @@index([clientId])
-  @@index([responsibleId])
-  @@index([status])
   @@index([permitId])
   @@index([updatedAt])
 }
@@ -171,9 +183,12 @@ model Invoice {
   parentInvoice    Invoice?          @relation("ParentChildInvoices", fields: [parentInvoiceId], references: [id], onDelete: SetNull)
   childInvoices    Invoice[]         @relation("ParentChildInvoices")
 
+  @@index([dueDate])
+  @@index([dateCreated])
+  @@index([status])
   @@index([clientId])
   @@index([projectId])
-  @@index([status])
+  @@index([invoiceNumber])
   @@index([parentInvoiceId])
   @@index([updatedAt])
 }
@@ -215,11 +230,13 @@ model ProvidedService {
   project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 
+  @@index([scheduledDate])
+  @@index([completionDate])
+  @@index([status])
   @@index([serviceId])
   @@index([clientId])
   @@index([projectId])
   @@index([invoiceId])
-  @@index([status])
   @@index([updatedAt])
 }
 
@@ -294,8 +311,10 @@ model Permit {
   clientExtraData ClientExtraData[]
   permitWastes    PermitWaste[]
 
-  @@index([permitNumber])
+  @@index([endDate])
+  @@index([startDate])
   @@index([clientId])
+  @@index([permitNumber])
   @@index([updatedAt])
 }
 

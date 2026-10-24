@@ -4,26 +4,80 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth, userForceLogoutMap, invalidateUserAuthCache } from '../middleware/auth';
 import { generateTempPassword, hashPassword, verifyPassword } from '../authUtils';
 import { validatePassword } from '../middleware/validate';
-import { UserRole, hasPermission } from '../types';
+import { UserRole, hasPermission, isUserSystemAdmin, formatUserWithPermissions } from '../types';
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
 const router = Router();
-
-function isSystemAdminUser(user?: any): boolean {
-  if (!user) return false;
-  return user.role === UserRole.ADMINISTRATOR || Boolean(user.roleEntity?.isSystemAdmin);
-}
 
 // Require authentication for all user routes
 router.use(requireAuth);
 
 // GET /api/users
-router.get('/', asyncHandler(async (_req, res) => {
-  const users = await prisma.user.findMany({
-    include: { roleEntity: true },
-    orderBy: { name: 'asc' },
+router.get('/', asyncHandler(async (req, res) => {
+  // Lightweight summary for dropdowns/assignees
+  if (req.query.fields === 'summary') {
+    const users = await prisma.user.findMany({
+      select: { id: true, name: true, email: true, role: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(users);
+    return;
+  }
+
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+
+  if (!isPaginated) {
+    const users = await prisma.user.findMany({
+      include: { roleEntity: true },
+      orderBy: { name: 'asc' },
+    });
+    const sanitizedUsers = users.map((u) => formatUserWithPermissions(u));
+    res.json(sanitizedUsers);
+    return;
+  }
+
+  const pagination = parsePagination(req.query, {
+    defaultSortBy: 'name',
+    defaultSortOrder: 'asc',
+    maxLimit: 100,
   });
-  const sanitizedUsers = users.map(({ password, ...rest }) => rest);
-  res.json(sanitizedUsers);
+
+  const search = ((req.query.search as string) || '').trim();
+  const role = (req.query.role as string) || '';
+  const status = (req.query.status as string) || '';
+
+  const where: any = {};
+  if (role && role !== 'all') where.role = role;
+  if (status && status !== 'all') {
+    if (status.toLowerCase() === 'pending') where.status = 'PENDING';
+    else if (status.toLowerCase() === 'approved') where.status = 'APPROVED';
+    else if (status.toLowerCase() === 'blocked') where.status = 'BLOCKED';
+    else where.status = status;
+  }
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } },
+      { phone: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const validSortFields = ['name', 'role', 'status', 'email', 'phone', 'createdAt'];
+  const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'name';
+
+  const [total, users] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.findMany({
+      where,
+      skip: pagination.skip,
+      take: pagination.take,
+      orderBy: { [sortField]: pagination.sortOrder },
+      include: { roleEntity: true },
+    }),
+  ]);
+
+  const sanitizedUsers = users.map((u) => formatUserWithPermissions(u));
+  res.json(buildPaginatedResponse(sanitizedUsers, total, pagination));
 }));
 
 // POST /api/users/:id/force-logout
@@ -81,7 +135,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const targetRole = role || UserRole.USER;
 
   // Non-system-admin cannot create an Administrator account
-  if (!isSystemAdminUser(authUser) && targetRole === UserRole.ADMINISTRATOR) {
+  if (!isUserSystemAdmin(authUser) && targetRole === UserRole.ADMINISTRATOR) {
     res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
     return;
   }
@@ -114,9 +168,10 @@ router.post('/', asyncHandler(async (req, res) => {
       isApproved: true,
       status: 'APPROVED',
     },
+    include: { roleEntity: true },
   });
   
-  const { password: _, ...userWithoutPassword } = user;
+  const userWithoutPassword = formatUserWithPermissions(user);
   
   // Return the temporary password in the response if one was generated
   if (tempPassword) {
@@ -151,7 +206,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   // Non-system-admin cannot edit an Administrator account or upgrade someone to Administrator
-  if (!isSystemAdminUser(authUser)) {
+  if (!isUserSystemAdmin(authUser)) {
     if (existingUser.role === UserRole.ADMINISTRATOR) {
       res.status(403).json({ error: 'Permission denied. Only System Administrators can modify Administrator accounts.' });
       return;
@@ -221,8 +276,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
     include: { roleEntity: true },
   });
   invalidateUserAuthCache(id);
-  const { password: _, ...userWithoutPassword } = updated;
-  res.json(userWithoutPassword);
+  res.json(formatUserWithPermissions(updated));
 }));
 
 // POST /api/users/:id/approve
@@ -237,7 +291,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   const { role } = req.body;
   const targetRole = role || UserRole.USER;
 
-  if (!isSystemAdminUser(authUser) && targetRole === UserRole.ADMINISTRATOR) {
+  if (!isUserSystemAdmin(authUser) && targetRole === UserRole.ADMINISTRATOR) {
     res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
     return;
   }
@@ -253,8 +307,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   });
   invalidateUserAuthCache(id);
 
-  const { password: _, ...userWithoutPassword } = updatedUser;
-  res.json(userWithoutPassword);
+  res.json(formatUserWithPermissions(updatedUser));
 }));
 
 // POST /api/users/:id/reject
@@ -272,7 +325,7 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!isSystemAdminUser(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
+  if (!isUserSystemAdmin(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -298,7 +351,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   }
 
   // Non-system-admin cannot delete an Administrator account
-  if (!isSystemAdminUser(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
+  if (!isUserSystemAdmin(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
     res.status(403).json({ error: 'Permission denied. Only System Administrators can delete Administrator accounts.' });
     return;
   }

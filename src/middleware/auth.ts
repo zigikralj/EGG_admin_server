@@ -4,6 +4,7 @@ import type { User } from '@prisma/client';
 import { prisma } from '../db';
 import { verifyToken } from '../authUtils';
 import { requestContext } from '../context';
+import { isUserSystemAdmin, getUserPermissions } from '../types';
 
 // ---------------------------------------------------------------------------
 // Type extension — gives every Express Request typed auth properties.
@@ -11,7 +12,7 @@ import { requestContext } from '../context';
 declare global {
   namespace Express {
     interface Request {
-      authUser?: User & { roleEntity?: any };
+      authUser?: User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean };
       requestId?: string;
     }
   }
@@ -27,7 +28,7 @@ declare global {
 export const userForceLogoutMap = new Map<string, number>();
 
 interface CachedUser {
-  user: User & { roleEntity?: any };
+  user: User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean };
   expiresAt: number;
 }
 const userAuthCache = new Map<string, CachedUser>();
@@ -53,21 +54,27 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref(); // .unref() so the interval doesn't block process exit
 
-async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?: any }) | null> {
+async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean }) | null> {
   const cached = userAuthCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.user;
   }
-  const user = await prisma.user.findUnique({
+  const dbUser = await prisma.user.findUnique({
     include: { roleEntity: true },
     where: { id: userId },
   });
-  if (user) {
+  if (dbUser) {
+    const user = {
+      ...dbUser,
+      isSystemAdmin: isUserSystemAdmin(dbUser),
+      permissions: getUserPermissions(dbUser) ?? {},
+    };
     userAuthCache.set(userId, { user, expiresAt: Date.now() + USER_AUTH_CACHE_TTL_MS });
+    return user;
   } else {
     userAuthCache.delete(userId);
+    return null;
   }
-  return user ?? null;
 }
 
 // ---------------------------------------------------------------------------

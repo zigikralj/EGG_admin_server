@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
+import { hasPermission } from "../types";
 
 const router = Router();
 
@@ -11,8 +12,9 @@ router.use(requireAuth);
 // GET /api/notifications
 router.get("/", asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
+  const canEditUsers = hasPermission(authUser, "users", "edit");
 
-  const [notifications, unreadCount] = await Promise.all([
+  const [notifications, unreadCount, pendingUsersCount] = await Promise.all([
     prisma.notification.findMany({
       where: { userId: authUser.id },
       orderBy: { createdAt: "desc" },
@@ -30,9 +32,10 @@ router.get("/", asyncHandler(async (req, res) => {
     prisma.notification.count({
       where: { userId: authUser.id, read: false },
     }),
+    canEditUsers ? prisma.user.count({ where: { status: "PENDING" } }) : Promise.resolve(0),
   ]);
 
-  res.json({ notifications, unreadCount });
+  res.json({ notifications, unreadCount, pendingUsersCount });
 }));
 
 // PATCH /api/notifications/mark-all-read

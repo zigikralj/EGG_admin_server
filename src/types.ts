@@ -31,12 +31,43 @@ export function getDefaultResourcePermission(role?: string | null, resource?: st
   return false;
 }
 
+export function getUserPermissions(user: any): Record<string, any> | undefined {
+  if (!user) return undefined;
+  if (user.permissions && typeof user.permissions === 'object') {
+    return user.permissions;
+  }
+  if (user.roleEntity?.permissions && typeof user.roleEntity.permissions === 'object') {
+    return user.roleEntity.permissions;
+  }
+  return undefined;
+}
+
+export function isUserSystemAdmin(user: any): boolean {
+  if (!user) return false;
+  return (
+    user.role === UserRole.ADMINISTRATOR ||
+    Boolean(user.isSystemAdmin) ||
+    Boolean(user.roleEntity?.isSystemAdmin)
+  );
+}
+
+export function formatUserWithPermissions<T extends Record<string, any>>(user: T) {
+  const { password: _, ...userWithoutPassword } = user;
+  const isSystemAdmin = isUserSystemAdmin(user);
+  const permissions = getUserPermissions(user) ?? {};
+  return {
+    ...userWithoutPassword,
+    isSystemAdmin,
+    permissions,
+  };
+}
+
 export function hasPermission(user: any, resource: string, action: string): boolean {
   if (!user) return false;
-  if (user.role === UserRole.ADMINISTRATOR || user.roleEntity?.isSystemAdmin) {
+  if (isUserSystemAdmin(user)) {
     return true;
   }
-  const perms = user.roleEntity?.permissions;
+  const perms = getUserPermissions(user);
   if (perms && typeof perms === 'object' && Array.isArray(perms[resource])) {
     return perms[resource].includes(action);
   }
@@ -61,13 +92,9 @@ export function hasPermission(user: any, resource: string, action: string): bool
 
 export function isRestrictedToOwn(user: any, resource: string): boolean {
   if (!user) return false;
-  const isSysAdmin =
-    user.role === UserRole.ADMINISTRATOR ||
-    Boolean(user.roleEntity?.isSystemAdmin);
+  if (isUserSystemAdmin(user)) return false;
 
-  if (isSysAdmin) return false;
-
-  const perms = user.roleEntity?.permissions;
+  const perms = getUserPermissions(user);
   if (!perms || typeof perms !== "object") return false;
 
   const checkOnlyOwn = (key: string) => {

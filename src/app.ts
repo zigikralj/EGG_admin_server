@@ -17,7 +17,6 @@ import invoicesRoutes from './routes/invoices.routes';
 import providedServicesRoutes from './routes/providedServices.routes';
 import preferencesRoutes from './routes/preferences.routes';
 import companyInfoRoutes from './routes/companyInfo.routes';
-import statsRoutes from './routes/stats.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import permitsRoutes from './routes/permits.routes';
 import wasteCatalogRoutes from './routes/wasteCatalog.routes';
@@ -77,7 +76,6 @@ export function createApp() {
   app.use(API_ROUTES.AUTH.BASE, authRoutes);
   app.use(API_ROUTES.USERS, usersRoutes);
   app.use(API_ROUTES.ACTIVITY_LOGS.BASE, activityLogRoutes);
-  app.use(API_ROUTES.PROJECTS.STATS, statsRoutes);
   app.use(API_ROUTES.PROJECTS.BASE, projectsRoutes);
   app.use(API_ROUTES.REMINDERS, remindersRoutes);
   app.use(API_ROUTES.CLIENTS, clientsRoutes);
