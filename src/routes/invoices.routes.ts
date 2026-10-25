@@ -108,6 +108,8 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
 
+  const isSummary = req.query.fields === 'summary';
+
   const invoiceInclude = {
     client: { select: { id: true, name: true } },
     project: { select: { id: true, name: true, done: true } },
@@ -116,6 +118,24 @@ router.get('/', asyncHandler(async (req, res) => {
     items: true,
     providedServices: { select: { id: true, scheduledDate: true, status: true } },
   };
+
+  const invoiceSummarySelect = {
+    id: true,
+    invoiceNumber: true,
+    invoiceType: true,
+    status: true,
+    totalAmount: true,
+    currency: true,
+    clientName: true,
+    clientId: true,
+    projectId: true,
+    dueDate: true,
+    dateCreated: true,
+  };
+
+  const queryOptions = isSummary
+    ? { select: invoiceSummarySelect }
+    : { include: invoiceInclude };
 
   // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
   if (sinceDate || !isPaginated) {
@@ -126,7 +146,7 @@ router.get('/', asyncHandler(async (req, res) => {
       prisma.invoice.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        include: invoiceInclude,
+        ...(queryOptions as any),
       }),
       sinceDate ? fetchDeletedIds('Invoice', sinceDate) : Promise.resolve([]),
     ]);
@@ -159,7 +179,7 @@ router.get('/', asyncHandler(async (req, res) => {
   if (prioritizeProjectId || prioritizeClientId || prioritizeClientName) {
     const allMatching = await prisma.invoice.findMany({
       where,
-      include: invoiceInclude,
+      ...(queryOptions as any),
     });
 
     const isMatchProject = (i: any) => Boolean(prioritizeProjectId && i.projectId === prioritizeProjectId);
@@ -202,7 +222,7 @@ router.get('/', asyncHandler(async (req, res) => {
       skip: pagination.skip,
       take: pagination.take,
       orderBy: { [sortField]: pagination.sortOrder },
-      include: invoiceInclude,
+      ...(queryOptions as any),
     }),
   ]);
 

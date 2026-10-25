@@ -79,7 +79,7 @@ router.get('/', asyncHandler(async (req, res) => {
     maxLimit: 100,
   });
 
-  // Lightweight summary for dropdowns/assignees
+  // Lightweight summary for dropdowns/assignees (only id and name needed)
   if (req.query.fields === 'summary') {
     if (isPaginated) {
       const [total, users] = await Promise.all([
@@ -91,12 +91,6 @@ router.get('/', asyncHandler(async (req, res) => {
           select: {
             id: true,
             name: true,
-            email: true,
-            role: true,
-            gender: true,
-            status: true,
-            isApproved: true,
-            roleEntity: true,
           },
           orderBy: { name: pagination.sortOrder },
         }),
@@ -111,12 +105,6 @@ router.get('/', asyncHandler(async (req, res) => {
       select: {
         id: true,
         name: true,
-        email: true,
-        role: true,
-        gender: true,
-        status: true,
-        isApproved: true,
-        roleEntity: true,
       },
       orderBy: { name: 'asc' },
     });

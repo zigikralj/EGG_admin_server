@@ -107,12 +107,27 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
 
+  const isSummary = req.query.fields === 'summary';
+
   const reminderInclude = {
     project: { select: { id: true, name: true, done: true } },
     client: { select: { id: true, name: true } },
     responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
     permit: { select: { id: true, permitNumber: true } },
   };
+
+  const reminderSummarySelect = {
+    id: true,
+    title: true,
+    projectName: true,
+    clientId: true,
+    clientName: true,
+    dueDate: true,
+  };
+
+  const queryOptions = isSummary
+    ? { select: reminderSummarySelect }
+    : { include: reminderInclude };
 
   // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
   if (sinceDate || !isPaginated) {
@@ -123,7 +138,7 @@ router.get('/', asyncHandler(async (req, res) => {
       prisma.reminder.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        include: reminderInclude,
+        ...(queryOptions as any),
       }),
       sinceDate ? fetchDeletedIds('Reminder', sinceDate) : Promise.resolve([]),
     ]);
@@ -145,7 +160,7 @@ router.get('/', asyncHandler(async (req, res) => {
   if (prioritizeClientId || prioritizeClientName) {
     const allMatching = await prisma.reminder.findMany({
       where,
-      include: reminderInclude,
+      ...(queryOptions as any),
     });
 
     const isMatchClient = (r: any) => {
@@ -184,7 +199,7 @@ router.get('/', asyncHandler(async (req, res) => {
       skip: pagination.skip,
       take: pagination.take,
       orderBy: { [sortField]: pagination.sortOrder },
-      include: reminderInclude,
+      ...(queryOptions as any),
     }),
   ]);
 

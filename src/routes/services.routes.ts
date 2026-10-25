@@ -36,6 +36,12 @@ router.get('/', asyncHandler(async (req, res) => {
     );
   }
 
+  const isSummary = req.query.fields === 'summary';
+  const formatService = (s: any) =>
+    isSummary
+      ? { id: s.id, code: s.code, name: s.name }
+      : s;
+
   if (isPaginated) {
     const pagination = parsePagination(req.query, {
       defaultSortBy: 'name',
@@ -43,12 +49,14 @@ router.get('/', asyncHandler(async (req, res) => {
       maxLimit: 100,
     });
     const total = filtered.length;
-    const items = filtered.slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10));
+    const items = filtered
+      .slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10))
+      .map(formatService);
     res.json(buildPaginatedResponse(items, total, pagination));
     return;
   }
 
-  res.json(filtered);
+  res.json(filtered.map(formatService));
 }));
 
 // POST /api/services

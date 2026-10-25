@@ -158,6 +158,20 @@ router.get("/", asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query, 25);
 
   if (req.query.fields === "summary") {
+    const summarySelect = {
+      id: true,
+      permitNumber: true,
+      clientId: true,
+      client: { select: { id: true, name: true } },
+    };
+
+    const formatSummaryPermit = (p: any) => ({
+      id: p.id,
+      permitNumber: p.permitNumber,
+      clientId: p.clientId,
+      clientName: p.client?.name || null,
+    });
+
     if (pagination.isPaginated) {
       const [total, permits] = await Promise.all([
         prisma.permit.count({ where }),
@@ -166,18 +180,10 @@ router.get("/", asyncHandler(async (req, res) => {
           orderBy,
           skip: pagination.skip,
           take: pagination.take,
-          select: {
-            id: true,
-            permitNumber: true,
-            clientId: true,
-            startDate: true,
-            endDate: true,
-            createdAt: true,
-            updatedAt: true,
-          },
+          select: summarySelect,
         }),
       ]);
-      res.json(buildPaginatedResponse(permits, total, pagination.page, pagination.limit));
+      res.json(buildPaginatedResponse(permits.map(formatSummaryPermit), total, pagination.page, pagination.limit));
       return;
     }
 
@@ -185,19 +191,11 @@ router.get("/", asyncHandler(async (req, res) => {
       prisma.permit.findMany({
         where,
         orderBy,
-        select: {
-          id: true,
-          permitNumber: true,
-          clientId: true,
-          startDate: true,
-          endDate: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+        select: summarySelect,
       }),
       sinceDate ? fetchDeletedIds("Permit", sinceDate) : Promise.resolve([]),
     ]);
-    res.json(buildDeltaResponse(permits, deletedIds, sinceDate));
+    res.json(buildDeltaResponse(permits.map(formatSummaryPermit), deletedIds, sinceDate));
     return;
   }
 
