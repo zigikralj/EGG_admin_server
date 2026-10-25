@@ -5,6 +5,8 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+
 const router = Router();
 const CATEGORIES_CACHE_KEY = 'reference:categories';
 
@@ -20,18 +22,41 @@ const requireCategoryPermission = (action: string) => (req: any, res: any, next:
 };
 
 // GET /api/categories
-router.get('/', asyncHandler(async (_req, res) => {
-  const cached = getReferenceCache(CATEGORIES_CACHE_KEY);
-  if (cached) {
-    res.json(cached);
+router.get('/', asyncHandler(async (req, res) => {
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+  const search = ((req.query.search as string) || '').trim().toLowerCase();
+
+  let categories: any[] | null = getReferenceCache(CATEGORIES_CACHE_KEY);
+  if (!categories) {
+    categories = await prisma.category.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    setReferenceCache(CATEGORIES_CACHE_KEY, categories);
+  }
+
+  let filtered = categories!;
+  if (search) {
+    filtered = categories.filter(
+      (c) =>
+        (c.name && c.name.toLowerCase().includes(search)) ||
+        (c.code && c.code.toLowerCase().includes(search)) ||
+        (c.description && c.description.toLowerCase().includes(search))
+    );
+  }
+
+  if (isPaginated) {
+    const pagination = parsePagination(req.query, {
+      defaultSortBy: 'name',
+      defaultSortOrder: 'asc',
+      maxLimit: 100,
+    });
+    const total = filtered.length;
+    const items = filtered.slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10));
+    res.json(buildPaginatedResponse(items, total, pagination));
     return;
   }
 
-  const categories = await prisma.category.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-  setReferenceCache(CATEGORIES_CACHE_KEY, categories);
-  res.json(categories);
+  res.json(filtered);
 }));
 
 // POST /api/categories

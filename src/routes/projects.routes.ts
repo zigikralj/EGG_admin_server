@@ -169,6 +169,12 @@ router.get('/', asyncHandler(async (req, res) => {
     conditions.push({ clientId });
   }
 
+  // ClientName filter (for autocompletes / filters matching by name)
+  const clientName = ((req.query.clientName as string) || '').trim();
+  if (clientName && clientName !== 'all') {
+    conditions.push({ clientName: { equals: clientName, mode: 'insensitive' as const } });
+  }
+
   // Responsible filter
   const responsible = ((req.query.responsible as string) || '').trim();
   if (responsible && responsible !== 'all') {
@@ -219,6 +225,40 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   const pagination = parsePagination(req.query, 25);
+
+  const projectSummarySelect = {
+    id: true,
+    name: true,
+    clientId: true,
+    clientName: true,
+    type: true,
+    done: true,
+  };
+
+  if (req.query.fields === 'summary') {
+    if (pagination.isPaginated) {
+      const [total, projects] = await Promise.all([
+        prisma.project.count({ where }),
+        prisma.project.findMany({
+          where,
+          orderBy,
+          skip: pagination.skip,
+          take: pagination.take,
+          select: projectSummarySelect,
+        }),
+      ]);
+      res.json(buildPaginatedResponse(projects, total, pagination.page, pagination.limit));
+      return;
+    }
+
+    const projects = await prisma.project.findMany({
+      where,
+      orderBy,
+      select: projectSummarySelect,
+    });
+    res.json(projects);
+    return;
+  }
 
   if (pagination.isPaginated) {
     const [total, projects] = await Promise.all([

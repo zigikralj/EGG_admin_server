@@ -25,8 +25,23 @@ router.get('/', asyncHandler(async (req, res) => {
   const dateFrom = (req.query.dateFrom as string) || '';
   const dateTo = (req.query.dateTo as string) || '';
   const dateField = (req.query.dateField as string) || 'dueDate';
+  const excludeProjectId = (req.query.excludeProjectId as string) || '';
+  const excludePermitId = (req.query.excludePermitId as string) || '';
+  const excludeIds = ((req.query.excludeIds as string) || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const prioritizeClientId = (req.query.prioritizeClientId as string) || '';
+  const prioritizeClientName = ((req.query.prioritizeClientName as string) || '').trim().toLowerCase();
 
   const where: any = {};
+
+  if (excludeProjectId) {
+    where.NOT = where.NOT ? [...where.NOT, { projectId: excludeProjectId }] : [{ projectId: excludeProjectId }];
+  }
+  if (excludePermitId) {
+    where.NOT = where.NOT ? [...where.NOT, { permitId: excludePermitId }] : [{ permitId: excludePermitId }];
+  }
+  if (excludeIds.length > 0) {
+    where.id = { notIn: excludeIds };
+  }
 
   // Status filtering
   if (status && status !== 'all') {
@@ -125,6 +140,42 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const validSortFields = ['dueDate', 'title', 'projectName', 'clientName', 'responsible', 'status', 'createdAt'];
   const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'dueDate';
+
+  // If client prioritization is requested (e.g. linking to project or permit)
+  if (prioritizeClientId || prioritizeClientName) {
+    const allMatching = await prisma.reminder.findMany({
+      where,
+      include: reminderInclude,
+    });
+
+    const isMatchClient = (r: any) => {
+      if (prioritizeClientId && r.clientId && r.clientId === prioritizeClientId) return true;
+      if (prioritizeClientName && r.clientName && r.clientName.trim().toLowerCase() === prioritizeClientName) return true;
+      return false;
+    };
+
+    allMatching.sort((a, b) => {
+      const aClientMatch = isMatchClient(a);
+      const bClientMatch = isMatchClient(b);
+      if (aClientMatch && !bClientMatch) return -1;
+      if (!aClientMatch && bClientMatch) return 1;
+
+      if (a.dueDate && b.dueDate) {
+        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+      }
+      if (a.dueDate && !b.dueDate) return -1;
+      if (!a.dueDate && b.dueDate) return 1;
+
+      const aTitle = a.title || a.projectName || '';
+      const bTitle = b.title || b.projectName || '';
+      return aTitle.localeCompare(bTitle);
+    });
+
+    const total = allMatching.length;
+    const items = allMatching.slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10));
+    res.json(buildPaginatedResponse(items, total, pagination));
+    return;
+  }
 
   const [total, items] = await Promise.all([
     prisma.reminder.count({ where }),

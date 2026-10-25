@@ -5,6 +5,8 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+
 const router = Router();
 const SERVICES_CACHE_KEY = 'reference:services';
 
@@ -12,18 +14,41 @@ const SERVICES_CACHE_KEY = 'reference:services';
 router.use(requireAuth);
 
 // GET /api/services
-router.get('/', asyncHandler(async (_req, res) => {
-  const cached = getReferenceCache(SERVICES_CACHE_KEY);
-  if (cached) {
-    res.json(cached);
+router.get('/', asyncHandler(async (req, res) => {
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+  const search = ((req.query.search as string) || '').trim().toLowerCase();
+
+  let services: any[] | null = getReferenceCache(SERVICES_CACHE_KEY);
+  if (!services) {
+    services = await prisma.service.findMany({
+      orderBy: { name: 'asc' },
+    });
+    setReferenceCache(SERVICES_CACHE_KEY, services);
+  }
+
+  let filtered = services!;
+  if (search) {
+    filtered = services.filter(
+      (s) =>
+        (s.name && s.name.toLowerCase().includes(search)) ||
+        (s.code && s.code.toLowerCase().includes(search)) ||
+        (s.description && s.description.toLowerCase().includes(search))
+    );
+  }
+
+  if (isPaginated) {
+    const pagination = parsePagination(req.query, {
+      defaultSortBy: 'name',
+      defaultSortOrder: 'asc',
+      maxLimit: 100,
+    });
+    const total = filtered.length;
+    const items = filtered.slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10));
+    res.json(buildPaginatedResponse(items, total, pagination));
     return;
   }
 
-  const services = await prisma.service.findMany({
-    orderBy: { name: 'asc' },
-  });
-  setReferenceCache(SERVICES_CACHE_KEY, services);
-  res.json(services);
+  res.json(filtered);
 }));
 
 // POST /api/services
