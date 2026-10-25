@@ -102,6 +102,7 @@ router.get('/', asyncHandler(async (req, res) => {
     parentInvoice: { select: { id: true, invoiceNumber: true, invoiceType: true } },
     childInvoices: { select: { id: true, invoiceNumber: true, invoiceType: true } },
     items: true,
+    providedServices: { select: { id: true, scheduledDate: true, status: true } },
   };
 
   // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
@@ -165,6 +166,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
       client: true,
       project: true,
       items: true,
+      providedServices: { select: { id: true, scheduledDate: true, status: true } },
     },
   });
 

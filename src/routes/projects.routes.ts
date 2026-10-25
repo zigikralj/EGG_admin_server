@@ -564,6 +564,23 @@ router.get('/:id', asyncHandler(async (req, res) => {
       note: {
         select: { content: true, version: true, updatedAt: true },
       },
+      reminders: {
+        orderBy: { createdAt: 'desc' },
+        include: {
+          client: { select: { id: true, name: true } },
+          responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
+          permit: { select: { id: true, permitNumber: true } },
+        },
+      },
+      invoices: {
+        orderBy: { createdAt: 'desc' },
+        include: {
+          client: { select: { id: true, name: true } },
+          parentInvoice: { select: { id: true, invoiceNumber: true, invoiceType: true } },
+          childInvoices: { select: { id: true, invoiceNumber: true, invoiceType: true } },
+          items: true,
+        },
+      },
     },
   });
 

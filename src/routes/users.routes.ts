@@ -17,7 +17,16 @@ router.get('/', asyncHandler(async (req, res) => {
   // Lightweight summary for dropdowns/assignees
   if (req.query.fields === 'summary') {
     const users = await prisma.user.findMany({
-      select: { id: true, name: true, email: true, role: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        gender: true,
+        status: true,
+        isApproved: true,
+        roleEntity: true,
+      },
       orderBy: { name: 'asc' },
     });
     res.json(users);
