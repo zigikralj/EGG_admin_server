@@ -561,6 +561,9 @@ router.get('/:id', asyncHandler(async (req, res) => {
       client: {
         select: { id: true, name: true, city: true },
       },
+      responsibleUser: {
+        select: { id: true, name: true, email: true, gender: true },
+      },
       note: {
         select: { content: true, version: true, updatedAt: true },
       },
@@ -589,10 +592,31 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
+  let serviceName: string = project.type;
+  let serviceObj: { id: string; code: string; name: string } | null = null;
+  if (project.type) {
+    const srv = await prisma.service.findFirst({
+      where: {
+        OR: [
+          { code: project.type },
+          { id: project.type },
+          { name: project.type },
+        ],
+      },
+      select: { id: true, code: true, name: true },
+    });
+    if (srv) {
+      serviceName = srv.name;
+      serviceObj = srv;
+    }
+  }
+
   // Backward compatibility: provide `notes` from note relation
   res.json({
     ...project,
     notes: project.note?.content || null,
+    serviceName,
+    service: serviceObj,
   });
 }));
 
