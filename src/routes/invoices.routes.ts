@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
 const router = Router();
 
@@ -12,51 +13,147 @@ router.use(requireAuth);
 
 // GET /api/invoices
 router.get('/', asyncHandler(async (req, res) => {
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+  const sinceDate = parseSince(req.query.since);
+
   const search = ((req.query.search as string) || '').trim();
   const status = (req.query.status as string) || '';
   const clientId = (req.query.clientId as string) || '';
   const projectId = (req.query.projectId as string) || '';
+  const currency = (req.query.currency as string) || '';
+  const invoiceType = (req.query.invoiceType as string) || '';
+  const linkedStatus = (req.query.linkedStatus as string) || '';
+  const dateFrom = (req.query.dateFrom as string) || '';
+  const dateTo = (req.query.dateTo as string) || '';
+  const dateField = (req.query.dateField as string) || 'dateCreated';
 
   const where: any = {};
-  if (status) {
-    where.status = status;
+  if (status && status !== 'all') {
+    if (status === 'unpaid') {
+      where.status = { notIn: ['Paid', 'Cancelled'] };
+    } else {
+      where.status = status;
+    }
   }
-  if (clientId) {
+  if (clientId && clientId !== 'all') {
     where.clientId = clientId;
   }
-  if (projectId) {
+  if (projectId && projectId !== 'all') {
     where.projectId = projectId;
   }
+  if (currency && currency !== 'all') {
+    where.currency = currency;
+  }
+  if (invoiceType && invoiceType !== 'all') {
+    if (invoiceType === 'Standard') {
+      where.OR = [
+        { invoiceType: 'Standard' },
+        { invoiceType: null },
+      ];
+    } else {
+      where.invoiceType = invoiceType;
+    }
+  }
+  if (linkedStatus && linkedStatus !== 'all') {
+    if (linkedStatus === 'linked') {
+      where.OR = [
+        { parentInvoiceId: { not: null } },
+        { childInvoices: { some: {} } },
+      ];
+    } else if (linkedStatus === 'independent') {
+      where.parentInvoiceId = null;
+      where.childInvoices = { none: {} };
+    }
+  }
+
+  // Date range filter
+  if (dateFrom || dateTo) {
+    const field = ['dueDate', 'paymentDate', 'dateCreated', 'createdAt'].includes(dateField)
+      ? dateField
+      : 'dateCreated';
+    const dateFilter: any = {};
+    if (dateFrom) dateFilter.gte = field === 'createdAt' ? new Date(dateFrom) : dateFrom;
+    if (dateTo) dateFilter.lte = field === 'createdAt' ? new Date(dateTo) : dateTo;
+    where[field] = dateFilter;
+  }
+
   if (search) {
-    where.OR = [
+    const searchConditions = [
       { invoiceNumber: { contains: search, mode: 'insensitive' } },
       { clientName: { contains: search, mode: 'insensitive' } },
       { projectName: { contains: search, mode: 'insensitive' } },
       { status: { contains: search, mode: 'insensitive' } },
       { notes: { contains: search, mode: 'insensitive' } },
-      { items: { some: { description: { contains: search, mode: 'insensitive' } } } }
+      { items: { some: { description: { contains: search, mode: 'insensitive' } } } },
+      { parentInvoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
+      { childInvoices: { some: { invoiceNumber: { contains: search, mode: 'insensitive' } } } },
     ];
+    if (where.OR) {
+      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+      delete where.OR;
+    } else {
+      where.OR = searchConditions;
+    }
   }
 
-  const sinceDate = parseSince(req.query.since);
-  if (sinceDate) {
-    where.updatedAt = { gt: sinceDate };
+  const invoiceInclude = {
+    client: { select: { id: true, name: true } },
+    project: { select: { id: true, name: true, done: true } },
+    parentInvoice: { select: { id: true, invoiceNumber: true, invoiceType: true } },
+    childInvoices: { select: { id: true, invoiceNumber: true, invoiceType: true } },
+    items: true,
+  };
+
+  // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
+  if (sinceDate || !isPaginated) {
+    if (sinceDate) {
+      where.updatedAt = { gt: sinceDate };
+    }
+    const [invoices, deletedIds] = await Promise.all([
+      prisma.invoice.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: invoiceInclude,
+      }),
+      sinceDate ? fetchDeletedIds('Invoice', sinceDate) : Promise.resolve([]),
+    ]);
+    res.json(buildDeltaResponse(invoices, deletedIds, sinceDate));
+    return;
   }
 
-  const [invoices, deletedIds] = await Promise.all([
+  // Paginated request
+  const pagination = parsePagination(req.query, {
+    defaultSortBy: 'dateCreated',
+    defaultSortOrder: 'desc',
+    maxLimit: 100,
+  });
+
+  const validSortFields = [
+    'dateCreated',
+    'dueDate',
+    'paymentDate',
+    'invoiceNumber',
+    'clientName',
+    'projectName',
+    'status',
+    'totalAmount',
+    'invoiceType',
+    'createdAt',
+  ];
+  const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'dateCreated';
+
+  const [total, items] = await Promise.all([
+    prisma.invoice.count({ where }),
     prisma.invoice.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        client: { select: { id: true, name: true } },
-        project: { select: { id: true, name: true, done: true } },
-        items: true,
-      },
+      skip: pagination.skip,
+      take: pagination.take,
+      orderBy: { [sortField]: pagination.sortOrder },
+      include: invoiceInclude,
     }),
-    sinceDate ? fetchDeletedIds('Invoice', sinceDate) : Promise.resolve([]),
   ]);
 
-  res.json(buildDeltaResponse(invoices, deletedIds, sinceDate));
+  res.json(buildPaginatedResponse(items, total, pagination));
 }));
 
 // GET /api/invoices/:id

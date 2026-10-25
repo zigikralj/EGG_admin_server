@@ -15,7 +15,6 @@ export const API_ROUTES = {
   USERS: '/api/users',
   PROJECTS: {
     BASE: '/api/projects',
-    STATS: '/api/projects/stats',
   },
   REMINDERS: '/api/reminders',
   CLIENTS: '/api/clients',

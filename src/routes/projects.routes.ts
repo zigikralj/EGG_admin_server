@@ -21,6 +21,7 @@ import {
   fetchDeletedIds,
   buildDeltaResponse,
 } from '../helpers/deltaSync';
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
 const router = Router();
 
@@ -52,6 +53,32 @@ export function extractNotesPreview(notes?: string | null): string | null {
   if (!plainText) return null;
   return plainText.length > 300 ? plainText.slice(0, 300) : plainText;
 }
+
+const projectListSelect = {
+  id: true,
+  name: true,
+  clientId: true,
+  clientName: true,
+  responsible: true,
+  responsibleId: true,
+  type: true,
+  start: true,
+  deadline: true,
+  progress: true,
+  done: true,
+  notesPreview: true,
+  createdAt: true,
+  updatedAt: true,
+  client: {
+    select: { id: true, name: true, city: true },
+  },
+  reminders: {
+    select: { id: true, title: true, dueDate: true, status: true },
+  },
+  invoices: {
+    select: { id: true, invoiceNumber: true, status: true, totalAmount: true, dueDate: true },
+  },
+};
 
 // ----------------------------------------------------
 // PROJECTS CRUD
@@ -95,33 +122,124 @@ router.get('/', asyncHandler(async (req, res) => {
   if (doneCondition) conditions.push(doneCondition);
   if (deltaCondition) conditions.push(deltaCondition);
 
+  // Status filter (active, done, overdue, stale, creation, missing_invoice)
+  const status = ((req.query.status as string) || '').trim();
+  if (status && status !== 'all') {
+    const today = new Date().toISOString().slice(0, 10);
+    const twoMonthsAgoDate = new Date();
+    twoMonthsAgoDate.setMonth(twoMonthsAgoDate.getMonth() - 2);
+    const twoMonthsAgo = twoMonthsAgoDate.toISOString().slice(0, 10);
+
+    if (status === 'done') {
+      conditions.push({ done: true });
+    } else if (status === 'active') {
+      conditions.push({ done: false });
+    } else if (status === 'overdue' || status === 'late') {
+      conditions.push({
+        done: false,
+        deadline: { lt: today, not: null },
+      });
+    } else if (status === 'stale') {
+      conditions.push({
+        done: false,
+        start: { lt: twoMonthsAgo, not: null },
+      });
+    } else if (status === 'creation') {
+      conditions.push({
+        done: false,
+        progress: 0,
+      });
+    } else if (status === 'missing_invoice') {
+      conditions.push({
+        done: false,
+        invoices: { none: {} },
+      });
+    }
+  }
+
+  // Type (category) filter
+  const type = ((req.query.type as string) || '').trim();
+  if (type && type !== 'all') {
+    conditions.push({ type });
+  }
+
+  // ClientId filter
+  const clientId = ((req.query.clientId as string) || '').trim();
+  if (clientId && clientId !== 'all') {
+    conditions.push({ clientId });
+  }
+
+  // Responsible filter
+  const responsible = ((req.query.responsible as string) || '').trim();
+  if (responsible && responsible !== 'all') {
+    conditions.push({
+      OR: [
+        { responsibleId: responsible },
+        { responsible: { equals: responsible, mode: 'insensitive' as const } },
+      ],
+    });
+  }
+
+  // Date range filter
+  const dateFrom = ((req.query.dateFrom as string) || '').trim();
+  const dateTo = ((req.query.dateTo as string) || '').trim();
+  const dateField = (req.query.dateField as string) || 'deadline';
+  const allowedDateFields = ['deadline', 'start', 'createdAt'];
+  const targetDateField = allowedDateFields.includes(dateField) ? dateField : 'deadline';
+  if (dateFrom || dateTo) {
+    const dateCondition: any = {};
+    if (dateFrom) dateCondition.gte = targetDateField === 'createdAt' ? new Date(dateFrom) : dateFrom;
+    if (dateTo) dateCondition.lte = targetDateField === 'createdAt' ? new Date(dateTo) : dateTo;
+    conditions.push({ [targetDateField]: dateCondition });
+  }
+
   const where: any = conditions.length > 1
     ? { AND: conditions }
     : (conditions[0] || {});
 
+  // Sorting
+  const sortBy = ((req.query.sortBy as string) || 'deadline').trim();
+  const sortOrder = ((req.query.sortOrder as string) || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  let orderBy: any;
+  if (sortBy === 'name') {
+    orderBy = { name: sortOrder };
+  } else if (sortBy === 'clientName') {
+    orderBy = { clientName: sortOrder };
+  } else if (sortBy === 'responsible') {
+    orderBy = { responsible: sortOrder };
+  } else if (sortBy === 'progress') {
+    orderBy = { progress: sortOrder };
+  } else if (sortBy === 'start') {
+    orderBy = { start: sortOrder };
+  } else if (sortBy === 'createdAt') {
+    orderBy = { createdAt: sortOrder };
+  } else {
+    // default deadline
+    orderBy = { deadline: sortOrder };
+  }
+
+  const pagination = parsePagination(req.query, 25);
+
+  if (pagination.isPaginated) {
+    const [total, projects] = await Promise.all([
+      prisma.project.count({ where }),
+      prisma.project.findMany({
+        where,
+        orderBy,
+        skip: pagination.skip,
+        take: pagination.take,
+        select: projectListSelect,
+      }),
+    ]);
+    res.json(buildPaginatedResponse(projects, total, pagination.page, pagination.limit));
+    return;
+  }
+
   const [projects, deletedIds] = await Promise.all([
     prisma.project.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        clientId: true,
-        clientName: true,
-        responsible: true,
-        responsibleId: true,
-        type: true,
-        start: true,
-        deadline: true,
-        progress: true,
-        done: true,
-        notesPreview: true,
-        createdAt: true,
-        updatedAt: true,
-        client: {
-          select: { id: true, name: true, city: true },
-        },
-      },
+      orderBy,
+      select: projectListSelect,
     }),
     sinceDate ? fetchDeletedIds('Project', sinceDate) : Promise.resolve([]),
   ]);

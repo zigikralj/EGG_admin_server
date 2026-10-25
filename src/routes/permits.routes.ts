@@ -4,6 +4,7 @@ import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission } from "../types";
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from "../helpers/deltaSync";
+import { parsePagination, buildPaginatedResponse } from "../helpers/pagination";
 
 const router = Router();
 
@@ -79,15 +80,111 @@ router.get("/", asyncHandler(async (req, res) => {
   if (searchCondition) conditions.push(searchCondition);
   if (deltaCondition) conditions.push(deltaCondition);
 
+  // Status filter (active | expiring | expired)
+  const status = ((req.query.status as string) || "").trim();
+  if (status && status !== "all") {
+    const today = new Date().toISOString().slice(0, 10);
+    const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    if (status === "active") {
+      conditions.push({ endDate: { gte: today } });
+    } else if (status === "expiring") {
+      conditions.push({
+        AND: [
+          { endDate: { gte: today } },
+          { endDate: { lte: in30Days } },
+        ],
+      });
+    } else if (status === "expired") {
+      conditions.push({
+        OR: [
+          { endDate: { lt: today } },
+          { endDate: null },
+        ],
+      });
+    }
+  }
+
+  // PermitType filter
+  const permitType = ((req.query.permitType as string) || "").trim();
+  if (permitType && permitType !== "all") {
+    conditions.push({
+      permitTypes: { has: permitType },
+    });
+  }
+
+  // ClientId filter
+  const clientId = ((req.query.clientId as string) || "").trim();
+  if (clientId && clientId !== "all") {
+    conditions.push({
+      OR: [
+        { clientId },
+        { clientExtraData: { some: { clientId } } },
+      ],
+    });
+  }
+
+  // Date range filter
+  const dateFrom = ((req.query.dateFrom as string) || "").trim();
+  const dateTo = ((req.query.dateTo as string) || "").trim();
+  const dateField = req.query.dateField === "startDate" ? "startDate" : "endDate";
+  if (dateFrom || dateTo) {
+    const dateCondition: any = {};
+    if (dateFrom) dateCondition.gte = dateFrom;
+    if (dateTo) dateCondition.lte = dateTo;
+    conditions.push({ [dateField]: dateCondition });
+  }
+
   const where: any = conditions.length > 1
     ? { AND: conditions }
     : (conditions[0] || {});
 
+  // Sorting
+  const sortBy = ((req.query.sortBy as string) || "endDate").trim();
+  const sortOrder = ((req.query.sortOrder as string) || "asc").toLowerCase() === "desc" ? "desc" : "asc";
+  let orderBy: any;
+  if (sortBy === "startDate") {
+    orderBy = { startDate: sortOrder };
+  } else if (sortBy === "permitNumber") {
+    orderBy = { permitNumber: sortOrder };
+  } else if (sortBy === "createdAt") {
+    orderBy = { createdAt: sortOrder };
+  } else if (sortBy === "clientName") {
+    orderBy = { client: { name: sortOrder } };
+  } else {
+    // default endDate
+    orderBy = { endDate: sortOrder };
+  }
+
+  const pagination = parsePagination(req.query, 25);
+
   if (req.query.fields === "summary") {
+    if (pagination.isPaginated) {
+      const [total, permits] = await Promise.all([
+        prisma.permit.count({ where }),
+        prisma.permit.findMany({
+          where,
+          orderBy,
+          skip: pagination.skip,
+          take: pagination.take,
+          select: {
+            id: true,
+            permitNumber: true,
+            clientId: true,
+            startDate: true,
+            endDate: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        }),
+      ]);
+      res.json(buildPaginatedResponse(permits, total, pagination.page, pagination.limit));
+      return;
+    }
+
     const [permits, deletedIds] = await Promise.all([
       prisma.permit.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy,
         select: {
           id: true,
           permitNumber: true,
@@ -104,10 +201,34 @@ router.get("/", asyncHandler(async (req, res) => {
     return;
   }
 
+  if (pagination.isPaginated) {
+    const [total, permits] = await Promise.all([
+      prisma.permit.count({ where }),
+      prisma.permit.findMany({
+        where,
+        orderBy,
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          client: { select: { id: true, name: true } },
+          reminders: { select: { id: true, title: true, dueDate: true, status: true } },
+          clientExtraData: {
+            include: { client: { select: { id: true, name: true } } },
+          },
+          permitWastes: {
+            include: { wasteCatalog: true },
+          },
+        },
+      }),
+    ]);
+    res.json(buildPaginatedResponse(permits.map(formatPermit), total, pagination.page, pagination.limit));
+    return;
+  }
+
   const [permits, deletedIds] = await Promise.all([
     prisma.permit.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy,
       include: {
         client: { select: { id: true, name: true } },
         reminders: { select: { id: true, title: true, dueDate: true, status: true } },

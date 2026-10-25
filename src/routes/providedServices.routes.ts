@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
 function isWasteDisposalService(srv?: { code?: string | null; name?: string | null } | null): boolean {
   if (!srv) return false;
@@ -52,13 +53,28 @@ router.get('/', asyncHandler(async (req, res) => {
   const projectId = (req.query.projectId as string) || '';
   const serviceId = (req.query.serviceId as string) || '';
   const invoiceId = (req.query.invoiceId as string) || '';
+  const dateFrom = (req.query.dateFrom as string) || '';
+  const dateTo = (req.query.dateTo as string) || '';
+  const dateField = ((req.query.dateField as string) || 'scheduledDate').trim();
 
   const where: any = {};
-  if (status) where.status = status;
-  if (clientId) where.clientId = clientId;
-  if (projectId) where.projectId = projectId;
-  if (serviceId) where.serviceId = serviceId;
-  if (invoiceId) where.invoiceId = invoiceId;
+  if (status && status !== 'all') where.status = status;
+  if (clientId && clientId !== 'all') where.clientId = clientId;
+  if (projectId && projectId !== 'all') where.projectId = projectId;
+  if (serviceId && serviceId !== 'all') where.serviceId = serviceId;
+  if (invoiceId && invoiceId !== 'all') where.invoiceId = invoiceId;
+
+  if (dateFrom || dateTo) {
+    const validDateFields = ['scheduledDate', 'completionDate', 'createdAt'];
+    const field = validDateFields.includes(dateField) ? dateField : 'scheduledDate';
+    where[field] = {};
+    if (dateFrom) where[field].gte = new Date(dateFrom);
+    if (dateTo) {
+      const endOfDay = new Date(dateTo);
+      endOfDay.setHours(23, 59, 59, 999);
+      where[field].lte = endOfDay;
+    }
+  }
 
   if (search) {
     where.OR = [
@@ -72,31 +88,86 @@ router.get('/', asyncHandler(async (req, res) => {
     ];
   }
 
-  const sinceDate = parseSince(req.query.since);
-  if (sinceDate) {
-    where.updatedAt = { gt: sinceDate };
+  if (!canViewAll && canViewWaste) {
+    where.service = {
+      ...where.service,
+      OR: [
+        { code: { in: ['waste-disposal', 'zbrinjavanje', 'zbrinjavanje-otpada', 'odlaganje', 'odlaganje-otpada'] } },
+        { code: { contains: 'disposal', mode: 'insensitive' } },
+        { code: { contains: 'zbrinjavanje', mode: 'insensitive' } },
+        { code: { contains: 'odlaganje', mode: 'insensitive' } },
+        { name: { contains: 'disposal', mode: 'insensitive' } },
+        { name: { contains: 'zbrinjavanje', mode: 'insensitive' } },
+        { name: { contains: 'збрињавање', mode: 'insensitive' } },
+        { name: { contains: 'odlaganje', mode: 'insensitive' } },
+        { name: { contains: 'одлагање', mode: 'insensitive' } },
+      ],
+    };
   }
 
-  const [rawItems, deletedIds] = await Promise.all([
+  const sinceDate = parseSince(req.query.since);
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+
+  const includeRelations = {
+    service: { select: { id: true, code: true, name: true, group: true, frequency: true } },
+    client: { select: { id: true, name: true } },
+    project: { select: { id: true, name: true, done: true } },
+    invoice: { select: { id: true, invoiceNumber: true } },
+  };
+
+  // Delta sync or unpaginated request
+  if (sinceDate || !isPaginated) {
+    if (sinceDate) {
+      where.updatedAt = { gt: sinceDate };
+    }
+    const [rawItems, deletedIds] = await Promise.all([
+      prisma.providedService.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: includeRelations,
+      }),
+      sinceDate ? fetchDeletedIds('ProvidedService', sinceDate) : Promise.resolve([]),
+    ]);
+
+    let items = rawItems;
+    if (!canViewAll && canViewWaste) {
+      items = items.filter((item) => isWasteDisposalService(item.service));
+    }
+
+    res.json(buildDeltaResponse(items, deletedIds, sinceDate));
+    return;
+  }
+
+  // Paginated request
+  const pagination = parsePagination(req.query, {
+    defaultSortBy: 'scheduledDate',
+    defaultSortOrder: 'desc',
+    maxLimit: 100,
+  });
+
+  let orderBy: any = { [pagination.sortBy]: pagination.sortOrder };
+  if (pagination.sortBy === 'service') {
+    orderBy = { service: { name: pagination.sortOrder } };
+  } else if (pagination.sortBy === 'client') {
+    orderBy = { client: { name: pagination.sortOrder } };
+  } else if (pagination.sortBy === 'project') {
+    orderBy = { project: { name: pagination.sortOrder } };
+  } else if (pagination.sortBy === 'invoice') {
+    orderBy = { invoice: { invoiceNumber: pagination.sortOrder } };
+  }
+
+  const [total, items] = await Promise.all([
+    prisma.providedService.count({ where }),
     prisma.providedService.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        service: { select: { id: true, code: true, name: true, group: true, frequency: true } },
-        client: { select: { id: true, name: true } },
-        project: { select: { id: true, name: true, done: true } },
-        invoice: { select: { id: true, invoiceNumber: true } },
-      },
+      skip: pagination.skip,
+      take: pagination.take,
+      orderBy,
+      include: includeRelations,
     }),
-    sinceDate ? fetchDeletedIds('ProvidedService', sinceDate) : Promise.resolve([]),
   ]);
 
-  let items = rawItems;
-  if (!canViewAll && canViewWaste) {
-    items = items.filter((item) => isWasteDisposalService(item.service));
-  }
-
-  res.json(buildDeltaResponse(items, deletedIds, sinceDate));
+  res.json(buildPaginatedResponse(items, total, pagination));
 }));
 
 // GET /api/provided-services/:id

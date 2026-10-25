@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
 const router = Router();
 
@@ -12,44 +13,131 @@ router.use(requireAuth);
 
 // GET /api/reminders
 router.get('/', asyncHandler(async (req, res) => {
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+  const sinceDate = parseSince(req.query.since);
+
   const search = ((req.query.search as string) || '').trim();
-  const searchCondition = search ? {
-    OR: [
+  const status = (req.query.status as string) || '';
+  const clientId = (req.query.clientId as string) || '';
+  const projectId = (req.query.projectId as string) || '';
+  const permitId = (req.query.permitId as string) || '';
+  const responsible = (req.query.responsible as string) || '';
+  const dateFrom = (req.query.dateFrom as string) || '';
+  const dateTo = (req.query.dateTo as string) || '';
+  const dateField = (req.query.dateField as string) || 'dueDate';
+
+  const where: any = {};
+
+  // Status filtering
+  if (status && status !== 'all') {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const tenDaysFromNow = new Date();
+    tenDaysFromNow.setDate(tenDaysFromNow.getDate() + 10);
+    const in10DaysStr = tenDaysFromNow.toISOString().slice(0, 10);
+
+    if (status === 'pending') {
+      where.status = { in: ['Pending', 'U toku', 'Čeka se', 'Draft'] };
+    } else if (status === 'completed') {
+      where.status = { in: ['Completed', 'Završeno', 'Done'] };
+    } else if (status === 'overdue') {
+      where.status = { notIn: ['Completed', 'Završeno', 'Done'] };
+      where.dueDate = { lt: todayStr };
+    } else if (status === 'approaching') {
+      where.status = { notIn: ['Completed', 'Završeno', 'Done'] };
+      where.dueDate = { gte: todayStr, lte: in10DaysStr };
+    } else {
+      where.status = { equals: status, mode: 'insensitive' };
+    }
+  }
+
+  if (clientId && clientId !== 'all') {
+    where.clientId = clientId;
+  }
+  if (projectId && projectId !== 'all') {
+    where.projectId = projectId;
+  }
+  if (permitId && permitId !== 'all') {
+    where.permitId = permitId;
+  }
+  if (responsible && responsible !== 'all') {
+    where.OR = [
+      { responsible: { contains: responsible, mode: 'insensitive' } },
+      { responsibleId: responsible },
+    ];
+  }
+
+  // Date range filter
+  if (dateFrom || dateTo) {
+    const field = dateField === 'createdAt' ? 'createdAt' : 'dueDate';
+    const dateFilter: any = {};
+    if (dateFrom) dateFilter.gte = field === 'createdAt' ? new Date(dateFrom) : dateFrom;
+    if (dateTo) dateFilter.lte = field === 'createdAt' ? new Date(dateTo) : dateTo;
+    where[field] = dateFilter;
+  }
+
+  if (search) {
+    const searchConditions = [
       { title: { contains: search, mode: 'insensitive' as const } },
       { projectName: { contains: search, mode: 'insensitive' as const } },
       { clientName: { contains: search, mode: 'insensitive' as const } },
       { responsible: { contains: search, mode: 'insensitive' as const } },
       { status: { contains: search, mode: 'insensitive' as const } },
       { notes: { contains: search, mode: 'insensitive' as const } },
-    ]
-  } : undefined;
+    ];
+    if (where.OR) {
+      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+      delete where.OR;
+    } else {
+      where.OR = searchConditions;
+    }
+  }
 
-  const sinceDate = parseSince(req.query.since);
-  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
+  const reminderInclude = {
+    project: { select: { id: true, name: true, done: true } },
+    client: { select: { id: true, name: true } },
+    responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
+    permit: { select: { id: true, permitNumber: true } },
+  };
 
-  const conditions: any[] = [];
-  if (searchCondition) conditions.push(searchCondition);
-  if (deltaCondition) conditions.push(deltaCondition);
+  // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
+  if (sinceDate || !isPaginated) {
+    if (sinceDate) {
+      where.updatedAt = { gt: sinceDate };
+    }
+    const [reminders, deletedIds] = await Promise.all([
+      prisma.reminder.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: reminderInclude,
+      }),
+      sinceDate ? fetchDeletedIds('Reminder', sinceDate) : Promise.resolve([]),
+    ]);
+    res.json(buildDeltaResponse(reminders, deletedIds, sinceDate));
+    return;
+  }
 
-  const where: any = conditions.length > 1
-    ? { AND: conditions }
-    : (conditions[0] || {});
+  // Paginated request
+  const pagination = parsePagination(req.query, {
+    defaultSortBy: 'dueDate',
+    defaultSortOrder: 'asc',
+    maxLimit: 100,
+  });
 
-  const [reminders, deletedIds] = await Promise.all([
+  const validSortFields = ['dueDate', 'title', 'projectName', 'clientName', 'responsible', 'status', 'createdAt'];
+  const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'dueDate';
+
+  const [total, items] = await Promise.all([
+    prisma.reminder.count({ where }),
     prisma.reminder.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        project: { select: { id: true, name: true, done: true } },
-        client: { select: { id: true, name: true } },
-        responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
-        permit: { select: { id: true, permitNumber: true } },
-      },
+      skip: pagination.skip,
+      take: pagination.take,
+      orderBy: { [sortField]: pagination.sortOrder },
+      include: reminderInclude,
     }),
-    sinceDate ? fetchDeletedIds('Reminder', sinceDate) : Promise.resolve([]),
   ]);
 
-  res.json(buildDeltaResponse(reminders, deletedIds, sinceDate));
+  res.json(buildPaginatedResponse(items, total, pagination));
 }));
 
 // POST /api/reminders

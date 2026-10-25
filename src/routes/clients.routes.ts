@@ -22,37 +22,113 @@ function formatClientPermits(permits: any[], fallbackPermit?: any) {
   };
 }
 
+import { parsePagination, buildPaginatedResponse } from "../helpers/pagination";
+
 // GET /api/clients
 router.get("/", asyncHandler(async (req, res) => {
+  if (req.query.fields === "summary") {
+    const summaryClients = await prisma.client.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, city: true },
+    });
+    res.json(summaryClients);
+    return;
+  }
+
+  const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
   const sinceDate = parseSince(req.query.since);
 
-  const [clients, deletedIds] = await Promise.all([
-    prisma.client.findMany({
-      where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
-      orderBy: { name: "asc" },
+  const search = ((req.query.search as string) || "").trim();
+  const city = (req.query.city as string) || "";
+  const hasPermit = (req.query.hasPermit as string) || "";
+
+  const where: any = {};
+  if (city && city !== "all") {
+    where.city = { equals: city, mode: "insensitive" };
+  }
+  if (hasPermit === "true") {
+    where.permits = { some: {} };
+  } else if (hasPermit === "false") {
+    where.permits = { none: {} };
+  }
+
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { contactPerson: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+      { phone: { contains: search, mode: "insensitive" } },
+      { city: { contains: search, mode: "insensitive" } },
+      { pib: { contains: search, mode: "insensitive" } },
+      { mb: { contains: search, mode: "insensitive" } },
+      { address: { contains: search, mode: "insensitive" } },
+    ];
+  }
+
+  const clientInclude = {
+    projects: true,
+    permits: {
       include: {
-        projects: true,
-        permits: {
+        permitWastes: {
+          include: { wasteCatalog: true },
+        },
+      },
+    },
+    extraData: {
+      include: {
+        permit: {
           include: {
             permitWastes: {
               include: { wasteCatalog: true },
             },
           },
         },
-        extraData: {
-          include: {
-            permit: {
-              include: {
-                permitWastes: {
-                  include: { wasteCatalog: true },
-                },
-              },
-            },
-          },
-        },
       },
+    },
+  };
+
+  // Delta sync or unpaginated request
+  if (sinceDate || !isPaginated) {
+    if (sinceDate) {
+      where.updatedAt = { gt: sinceDate };
+    }
+    const [clients, deletedIds] = await Promise.all([
+      prisma.client.findMany({
+        where,
+        orderBy: { name: "asc" },
+        include: clientInclude,
+      }),
+      sinceDate ? fetchDeletedIds("Client", sinceDate) : Promise.resolve([]),
+    ]);
+
+    const formatted = clients.map((c) => ({
+      ...c,
+      ...formatClientPermits(c.permits, c.extraData?.permit),
+    }));
+
+    res.json(buildDeltaResponse(formatted, deletedIds, sinceDate));
+    return;
+  }
+
+  // Paginated request
+  const pagination = parsePagination(req.query, {
+    defaultSortBy: "name",
+    defaultSortOrder: "asc",
+    maxLimit: 100,
+  });
+
+  const validSortFields = ["name", "city", "contactPerson", "email", "phone", "createdAt"];
+  const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : "name";
+
+  const [total, clients] = await Promise.all([
+    prisma.client.count({ where }),
+    prisma.client.findMany({
+      where,
+      skip: pagination.skip,
+      take: pagination.take,
+      orderBy: { [sortField]: pagination.sortOrder },
+      include: clientInclude,
     }),
-    sinceDate ? fetchDeletedIds("Client", sinceDate) : Promise.resolve([]),
   ]);
 
   const formatted = clients.map((c) => ({
@@ -60,7 +136,7 @@ router.get("/", asyncHandler(async (req, res) => {
     ...formatClientPermits(c.permits, c.extraData?.permit),
   }));
 
-  res.json(buildDeltaResponse(formatted, deletedIds, sinceDate));
+  res.json(buildPaginatedResponse(formatted, total, pagination));
 }));
 
 // POST /api/clients

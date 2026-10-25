@@ -4,6 +4,8 @@ import { generateToken, hashPassword, verifyPassword, SESSION_DURATION_SECONDS }
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth, userForceLogoutMap, invalidateUserAuthCache } from '../middleware/auth';
 import { validatePassword, sanitizeString } from '../middleware/validate';
+import { formatUserWithPermissions, UserRole } from '../types';
+import { isActivityLoggingEnabled } from '../helpers/activityLogger';
 
 const router = Router();
 
@@ -79,8 +81,11 @@ router.post('/login', asyncHandler(async (req, res) => {
   userForceLogoutMap.delete(user.id);
   invalidateUserAuthCache(user.id);
   const token = generateToken(user);
-  const { password: _, ...userWithoutPassword } = user;
-  res.json({ user: userWithoutPassword, token, expiresIn: SESSION_DURATION_SECONDS });
+  const sessionUser = {
+    ...formatUserWithPermissions(user),
+    activityLoggingEnabled: isActivityLoggingEnabled(),
+  };
+  res.json({ user: sessionUser, token, expiresIn: SESSION_DURATION_SECONDS });
 }));
 
 // POST /api/auth/register
@@ -137,11 +142,14 @@ router.post('/register', asyncHandler(async (req, res) => {
       gender,
       isApproved: false,
       status: 'PENDING',
-      role: 'USER', // Changed to literal to avoid enum import issues if UserRole isn't exported from types
+      role: UserRole.USER,
+    },
+    include: {
+      roleEntity: true,
     },
   });
 
-  const { password: _, ...userWithoutPassword } = newUser;
+  const userWithoutPassword = formatUserWithPermissions(newUser);
   
   // Security Hardening: Do NOT issue token on registration
   res.status(201).json({
@@ -158,8 +166,10 @@ router.get('/me', requireAuth, asyncHandler(async (req, res) => {
     res.status(403).json({ error: 'ACCOUNT_BLOCKED', message: 'Contact administrator for more information.' });
     return;
   }
-  const { password: _, ...userWithoutPassword } = authUser;
-  res.json(userWithoutPassword);
+  res.json({
+    ...formatUserWithPermissions(authUser),
+    activityLoggingEnabled: isActivityLoggingEnabled(),
+  });
 }));
 
 export default router;
