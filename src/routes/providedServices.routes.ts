@@ -56,54 +56,112 @@ router.get('/', asyncHandler(async (req, res) => {
   const dateFrom = (req.query.dateFrom as string) || '';
   const dateTo = (req.query.dateTo as string) || '';
   const dateField = ((req.query.dateField as string) || 'scheduledDate').trim();
+  const isWasteDisposalOnly = req.query.isWasteDisposalOnly === 'true' || req.query.wasteDisposalOnly === 'true';
+  const missingInvoice = req.query.missingInvoice === 'true';
 
-  const where: any = {};
-  if (status && status !== 'all') where.status = status;
-  if (clientId && clientId !== 'all') where.clientId = clientId;
-  if (projectId && projectId !== 'all') where.projectId = projectId;
-  if (serviceId && serviceId !== 'all') where.serviceId = serviceId;
-  if (invoiceId && invoiceId !== 'all') where.invoiceId = invoiceId;
+  const conditions: any[] = [];
+
+  if (isWasteDisposalOnly || (!canViewAll && canViewWaste)) {
+    conditions.push({
+      service: {
+        OR: [
+          { code: { in: ['waste-disposal', 'zbrinjavanje', 'zbrinjavanje-otpada', 'odlaganje', 'odlaganje-otpada'] } },
+          { code: { contains: 'disposal', mode: 'insensitive' } },
+          { code: { contains: 'zbrinjavanje', mode: 'insensitive' } },
+          { code: { contains: 'odlaganje', mode: 'insensitive' } },
+          { name: { contains: 'disposal', mode: 'insensitive' } },
+          { name: { contains: 'zbrinjavanje', mode: 'insensitive' } },
+          { name: { contains: 'збрињавање', mode: 'insensitive' } },
+          { name: { contains: 'odlaganje', mode: 'insensitive' } },
+          { name: { contains: 'одлагање', mode: 'insensitive' } },
+        ],
+      },
+    });
+  }
+
+  if (status && status !== 'all') {
+    const s = status.toLowerCase();
+    if (s === 'planned' || s === 'planirano' || s === 'планирано') {
+      conditions.push({
+        status: { in: ['Planned', 'planirano', 'планирано', 'planned'], mode: 'insensitive' },
+      });
+    } else if (s === 'in progress' || s === 'in_progress' || s === 'u toku' || s === 'у току') {
+      conditions.push({
+        status: { in: ['In Progress', 'in_progress', 'u toku', 'у току', 'in progress'], mode: 'insensitive' },
+      });
+    } else if (s === 'completed' || s === 'završeno' || s === 'завршено') {
+      conditions.push({
+        status: { in: ['Completed', 'završeno', 'завршено', 'completed'], mode: 'insensitive' },
+      });
+    } else if (s === 'cancelled' || s === 'otkazano' || s === 'отказано') {
+      conditions.push({
+        status: { in: ['Cancelled', 'otkazano', 'отказано', 'cancelled'], mode: 'insensitive' },
+      });
+    } else {
+      conditions.push({
+        status: { equals: status, mode: 'insensitive' },
+      });
+    }
+  }
+
+  if (clientId && clientId !== 'all') {
+    conditions.push({
+      OR: [
+        { clientId },
+        { client: { name: { contains: clientId, mode: 'insensitive' } } },
+      ],
+    });
+  }
+
+  if (projectId && projectId !== 'all') {
+    conditions.push({
+      OR: [
+        { projectId },
+        { project: { name: { contains: projectId, mode: 'insensitive' } } },
+      ],
+    });
+  }
+
+  if (serviceId && serviceId !== 'all') {
+    conditions.push({ serviceId });
+  }
+
+  if (invoiceId && invoiceId !== 'all') {
+    conditions.push({ invoiceId });
+  }
+
+  if (missingInvoice) {
+    conditions.push({ invoiceId: null });
+  }
 
   if (dateFrom || dateTo) {
     const validDateFields = ['scheduledDate', 'completionDate', 'createdAt'];
     const field = validDateFields.includes(dateField) ? dateField : 'scheduledDate';
-    where[field] = {};
-    if (dateFrom) where[field].gte = new Date(dateFrom);
+    const dateCond: any = {};
+    if (dateFrom) dateCond.gte = new Date(dateFrom);
     if (dateTo) {
       const endOfDay = new Date(dateTo);
       endOfDay.setHours(23, 59, 59, 999);
-      where[field].lte = endOfDay;
+      dateCond.lte = endOfDay;
     }
+    conditions.push({ [field]: dateCond });
   }
 
   if (search) {
-    where.OR = [
-      { location: { contains: search, mode: 'insensitive' } },
-      { status: { contains: search, mode: 'insensitive' } },
-      { notes: { contains: search, mode: 'insensitive' } },
-      { service: { name: { contains: search, mode: 'insensitive' } } },
-      { client: { name: { contains: search, mode: 'insensitive' } } },
-      { project: { name: { contains: search, mode: 'insensitive' } } },
-      { invoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
-    ];
+    conditions.push({
+      OR: [
+        { location: { contains: search, mode: 'insensitive' } },
+        { status: { contains: search, mode: 'insensitive' } },
+        { notes: { contains: search, mode: 'insensitive' } },
+        { service: { name: { contains: search, mode: 'insensitive' } } },
+        { client: { name: { contains: search, mode: 'insensitive' } } },
+        { project: { name: { contains: search, mode: 'insensitive' } } },
+        { invoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
+      ],
+    });
   }
 
-  if (!canViewAll && canViewWaste) {
-    where.service = {
-      ...where.service,
-      OR: [
-        { code: { in: ['waste-disposal', 'zbrinjavanje', 'zbrinjavanje-otpada', 'odlaganje', 'odlaganje-otpada'] } },
-        { code: { contains: 'disposal', mode: 'insensitive' } },
-        { code: { contains: 'zbrinjavanje', mode: 'insensitive' } },
-        { code: { contains: 'odlaganje', mode: 'insensitive' } },
-        { name: { contains: 'disposal', mode: 'insensitive' } },
-        { name: { contains: 'zbrinjavanje', mode: 'insensitive' } },
-        { name: { contains: 'збрињавање', mode: 'insensitive' } },
-        { name: { contains: 'odlaganje', mode: 'insensitive' } },
-        { name: { contains: 'одлагање', mode: 'insensitive' } },
-      ],
-    };
-  }
+  const where: any = conditions.length > 0 ? { AND: conditions } : {};
 
   const sinceDate = parseSince(req.query.since);
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
@@ -145,14 +203,22 @@ router.get('/', asyncHandler(async (req, res) => {
     maxLimit: 100,
   });
 
-  let orderBy: any = { [pagination.sortBy]: pagination.sortOrder };
-  if (pagination.sortBy === 'service') {
+  const sortFieldMap: Record<string, string> = {
+    serviceName: 'service',
+    clientName: 'client',
+    projectName: 'project',
+    invoiceNumber: 'invoice',
+  };
+  const sortBy = sortFieldMap[pagination.sortBy] || pagination.sortBy;
+
+  let orderBy: any = { [sortBy]: pagination.sortOrder };
+  if (sortBy === 'service') {
     orderBy = { service: { name: pagination.sortOrder } };
-  } else if (pagination.sortBy === 'client') {
+  } else if (sortBy === 'client') {
     orderBy = { client: { name: pagination.sortOrder } };
-  } else if (pagination.sortBy === 'project') {
+  } else if (sortBy === 'project') {
     orderBy = { project: { name: pagination.sortOrder } };
-  } else if (pagination.sortBy === 'invoice') {
+  } else if (sortBy === 'invoice') {
     orderBy = { invoice: { invoiceNumber: pagination.sortOrder } };
   }
 
