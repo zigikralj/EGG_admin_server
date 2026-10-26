@@ -5,8 +5,8 @@ export async function extractMentionedUserIds(content: string | null | undefined
   if (!content) return [];
   const userIds = new Set<string>();
 
-  // 1. Match data-user-id attributes
-  const dataAttrRegex = /data-user-id=["']([^"']+)["']/g;
+  // 1. Match data-user-id or data-id attributes
+  const dataAttrRegex = /data-(?:user-)?id=["']([^"']+)["']/g;
   let match: RegExpExecArray | null;
   while ((match = dataAttrRegex.exec(content)) !== null) {
     if (match[1]) {
