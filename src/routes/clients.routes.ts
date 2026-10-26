@@ -58,9 +58,6 @@ router.get("/", asyncHandler(async (req, res) => {
       { email: { contains: search, mode: "insensitive" as const } },
       { phone: { contains: search, mode: "insensitive" as const } },
       { city: { contains: search, mode: "insensitive" as const } },
-      { pib: { contains: search, mode: "insensitive" as const } },
-      { mb: { contains: search, mode: "insensitive" as const } },
-      { address: { contains: search, mode: "insensitive" as const } },
     ];
 
     if (where.OR) {
