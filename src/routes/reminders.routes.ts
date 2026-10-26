@@ -66,7 +66,16 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   if (clientId && clientId !== 'all') {
-    where.clientId = clientId;
+    const clientCondition = [
+      { clientId: clientId },
+      { clientName: { equals: clientId, mode: 'insensitive' as const } },
+    ];
+    if (where.OR) {
+      where.AND = [{ OR: where.OR }, { OR: clientCondition }];
+      delete where.OR;
+    } else {
+      where.OR = clientCondition;
+    }
   }
   if (projectId && projectId !== 'all') {
     where.projectId = projectId;
