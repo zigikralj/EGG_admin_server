@@ -14,37 +14,13 @@ router.use(requireAuth);
 
 // GET /api/users
 router.get('/', asyncHandler(async (req, res) => {
-  // Lightweight summary for dropdowns/assignees
-  if (req.query.fields === 'summary') {
-    const users = await prisma.user.findMany({
-      select: { id: true, name: true, email: true, role: true },
-      orderBy: { name: 'asc' },
-    });
-    res.json(users);
-    return;
-  }
-
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
-
-  if (!isPaginated) {
-    const users = await prisma.user.findMany({
-      include: { roleEntity: true },
-      orderBy: { name: 'asc' },
-    });
-    const sanitizedUsers = users.map((u) => formatUserWithPermissions(u));
-    res.json(sanitizedUsers);
-    return;
-  }
-
-  const pagination = parsePagination(req.query, {
-    defaultSortBy: 'name',
-    defaultSortOrder: 'asc',
-    maxLimit: 100,
-  });
 
   const search = ((req.query.search as string) || '').trim();
   const role = (req.query.role as string) || '';
   const status = (req.query.status as string) || '';
+  const forAssignee = req.query.forAssignee === 'true';
+  const includeUserName = ((req.query.includeUserName as string) || '').trim();
 
   const where: any = {};
   if (role && role !== 'all') where.role = role;
@@ -54,12 +30,86 @@ router.get('/', asyncHandler(async (req, res) => {
     else if (status.toLowerCase() === 'blocked') where.status = 'BLOCKED';
     else where.status = status;
   }
-  if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { email: { contains: search, mode: 'insensitive' } },
-      { phone: { contains: search, mode: 'insensitive' } },
+
+  // Filter for project / reminder assignees: exclude blocked, unapproved (non-pending), and system administrators
+  if (forAssignee) {
+    const assigneeConditions: any[] = [
+      {
+        NOT: [
+          { status: 'BLOCKED' },
+          { role: 'Administrator' },
+          { roleEntity: { isSystemAdmin: true } },
+        ],
+      },
+      {
+        OR: [
+          { isApproved: true },
+          { status: 'PENDING' },
+        ],
+      },
     ];
+
+    if (includeUserName) {
+      where.OR = [
+        { AND: assigneeConditions },
+        { name: { equals: includeUserName, mode: 'insensitive' as const } },
+      ];
+    } else {
+      where.AND = assigneeConditions;
+    }
+  }
+
+  if (search) {
+    const searchConditions = [
+      { name: { contains: search, mode: 'insensitive' as const } },
+      { email: { contains: search, mode: 'insensitive' as const } },
+      { phone: { contains: search, mode: 'insensitive' as const } },
+    ];
+    if (where.OR) {
+      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+      delete where.OR;
+    } else {
+      where.OR = searchConditions;
+    }
+  }
+
+  const pagination = parsePagination(req.query, {
+    defaultSortBy: 'name',
+    defaultSortOrder: 'asc',
+    maxLimit: 100,
+  });
+
+  // Lightweight summary for dropdowns/assignees (only id and name needed)
+  if (req.query.fields === 'summary') {
+    if (isPaginated) {
+      const [total, users] = await Promise.all([
+        prisma.user.count({ where }),
+        prisma.user.findMany({
+          where,
+          skip: pagination.skip,
+          take: pagination.take,
+          select: {
+            id: true,
+            name: true,
+          },
+          orderBy: { name: pagination.sortOrder },
+        }),
+      ]);
+
+      res.json(buildPaginatedResponse(users, total, pagination));
+      return;
+    }
+
+    const users = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+    res.json(users);
+    return;
   }
 
   const validSortFields = ['name', 'role', 'status', 'email', 'phone', 'createdAt'];

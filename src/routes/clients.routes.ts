@@ -26,21 +26,13 @@ import { parsePagination, buildPaginatedResponse } from "../helpers/pagination";
 
 // GET /api/clients
 router.get("/", asyncHandler(async (req, res) => {
-  if (req.query.fields === "summary") {
-    const summaryClients = await prisma.client.findMany({
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, city: true },
-    });
-    res.json(summaryClients);
-    return;
-  }
-
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
   const sinceDate = parseSince(req.query.since);
 
   const search = ((req.query.search as string) || "").trim();
   const city = (req.query.city as string) || "";
   const hasPermit = (req.query.hasPermit as string) || "";
+  const permitType = ((req.query.permitType as string) || "").trim();
 
   const where: any = {};
   if (city && city !== "all") {
@@ -52,17 +44,64 @@ router.get("/", asyncHandler(async (req, res) => {
     where.permits = { none: {} };
   }
 
-  if (search) {
+  if (permitType && permitType !== "all") {
     where.OR = [
-      { name: { contains: search, mode: "insensitive" } },
-      { contactPerson: { contains: search, mode: "insensitive" } },
-      { email: { contains: search, mode: "insensitive" } },
-      { phone: { contains: search, mode: "insensitive" } },
-      { city: { contains: search, mode: "insensitive" } },
-      { pib: { contains: search, mode: "insensitive" } },
-      { mb: { contains: search, mode: "insensitive" } },
-      { address: { contains: search, mode: "insensitive" } },
+      { permits: { some: { permitTypes: { has: permitType } } } },
+      { extraData: { permit: { permitTypes: { has: permitType } } } },
     ];
+  }
+
+  if (search) {
+    const searchConditions = [
+      { name: { contains: search, mode: "insensitive" as const } },
+      { contactPerson: { contains: search, mode: "insensitive" as const } },
+      { email: { contains: search, mode: "insensitive" as const } },
+      { phone: { contains: search, mode: "insensitive" as const } },
+      { city: { contains: search, mode: "insensitive" as const } },
+      { pib: { contains: search, mode: "insensitive" as const } },
+      { mb: { contains: search, mode: "insensitive" as const } },
+      { address: { contains: search, mode: "insensitive" as const } },
+    ];
+
+    if (where.OR) {
+      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+      delete where.OR;
+    } else {
+      where.OR = searchConditions;
+    }
+  }
+
+  // Summary mode (optimized for autocompletes and dropdowns)
+  if (req.query.fields === "summary") {
+    if (isPaginated) {
+      const pagination = parsePagination(req.query, {
+        defaultSortBy: "name",
+        defaultSortOrder: "asc",
+        maxLimit: 100,
+      });
+
+      const [total, summaryClients] = await Promise.all([
+        prisma.client.count({ where }),
+        prisma.client.findMany({
+          where,
+          skip: pagination.skip,
+          take: pagination.take,
+          orderBy: { name: pagination.sortOrder },
+          select: { id: true, name: true, city: true },
+        }),
+      ]);
+
+      res.json(buildPaginatedResponse(summaryClients, total, pagination));
+      return;
+    }
+
+    const summaryClients = await prisma.client.findMany({
+      where,
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, city: true },
+    });
+    res.json(summaryClients);
+    return;
   }
 
   const clientInclude = {

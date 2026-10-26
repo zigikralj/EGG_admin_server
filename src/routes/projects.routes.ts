@@ -169,6 +169,12 @@ router.get('/', asyncHandler(async (req, res) => {
     conditions.push({ clientId });
   }
 
+  // ClientName filter (for autocompletes / filters matching by name)
+  const clientName = ((req.query.clientName as string) || '').trim();
+  if (clientName && clientName !== 'all') {
+    conditions.push({ clientName: { equals: clientName, mode: 'insensitive' as const } });
+  }
+
   // Responsible filter
   const responsible = ((req.query.responsible as string) || '').trim();
   if (responsible && responsible !== 'all') {
@@ -219,6 +225,40 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   const pagination = parsePagination(req.query, 25);
+
+  const projectSummarySelect = {
+    id: true,
+    name: true,
+    clientId: true,
+    clientName: true,
+    type: true,
+    done: true,
+  };
+
+  if (req.query.fields === 'summary') {
+    if (pagination.isPaginated) {
+      const [total, projects] = await Promise.all([
+        prisma.project.count({ where }),
+        prisma.project.findMany({
+          where,
+          orderBy,
+          skip: pagination.skip,
+          take: pagination.take,
+          select: projectSummarySelect,
+        }),
+      ]);
+      res.json(buildPaginatedResponse(projects, total, pagination.page, pagination.limit));
+      return;
+    }
+
+    const projects = await prisma.project.findMany({
+      where,
+      orderBy,
+      select: projectSummarySelect,
+    });
+    res.json(projects);
+    return;
+  }
 
   if (pagination.isPaginated) {
     const [total, projects] = await Promise.all([
@@ -561,8 +601,28 @@ router.get('/:id', asyncHandler(async (req, res) => {
       client: {
         select: { id: true, name: true, city: true },
       },
+      responsibleUser: {
+        select: { id: true, name: true, email: true, gender: true },
+      },
       note: {
         select: { content: true, version: true, updatedAt: true },
+      },
+      reminders: {
+        orderBy: { createdAt: 'desc' },
+        include: {
+          client: { select: { id: true, name: true } },
+          responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
+          permit: { select: { id: true, permitNumber: true } },
+        },
+      },
+      invoices: {
+        orderBy: { createdAt: 'desc' },
+        include: {
+          client: { select: { id: true, name: true } },
+          parentInvoice: { select: { id: true, invoiceNumber: true, invoiceType: true } },
+          childInvoices: { select: { id: true, invoiceNumber: true, invoiceType: true } },
+          items: true,
+        },
       },
     },
   });
@@ -572,10 +632,31 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
+  let serviceName: string = project.type;
+  let serviceObj: { id: string; code: string; name: string } | null = null;
+  if (project.type) {
+    const srv = await prisma.service.findFirst({
+      where: {
+        OR: [
+          { code: project.type },
+          { id: project.type },
+          { name: project.type },
+        ],
+      },
+      select: { id: true, code: true, name: true },
+    });
+    if (srv) {
+      serviceName = srv.name;
+      serviceObj = srv;
+    }
+  }
+
   // Backward compatibility: provide `notes` from note relation
   res.json({
     ...project,
     notes: project.note?.content || null,
+    serviceName,
+    service: serviceObj,
   });
 }));
 
@@ -843,7 +924,8 @@ router.patch('/:id/note', asyncHandler(async (req, res) => {
   });
 
   res.json({
-    id: result.id,
+    id,
+    noteId: result.id,
     projectId: id,
     content: result.content,
     version: result.version,

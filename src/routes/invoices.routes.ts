@@ -26,8 +26,20 @@ router.get('/', asyncHandler(async (req, res) => {
   const dateFrom = (req.query.dateFrom as string) || '';
   const dateTo = (req.query.dateTo as string) || '';
   const dateField = (req.query.dateField as string) || 'dateCreated';
+  const excludeProjectId = (req.query.excludeProjectId as string) || '';
+  const excludeIds = ((req.query.excludeIds as string) || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const prioritizeProjectId = (req.query.prioritizeProjectId as string) || '';
+  const prioritizeClientId = (req.query.prioritizeClientId as string) || '';
+  const prioritizeClientName = ((req.query.prioritizeClientName as string) || '').trim().toLowerCase();
 
   const where: any = {};
+
+  if (excludeProjectId) {
+    where.NOT = where.NOT ? [...where.NOT, { projectId: excludeProjectId }] : [{ projectId: excludeProjectId }];
+  }
+  if (excludeIds.length > 0) {
+    where.id = { notIn: excludeIds };
+  }
   if (status && status !== 'all') {
     if (status === 'unpaid') {
       where.status = { notIn: ['Paid', 'Cancelled'] };
@@ -96,13 +108,34 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
 
+  const isSummary = req.query.fields === 'summary';
+
   const invoiceInclude = {
     client: { select: { id: true, name: true } },
     project: { select: { id: true, name: true, done: true } },
     parentInvoice: { select: { id: true, invoiceNumber: true, invoiceType: true } },
     childInvoices: { select: { id: true, invoiceNumber: true, invoiceType: true } },
     items: true,
+    providedServices: { select: { id: true, scheduledDate: true, status: true } },
   };
+
+  const invoiceSummarySelect = {
+    id: true,
+    invoiceNumber: true,
+    invoiceType: true,
+    status: true,
+    totalAmount: true,
+    currency: true,
+    clientName: true,
+    clientId: true,
+    projectId: true,
+    dueDate: true,
+    dateCreated: true,
+  };
+
+  const queryOptions = isSummary
+    ? { select: invoiceSummarySelect }
+    : { include: invoiceInclude };
 
   // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
   if (sinceDate || !isPaginated) {
@@ -113,7 +146,7 @@ router.get('/', asyncHandler(async (req, res) => {
       prisma.invoice.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        include: invoiceInclude,
+        ...(queryOptions as any),
       }),
       sinceDate ? fetchDeletedIds('Invoice', sinceDate) : Promise.resolve([]),
     ]);
@@ -142,6 +175,46 @@ router.get('/', asyncHandler(async (req, res) => {
   ];
   const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'dateCreated';
 
+  // If project or client prioritization is requested (e.g. linking to project or choosing parent invoice)
+  if (prioritizeProjectId || prioritizeClientId || prioritizeClientName) {
+    const allMatching = await prisma.invoice.findMany({
+      where,
+      ...(queryOptions as any),
+    });
+
+    const isMatchProject = (i: any) => Boolean(prioritizeProjectId && i.projectId === prioritizeProjectId);
+    const isMatchClient = (i: any) => {
+      if (prioritizeClientId && i.clientId && i.clientId === prioritizeClientId) return true;
+      if (prioritizeClientName && i.clientName && i.clientName.trim().toLowerCase() === prioritizeClientName) return true;
+      return false;
+    };
+
+    allMatching.sort((a, b) => {
+      const aProjMatch = isMatchProject(a);
+      const bProjMatch = isMatchProject(b);
+      if (aProjMatch && !bProjMatch) return -1;
+      if (!aProjMatch && bProjMatch) return 1;
+
+      const aClientMatch = isMatchClient(a);
+      const bClientMatch = isMatchClient(b);
+      if (aClientMatch && !bClientMatch) return -1;
+      if (!aClientMatch && bClientMatch) return 1;
+
+      if (a.dateCreated && b.dateCreated) {
+        return new Date(b.dateCreated).getTime() - new Date(a.dateCreated).getTime();
+      }
+      if (a.dateCreated && !b.dateCreated) return -1;
+      if (!a.dateCreated && b.dateCreated) return 1;
+
+      return (a.invoiceNumber || '').localeCompare(b.invoiceNumber || '');
+    });
+
+    const total = allMatching.length;
+    const items = allMatching.slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10));
+    res.json(buildPaginatedResponse(items, total, pagination));
+    return;
+  }
+
   const [total, items] = await Promise.all([
     prisma.invoice.count({ where }),
     prisma.invoice.findMany({
@@ -149,7 +222,7 @@ router.get('/', asyncHandler(async (req, res) => {
       skip: pagination.skip,
       take: pagination.take,
       orderBy: { [sortField]: pagination.sortOrder },
-      include: invoiceInclude,
+      ...(queryOptions as any),
     }),
   ]);
 
@@ -165,6 +238,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
       client: true,
       project: true,
       items: true,
+      providedServices: { select: { id: true, scheduledDate: true, status: true } },
     },
   });
 
