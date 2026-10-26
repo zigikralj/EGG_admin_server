@@ -924,7 +924,8 @@ router.patch('/:id/note', asyncHandler(async (req, res) => {
   });
 
   res.json({
-    id: result.id,
+    id,
+    noteId: result.id,
     projectId: id,
     content: result.content,
     version: result.version,
