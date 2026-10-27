@@ -79,6 +79,48 @@ router.get('/', asyncHandler(async (req, res) => {
     maxLimit: 100,
   });
 
+  // Lightweight projection for mentions and suggestions (id, name, role, avatarUrl)
+  if (req.query.fields === 'mention') {
+    const mentionWhere = {
+      ...where,
+      status: { not: 'BLOCKED' },
+      isApproved: true,
+    };
+
+    const mentionSelect = {
+      id: true,
+      name: true,
+      role: true,
+      avatarUrl: true,
+    };
+
+    if (isPaginated) {
+      const [total, users] = await Promise.all([
+        prisma.user.count({ where: mentionWhere }),
+        prisma.user.findMany({
+          where: mentionWhere,
+          skip: pagination.skip,
+          take: pagination.take,
+          select: mentionSelect,
+          orderBy: { name: pagination.sortOrder },
+        }),
+      ]);
+
+      res.json(buildPaginatedResponse(users, total, pagination));
+      return;
+    }
+
+    const limit = Math.min(parseInt(String(req.query.limit || 10), 10), 50);
+    const users = await prisma.user.findMany({
+      where: mentionWhere,
+      select: mentionSelect,
+      take: limit,
+      orderBy: { name: 'asc' },
+    });
+    res.json(users);
+    return;
+  }
+
   // Lightweight summary for dropdowns/assignees (only id and name needed)
   if (req.query.fields === 'summary') {
     if (isPaginated) {

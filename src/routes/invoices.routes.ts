@@ -32,49 +32,79 @@ router.get('/', asyncHandler(async (req, res) => {
   const prioritizeClientId = (req.query.prioritizeClientId as string) || '';
   const prioritizeClientName = ((req.query.prioritizeClientName as string) || '').trim().toLowerCase();
 
-  const where: any = {};
+  const conditions: any[] = [];
 
   if (excludeProjectId) {
-    where.NOT = where.NOT ? [...where.NOT, { projectId: excludeProjectId }] : [{ projectId: excludeProjectId }];
+    conditions.push({ NOT: { projectId: excludeProjectId } });
   }
   if (excludeIds.length > 0) {
-    where.id = { notIn: excludeIds };
+    conditions.push({ id: { notIn: excludeIds } });
   }
   if (status && status !== 'all') {
-    if (status === 'unpaid') {
-      where.status = { notIn: ['Paid', 'Cancelled'] };
+    const s = status.toLowerCase();
+    if (s === 'unpaid') {
+      conditions.push({ status: { notIn: ['Paid', 'Cancelled'] } });
+    } else if (s === 'overdue') {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      conditions.push({
+        OR: [
+          { status: { equals: 'Overdue', mode: 'insensitive' as const } },
+          {
+            AND: [
+              { status: { notIn: ['Paid', 'Cancelled'] } },
+              { dueDate: { not: null, lt: todayStr } },
+            ],
+          },
+        ],
+      });
     } else {
-      where.status = status;
+      conditions.push({ status: { equals: status, mode: 'insensitive' as const } });
     }
   }
   if (clientId && clientId !== 'all') {
-    where.clientId = clientId;
+    conditions.push({
+      OR: [
+        { clientId: clientId },
+        { clientName: { equals: clientId, mode: 'insensitive' as const } },
+      ],
+    });
   }
   if (projectId && projectId !== 'all') {
-    where.projectId = projectId;
+    conditions.push({
+      OR: [
+        { projectId: projectId },
+        { projectName: { equals: projectId, mode: 'insensitive' as const } },
+      ],
+    });
   }
   if (currency && currency !== 'all') {
-    where.currency = currency;
+    conditions.push({ currency });
   }
   if (invoiceType && invoiceType !== 'all') {
     if (invoiceType === 'Standard') {
-      where.OR = [
-        { invoiceType: 'Standard' },
-        { invoiceType: null },
-      ];
+      conditions.push({
+        OR: [
+          { invoiceType: 'Standard' },
+          { invoiceType: null },
+        ],
+      });
     } else {
-      where.invoiceType = invoiceType;
+      conditions.push({ invoiceType });
     }
   }
   if (linkedStatus && linkedStatus !== 'all') {
     if (linkedStatus === 'linked') {
-      where.OR = [
-        { parentInvoiceId: { not: null } },
-        { childInvoices: { some: {} } },
-      ];
+      conditions.push({
+        OR: [
+          { parentInvoiceId: { not: null } },
+          { childInvoices: { some: {} } },
+        ],
+      });
     } else if (linkedStatus === 'independent') {
-      where.parentInvoiceId = null;
-      where.childInvoices = { none: {} };
+      conditions.push({
+        parentInvoiceId: null,
+        childInvoices: { none: {} },
+      });
     }
   }
 
@@ -86,27 +116,27 @@ router.get('/', asyncHandler(async (req, res) => {
     const dateFilter: any = {};
     if (dateFrom) dateFilter.gte = field === 'createdAt' ? new Date(dateFrom) : dateFrom;
     if (dateTo) dateFilter.lte = field === 'createdAt' ? new Date(dateTo) : dateTo;
-    where[field] = dateFilter;
+    conditions.push({ [field]: dateFilter });
   }
 
   if (search) {
-    const searchConditions = [
-      { invoiceNumber: { contains: search, mode: 'insensitive' } },
-      { clientName: { contains: search, mode: 'insensitive' } },
-      { projectName: { contains: search, mode: 'insensitive' } },
-      { status: { contains: search, mode: 'insensitive' } },
-      { notes: { contains: search, mode: 'insensitive' } },
-      { items: { some: { description: { contains: search, mode: 'insensitive' } } } },
-      { parentInvoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
-      { childInvoices: { some: { invoiceNumber: { contains: search, mode: 'insensitive' } } } },
-    ];
-    if (where.OR) {
-      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
-      delete where.OR;
-    } else {
-      where.OR = searchConditions;
-    }
+    conditions.push({
+      OR: [
+        { invoiceNumber: { contains: search, mode: 'insensitive' as const } },
+        { clientName: { contains: search, mode: 'insensitive' as const } },
+        { projectName: { contains: search, mode: 'insensitive' as const } },
+        { status: { contains: search, mode: 'insensitive' as const } },
+        { notes: { contains: search, mode: 'insensitive' as const } },
+        { items: { some: { description: { contains: search, mode: 'insensitive' as const } } } },
+        { parentInvoice: { invoiceNumber: { contains: search, mode: 'insensitive' as const } } },
+        { childInvoices: { some: { invoiceNumber: { contains: search, mode: 'insensitive' as const } } } },
+      ],
+    });
   }
+
+  const where: any = conditions.length > 1
+    ? { AND: conditions }
+    : (conditions[0] || {});
 
   const isSummary = req.query.fields === 'summary';
 
@@ -161,19 +191,21 @@ router.get('/', asyncHandler(async (req, res) => {
     maxLimit: 100,
   });
 
-  const validSortFields = [
-    'dateCreated',
-    'dueDate',
-    'paymentDate',
-    'invoiceNumber',
-    'clientName',
-    'projectName',
-    'status',
-    'totalAmount',
-    'invoiceType',
-    'createdAt',
-  ];
-  const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'dateCreated';
+  const sortFieldMap: Record<string, string> = {
+    dateCreated: 'dateCreated',
+    dueDate: 'dueDate',
+    paymentDate: 'paymentDate',
+    invoiceNumber: 'invoiceNumber',
+    client: 'clientName',
+    clientName: 'clientName',
+    project: 'projectName',
+    projectName: 'projectName',
+    status: 'status',
+    totalAmount: 'totalAmount',
+    invoiceType: 'invoiceType',
+    createdAt: 'createdAt',
+  };
+  const sortField = sortFieldMap[pagination.sortBy] || 'dateCreated';
 
   // If project or client prioritization is requested (e.g. linking to project or choosing parent invoice)
   if (prioritizeProjectId || prioritizeClientId || prioritizeClientName) {

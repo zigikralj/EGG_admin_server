@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { hasPermission } from '../types';
+import { hasPermission, isRestrictedToOwn } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
@@ -31,16 +31,27 @@ router.get('/', asyncHandler(async (req, res) => {
   const prioritizeClientId = (req.query.prioritizeClientId as string) || '';
   const prioritizeClientName = ((req.query.prioritizeClientName as string) || '').trim().toLowerCase();
 
-  const where: any = {};
+  const conditions: any[] = [];
+
+  const authUser = req.authUser!;
+  const isOnlyOwn = isRestrictedToOwn(authUser, "reminders") || isRestrictedToOwn(authUser, "tracker_reminders");
+  if (isOnlyOwn) {
+    conditions.push({
+      OR: [
+        { responsibleId: authUser.id },
+        ...(authUser.name ? [{ responsible: { equals: authUser.name, mode: 'insensitive' as const } }] : []),
+      ],
+    });
+  }
 
   if (excludeProjectId) {
-    where.NOT = where.NOT ? [...where.NOT, { projectId: excludeProjectId }] : [{ projectId: excludeProjectId }];
+    conditions.push({ NOT: { projectId: excludeProjectId } });
   }
   if (excludePermitId) {
-    where.NOT = where.NOT ? [...where.NOT, { permitId: excludePermitId }] : [{ permitId: excludePermitId }];
+    conditions.push({ NOT: { permitId: excludePermitId } });
   }
   if (excludeIds.length > 0) {
-    where.id = { notIn: excludeIds };
+    conditions.push({ id: { notIn: excludeIds } });
   }
 
   // Status filtering
@@ -51,43 +62,49 @@ router.get('/', asyncHandler(async (req, res) => {
     const in10DaysStr = tenDaysFromNow.toISOString().slice(0, 10);
 
     if (status === 'pending') {
-      where.status = { in: ['Pending', 'U toku', 'Čeka se', 'Draft'] };
+      conditions.push({ status: { in: ['Pending', 'U toku', 'Čeka se', 'Draft', 'In Progress'] } });
     } else if (status === 'completed') {
-      where.status = { in: ['Completed', 'Završeno', 'Done'] };
+      conditions.push({ status: { in: ['Completed', 'Završeno', 'Done'] } });
     } else if (status === 'overdue') {
-      where.status = { notIn: ['Completed', 'Završeno', 'Done'] };
-      where.dueDate = { lt: todayStr };
+      conditions.push({
+        status: { notIn: ['Completed', 'Završeno', 'Done'] },
+        dueDate: { lt: todayStr },
+      });
     } else if (status === 'approaching') {
-      where.status = { notIn: ['Completed', 'Završeno', 'Done'] };
-      where.dueDate = { gte: todayStr, lte: in10DaysStr };
+      conditions.push({
+        status: { notIn: ['Completed', 'Završeno', 'Done'] },
+        dueDate: { gte: todayStr, lte: in10DaysStr },
+      });
+    } else if (status === 'active') {
+      conditions.push({ status: { notIn: ['Completed', 'Završeno', 'Done'] } });
+    } else if (status.toLowerCase() === 'in progress' || status.toLowerCase() === 'in_progress') {
+      conditions.push({ status: { in: ['In Progress', 'U toku', 'У току'] } });
     } else {
-      where.status = { equals: status, mode: 'insensitive' };
+      conditions.push({ status: { equals: status, mode: 'insensitive' as const } });
     }
   }
 
   if (clientId && clientId !== 'all') {
-    const clientCondition = [
-      { clientId: clientId },
-      { clientName: { equals: clientId, mode: 'insensitive' as const } },
-    ];
-    if (where.OR) {
-      where.AND = [{ OR: where.OR }, { OR: clientCondition }];
-      delete where.OR;
-    } else {
-      where.OR = clientCondition;
-    }
+    conditions.push({
+      OR: [
+        { clientId: clientId },
+        { clientName: { equals: clientId, mode: 'insensitive' as const } },
+      ],
+    });
   }
   if (projectId && projectId !== 'all') {
-    where.projectId = projectId;
+    conditions.push({ projectId });
   }
   if (permitId && permitId !== 'all') {
-    where.permitId = permitId;
+    conditions.push({ permitId });
   }
   if (responsible && responsible !== 'all') {
-    where.OR = [
-      { responsible: { contains: responsible, mode: 'insensitive' } },
-      { responsibleId: responsible },
-    ];
+    conditions.push({
+      OR: [
+        { responsible: { contains: responsible, mode: 'insensitive' as const } },
+        { responsibleId: responsible },
+      ],
+    });
   }
 
   // Date range filter
@@ -96,25 +113,25 @@ router.get('/', asyncHandler(async (req, res) => {
     const dateFilter: any = {};
     if (dateFrom) dateFilter.gte = field === 'createdAt' ? new Date(dateFrom) : dateFrom;
     if (dateTo) dateFilter.lte = field === 'createdAt' ? new Date(dateTo) : dateTo;
-    where[field] = dateFilter;
+    conditions.push({ [field]: dateFilter });
   }
 
   if (search) {
-    const searchConditions = [
-      { title: { contains: search, mode: 'insensitive' as const } },
-      { projectName: { contains: search, mode: 'insensitive' as const } },
-      { clientName: { contains: search, mode: 'insensitive' as const } },
-      { responsible: { contains: search, mode: 'insensitive' as const } },
-      { status: { contains: search, mode: 'insensitive' as const } },
-      { notes: { contains: search, mode: 'insensitive' as const } },
-    ];
-    if (where.OR) {
-      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
-      delete where.OR;
-    } else {
-      where.OR = searchConditions;
-    }
+    conditions.push({
+      OR: [
+        { title: { contains: search, mode: 'insensitive' as const } },
+        { projectName: { contains: search, mode: 'insensitive' as const } },
+        { clientName: { contains: search, mode: 'insensitive' as const } },
+        { responsible: { contains: search, mode: 'insensitive' as const } },
+        { status: { contains: search, mode: 'insensitive' as const } },
+        { notes: { contains: search, mode: 'insensitive' as const } },
+      ],
+    });
   }
+
+  const where: any = conditions.length > 1
+    ? { AND: conditions }
+    : (conditions[0] || {});
 
   const isSummary = req.query.fields === 'summary';
 
@@ -162,8 +179,18 @@ router.get('/', asyncHandler(async (req, res) => {
     maxLimit: 100,
   });
 
-  const validSortFields = ['dueDate', 'title', 'projectName', 'clientName', 'responsible', 'status', 'createdAt'];
-  const sortField = validSortFields.includes(pagination.sortBy) ? pagination.sortBy : 'dueDate';
+  const sortFieldMap: Record<string, string> = {
+    dueDate: 'dueDate',
+    title: 'title',
+    project: 'projectName',
+    projectName: 'projectName',
+    client: 'clientName',
+    clientName: 'clientName',
+    responsible: 'responsible',
+    status: 'status',
+    createdAt: 'createdAt',
+  };
+  const sortField = sortFieldMap[pagination.sortBy] || 'dueDate';
 
   // If client prioritization is requested (e.g. linking to project or permit)
   if (prioritizeClientId || prioritizeClientName) {

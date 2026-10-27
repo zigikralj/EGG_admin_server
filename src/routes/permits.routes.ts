@@ -162,6 +162,7 @@ router.get("/", asyncHandler(async (req, res) => {
       id: true,
       permitNumber: true,
       clientId: true,
+      permitTypes: true,
       client: { select: { id: true, name: true } },
     };
 
@@ -169,6 +170,7 @@ router.get("/", asyncHandler(async (req, res) => {
       id: p.id,
       permitNumber: p.permitNumber,
       clientId: p.clientId,
+      permitTypes: p.permitTypes,
       clientName: p.client?.name || null,
     });
 
