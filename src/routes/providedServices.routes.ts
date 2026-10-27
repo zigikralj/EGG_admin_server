@@ -167,10 +167,10 @@ router.get('/', asyncHandler(async (req, res) => {
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
 
   const includeRelations = {
-    service: { select: { id: true, code: true, name: true, group: true, frequency: true } },
-    client: { select: { id: true, name: true } },
+    service: { select: { id: true, code: true, name: true, group: true, frequency: true, customDataModel: true } },
+    client: { select: { id: true, name: true, city: true } },
     project: { select: { id: true, name: true, done: true } },
-    invoice: { select: { id: true, invoiceNumber: true } },
+    invoice: { select: { id: true, invoiceNumber: true, status: true } },
   };
 
   // Delta sync or unpaginated request
