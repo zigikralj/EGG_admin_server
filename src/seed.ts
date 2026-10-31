@@ -767,6 +767,7 @@ export async function seed(force = false) {
       if (p.reminderDueDate) {
         await prisma.reminder.create({
           data: {
+            title: `Periodični pregled: ${createdProj.name}`,
             projectId: createdProj.id,
             projectName: createdProj.name,
             clientId: client.id,
@@ -784,6 +785,7 @@ export async function seed(force = false) {
     // 5. Additional Mock Reminders for a rich reminders table
     const extraReminders = [
       {
+        title: 'Godišnje merenje emisije buke u životnoj sredini',
         projectName: 'Godišnje merenje emisije buke u životnoj sredini',
         clientKey: 'Metalurgija AD',
         responsible: 'Petar Marković',
@@ -792,6 +794,7 @@ export async function seed(force = false) {
         dueDate: '2026-08-18',
       },
       {
+        title: 'Prijava opasnog otpada za III kvartal',
         projectName: 'Prijava opasnog otpada za III kvartal',
         clientKey: 'EcoRecycling d.o.o.',
         responsible: 'Aleksandar Stanković',
@@ -800,6 +803,7 @@ export async function seed(force = false) {
         dueDate: '2026-08-20',
       },
       {
+        title: 'Ispitivanje otpadnih voda - Terensko uzorkovanje',
         projectName: 'Ispitivanje otpadnih voda - Terensko uzorkovanje',
         clientKey: 'Fabrika pakovanja "Pak-Sistem"',
         responsible: 'Nenad Jovanović',
@@ -808,6 +812,7 @@ export async function seed(force = false) {
         dueDate: '2026-08-22',
       },
       {
+        title: 'Vanredna inspekcija skladišta hemikalija',
         projectName: 'Vanredna inspekcija skladišta hemikalija',
         clientKey: 'Hemija-Farm Beograd',
         responsible: 'Marija Petrović',
@@ -816,6 +821,7 @@ export async function seed(force = false) {
         dueDate: '2026-08-25',
       },
       {
+        title: 'Verifikacija ISO 14001:2015 dokumentacije',
         projectName: 'Verifikacija ISO 14001:2015 dokumentacije',
         clientKey: 'AgroPlod d.o.o.',
         responsible: 'Nenad Jovanović',
@@ -824,6 +830,7 @@ export async function seed(force = false) {
         dueDate: '2026-08-28',
       },
       {
+        title: 'Merenje kvaliteta vazduha u radnoj zoni',
         projectName: 'Merenje kvaliteta vazduha u radnoj zoni',
         clientKey: 'Energo-Term Kraljevo',
         responsible: 'Petar Marković',
@@ -832,6 +839,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-02',
       },
       {
+        title: 'Godišnji izveštaj ADR savetnika za prevoz opasne robe',
         projectName: 'Godišnji izveštaj ADR savetnika za prevoz opasne robe',
         clientKey: 'Hemija-Farm Beograd',
         responsible: 'Marija Petrović',
@@ -840,6 +848,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-05',
       },
       {
+        title: 'Obnova dozvole za tretman otpada',
         projectName: 'Obnova dozvole za tretman otpada',
         clientKey: 'EcoRecycling d.o.o.',
         responsible: 'Aleksandar Stanković',
@@ -848,6 +857,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-10',
       },
       {
+        title: 'Monitoring podzemnih voda – Bušotina B-1',
         projectName: 'Monitoring podzemnih voda – Bušotina B-1',
         clientKey: 'Grad Kraljevo – Gradska uprava',
         responsible: 'Petar Marković',
@@ -856,6 +866,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-12',
       },
       {
+        title: 'Kontrola ispravnosti sistema za prečišćavanje otpadnih voda',
         projectName: 'Kontrola ispravnosti sistema za prečišćavanje otpadnih voda',
         clientKey: 'Fabrika pakovanja "Pak-Sistem"',
         responsible: 'Nenad Jovanović',
@@ -864,6 +875,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-15',
       },
       {
+        title: 'Obuka radnika za postupanje u slučaju udesa',
         projectName: 'Obuka radnika za postupanje u slučaju udesa',
         clientKey: 'Metalurgija AD',
         responsible: 'Marija Petrović',
@@ -872,6 +884,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-18',
       },
       {
+        title: 'Analiza teških metala u mulju',
         projectName: 'Analiza teških metala u mulju',
         clientKey: 'EcoRecycling d.o.o.',
         responsible: 'Nenad Jovanović',
@@ -880,6 +893,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-22',
       },
       {
+        title: 'Ispitivanje efikasnosti filtera na dimnjaku',
         projectName: 'Ispitivanje efikasnosti filtera na dimnjaku',
         clientKey: 'Energo-Term Kraljevo',
         responsible: 'Petar Marković',
@@ -888,6 +902,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-25',
       },
       {
+        title: 'Godišnji audit FSC lanca podrijetla',
         projectName: 'Godišnji audit FSC lanca podrijetla',
         clientKey: 'AgroPlod d.o.o.',
         responsible: 'Aleksandar Stanković',
@@ -896,6 +911,7 @@ export async function seed(force = false) {
         dueDate: '2026-09-30',
       },
       {
+        title: 'Procena opasnosti od udesa i zaštita životne sredine',
         projectName: 'Procena opasnosti od udesa i zaštita životne sredine',
         clientKey: 'Grad Kraljevo – Gradska uprava',
         responsible: 'Aleksandar Stanković',
@@ -911,6 +927,8 @@ export async function seed(force = false) {
 
       await prisma.reminder.create({
         data: {
+          title: r.title,
+          projectId: (r.projectName && projectMap[r.projectName]) || null,
           projectName: r.projectName,
           clientId: client.id,
           clientName: client.name,
