@@ -93,6 +93,13 @@ Every route file follows the same pattern:
 
 ## Key Patterns & Conventions
 
+### HARD RULE: NEVER SERVE OR FETCH UNPAGINATED ENTITY LISTS
+> [!CAUTION]
+> **STRICT PERFORMANCE & SCALABILITY INVARIANT:**
+> All collection endpoints for core business entities (`projects`, `services`, `reminders`, `invoices`, `clients`, `permits`, `provided-services`, `users`) MUST enforce pagination via `page` and `limit` query parameters with maximum caps (e.g. `limit <= 1000`), returning structured paginated responses (`buildPaginatedResponse` / `{ data, pagination }`).
+>
+> **NEVER** expose or implement unbounded full-table scans (`prisma.model.findMany()` with no `take` or date/ID scope) on core entities. Reference data (categories, company info) with small bounded sets may be cached via `referenceCache.ts`.
+
 ### Adding a New Route
 1. Create `src/routes/<entity>.routes.ts`
 2. Follow the pattern: `Router()` → `router.use(requireAuth)` → `asyncHandler(async (req, res) => {...})`
@@ -234,4 +241,5 @@ npm run release:major          # Bump major version
 8. **Manager < Administrator** — Managers cannot create, modify, or delete Administrator accounts, nor assign the Administrator role.
 9. **ALWAYS use migrations, NEVER db push** — Render runs `npx prisma migrate deploy` on deployment. Every schema change must have a corresponding migration file in `prisma/migrations/`. Using `db push` skips migration tracking, causes schema drift, and breaks deployments.
 10. **Squash Pre-Production Migrations** — Always consolidate micro-migrations created during feature development into a single clean migration before deploying to staging/production. Do not ship intermediate iterations (e.g. creating a table, adding a column, dropping/re-creating indexes) if they all belong to the same initial feature release.
+11. **HARD RULE: No Hardcoded Names for Service Identification** — NEVER use hardcoded service names or string aliases (e.g., `'Zbrinjavanje otpada'`, `'Waste Disposal'`, `'Odlaganje otpada'`, etc.) to search, identify, or auto-fallback to services in backend routes, database queries, or server logic. The Waste Disposal service is configured exclusively by the Administrator in the UI and persisted to `SystemSetting` (`waste_disposal_service_id`). If not configured, it must remain unconfigured without guessing.
 

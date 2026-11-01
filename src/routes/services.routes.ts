@@ -28,12 +28,22 @@ router.get('/', asyncHandler(async (req, res) => {
 
   let filtered = services!;
   if (search) {
-    filtered = services.filter(
+    filtered = filtered.filter(
       (s) =>
         (s.name && s.name.toLowerCase().includes(search)) ||
         (s.code && s.code.toLowerCase().includes(search)) ||
         (s.description && s.description.toLowerCase().includes(search))
     );
+  }
+
+  const group = ((req.query.group as string) || '').trim();
+  if (group && group !== 'all') {
+    filtered = filtered.filter((s) => s.group === group);
+  }
+
+  const frequency = ((req.query.frequency as string) || '').trim();
+  if (frequency && frequency !== 'all') {
+    filtered = filtered.filter((s) => String(s.frequency || 0) === frequency);
   }
 
   const isSummary = req.query.fields === 'summary';
@@ -46,8 +56,21 @@ router.get('/', asyncHandler(async (req, res) => {
     const pagination = parsePagination(req.query, {
       defaultSortBy: 'name',
       defaultSortOrder: 'asc',
-      maxLimit: 100,
+      maxLimit: 1000,
     });
+
+    const sortBy = pagination.sortBy || 'name';
+    const sortOrder = pagination.sortOrder || 'asc';
+    filtered = [...filtered].sort((a, b) => {
+      let res = 0;
+      if (sortBy === 'group') res = (a.group || '').localeCompare(b.group || '');
+      else if (sortBy === 'frequency') res = (a.frequency || 0) - (b.frequency || 0);
+      else if (sortBy === 'description') res = (a.description || '').localeCompare(b.description || '');
+      else if (sortBy === 'createdAt') res = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      else res = (a.name || '').localeCompare(b.name || '');
+      return sortOrder === 'asc' ? res : -res;
+    });
+
     const total = filtered.length;
     const items = filtered
       .slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10))
@@ -57,6 +80,53 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   res.json(filtered.map(formatService));
+}));
+
+// GET /api/services/check-code
+router.get('/check-code', asyncHandler(async (req, res) => {
+  const rawCode = (req.query.code as string) || '';
+  const formattedCode = rawCode.trim().toLowerCase().replace(/\s+/g, '-');
+  if (!formattedCode) {
+    res.json({ exists: false });
+    return;
+  }
+  const excludeId = (req.query.excludeId as string) || undefined;
+
+  let services: any[] | null = getReferenceCache(SERVICES_CACHE_KEY);
+  let service = services
+    ? services.find((s) => s.code.toLowerCase() === formattedCode && (!excludeId || s.id !== excludeId))
+    : null;
+  if (!service) {
+    service = await prisma.service.findFirst({
+      where: {
+        code: { equals: formattedCode, mode: 'insensitive' },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+  }
+  res.json({ exists: Boolean(service) });
+}));
+
+// GET /api/services/:id
+router.get('/:id', asyncHandler(async (req, res) => {
+  const id = req.params.id as string;
+  let services: any[] | null = getReferenceCache(SERVICES_CACHE_KEY);
+  let service = services ? services.find((s) => s.id === id || s.code === id) : null;
+  if (!service) {
+    service = await prisma.service.findFirst({
+      where: {
+        OR: [
+          { id },
+          { code: id },
+        ],
+      },
+    });
+  }
+  if (!service) {
+    res.status(404).json({ error: 'Service not found' });
+    return;
+  }
+  res.json(service);
 }));
 
 // POST /api/services
@@ -117,7 +187,21 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
-  const { name, group, frequency, description, customDataModel } = req.body;
+  const { code, name, group, frequency, description, customDataModel } = req.body;
+
+  const existingService = await prisma.service.findUnique({ where: { id } });
+  if (!existingService) {
+    res.status(404).json({ error: 'Service not found' });
+    return;
+  }
+
+  if (code && typeof code === 'string' && code.trim()) {
+    const formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
+    if (formattedCode !== existingService.code.toLowerCase()) {
+      res.status(400).json({ error: 'Service slug is non-editable' });
+      return;
+    }
+  }
 
   if (name && name.trim()) {
     const trimmedName = name.trim();

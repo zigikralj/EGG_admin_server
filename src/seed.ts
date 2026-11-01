@@ -1711,6 +1711,13 @@ export async function seed(force = false) {
   const wasteDisposalService = await prisma.service.findUnique({ where: { code: 'waste-disposal' } });
   
   if (wasteDisposalService) {
+    // Ensure system setting for waste disposal service id is stored
+    await prisma.systemSetting.upsert({
+      where: { key: 'waste_disposal_service_id' },
+      update: { value: wasteDisposalService.id },
+      create: { key: 'waste_disposal_service_id', value: wasteDisposalService.id },
+    });
+
     // Custom data model definition for waste disposal directly on Service
     const customModels = [
       { id: 'kolicina_kg', name: 'Količina', type: 'number', unit: 'kg', required: true },

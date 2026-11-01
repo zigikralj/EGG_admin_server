@@ -16,6 +16,7 @@ import categoriesRoutes from './routes/categories.routes';
 import invoicesRoutes from './routes/invoices.routes';
 import providedServicesRoutes from './routes/providedServices.routes';
 import preferencesRoutes from './routes/preferences.routes';
+import systemSettingsRoutes from './routes/systemSettings.routes';
 import companyInfoRoutes from './routes/companyInfo.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import permitsRoutes from './routes/permits.routes';
@@ -84,6 +85,7 @@ export function createApp() {
   app.use(API_ROUTES.INVOICES, invoicesRoutes);
   app.use(API_ROUTES.PROVIDED_SERVICES, providedServicesRoutes);
   app.use(API_ROUTES.PREFERENCES, preferencesRoutes);
+  app.use(API_ROUTES.SYSTEM_SETTINGS, systemSettingsRoutes);
   app.use(API_ROUTES.COMPANY_INFO, companyInfoRoutes);
   app.use(API_ROUTES.NOTIFICATIONS, notificationsRoutes);
   app.use(API_ROUTES.PERMITS, permitsRoutes);

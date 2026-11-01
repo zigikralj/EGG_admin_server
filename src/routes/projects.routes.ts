@@ -76,9 +76,41 @@ const projectListSelect = {
     select: { id: true, title: true, dueDate: true, status: true },
   },
   invoices: {
-    select: { id: true, invoiceNumber: true, status: true, totalAmount: true, dueDate: true },
+    select: { id: true, invoiceNumber: true, status: true, totalAmount: true, dueDate: true, currency: true },
   },
 };
+
+export async function enrichProjectsWithServiceName<T extends { type?: string | null }>(
+  projects: T[]
+): Promise<(T & { serviceName: string })[]> {
+  const types = Array.from(new Set(projects.map((p) => p.type).filter(Boolean))) as string[];
+  if (types.length === 0) {
+    return projects.map((p) => ({ ...p, serviceName: p.type || '' }));
+  }
+
+  const matchingServices = await prisma.service.findMany({
+    where: {
+      OR: [
+        { code: { in: types } },
+        { id: { in: types } },
+        { name: { in: types } },
+      ],
+    },
+    select: { id: true, code: true, name: true },
+  });
+
+  const serviceMap = new Map<string, string>();
+  for (const s of matchingServices) {
+    if (s.code) serviceMap.set(s.code, s.name);
+    if (s.id) serviceMap.set(s.id, s.name);
+    if (s.name) serviceMap.set(s.name, s.name);
+  }
+
+  return projects.map((p) => ({
+    ...p,
+    serviceName: (p.type && serviceMap.get(p.type)) || p.type || '',
+  }));
+}
 
 // ----------------------------------------------------
 // PROJECTS CRUD
@@ -271,7 +303,8 @@ router.get('/', asyncHandler(async (req, res) => {
         select: projectListSelect,
       }),
     ]);
-    res.json(buildPaginatedResponse(projects, total, pagination.page, pagination.limit));
+    const enrichedProjects = await enrichProjectsWithServiceName(projects);
+    res.json(buildPaginatedResponse(enrichedProjects, total, pagination.page, pagination.limit));
     return;
   }
 
@@ -284,7 +317,8 @@ router.get('/', asyncHandler(async (req, res) => {
     sinceDate ? fetchDeletedIds('Project', sinceDate) : Promise.resolve([]),
   ]);
 
-  res.json(buildDeltaResponse(projects, deletedIds, sinceDate));
+  const enrichedProjects = await enrichProjectsWithServiceName(projects);
+  res.json(buildDeltaResponse(enrichedProjects, deletedIds, sinceDate));
 }));
 
 // GET /api/projects/updates
