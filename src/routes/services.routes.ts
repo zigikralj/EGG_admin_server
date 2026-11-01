@@ -28,12 +28,22 @@ router.get('/', asyncHandler(async (req, res) => {
 
   let filtered = services!;
   if (search) {
-    filtered = services.filter(
+    filtered = filtered.filter(
       (s) =>
         (s.name && s.name.toLowerCase().includes(search)) ||
         (s.code && s.code.toLowerCase().includes(search)) ||
         (s.description && s.description.toLowerCase().includes(search))
     );
+  }
+
+  const group = ((req.query.group as string) || '').trim();
+  if (group && group !== 'all') {
+    filtered = filtered.filter((s) => s.group === group);
+  }
+
+  const frequency = ((req.query.frequency as string) || '').trim();
+  if (frequency && frequency !== 'all') {
+    filtered = filtered.filter((s) => String(s.frequency || 0) === frequency);
   }
 
   const isSummary = req.query.fields === 'summary';
@@ -46,8 +56,21 @@ router.get('/', asyncHandler(async (req, res) => {
     const pagination = parsePagination(req.query, {
       defaultSortBy: 'name',
       defaultSortOrder: 'asc',
-      maxLimit: 100,
+      maxLimit: 1000,
     });
+
+    const sortBy = pagination.sortBy || 'name';
+    const sortOrder = pagination.sortOrder || 'asc';
+    filtered = [...filtered].sort((a, b) => {
+      let res = 0;
+      if (sortBy === 'group') res = (a.group || '').localeCompare(b.group || '');
+      else if (sortBy === 'frequency') res = (a.frequency || 0) - (b.frequency || 0);
+      else if (sortBy === 'description') res = (a.description || '').localeCompare(b.description || '');
+      else if (sortBy === 'createdAt') res = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      else res = (a.name || '').localeCompare(b.name || '');
+      return sortOrder === 'asc' ? res : -res;
+    });
+
     const total = filtered.length;
     const items = filtered
       .slice(pagination.skip, (pagination.skip || 0) + (pagination.take || 10))

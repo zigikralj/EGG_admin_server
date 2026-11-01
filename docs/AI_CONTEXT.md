@@ -93,6 +93,13 @@ Every route file follows the same pattern:
 
 ## Key Patterns & Conventions
 
+### HARD RULE: NEVER SERVE OR FETCH UNPAGINATED ENTITY LISTS
+> [!CAUTION]
+> **STRICT PERFORMANCE & SCALABILITY INVARIANT:**
+> All collection endpoints for core business entities (`projects`, `services`, `reminders`, `invoices`, `clients`, `permits`, `provided-services`, `users`) MUST enforce pagination via `page` and `limit` query parameters with maximum caps (e.g. `limit <= 1000`), returning structured paginated responses (`buildPaginatedResponse` / `{ data, pagination }`).
+>
+> **NEVER** expose or implement unbounded full-table scans (`prisma.model.findMany()` with no `take` or date/ID scope) on core entities. Reference data (categories, company info) with small bounded sets may be cached via `referenceCache.ts`.
+
 ### Adding a New Route
 1. Create `src/routes/<entity>.routes.ts`
 2. Follow the pattern: `Router()` → `router.use(requireAuth)` → `asyncHandler(async (req, res) => {...})`
