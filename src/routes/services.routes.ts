@@ -82,6 +82,31 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(filtered.map(formatService));
 }));
 
+// GET /api/services/check-code
+router.get('/check-code', asyncHandler(async (req, res) => {
+  const rawCode = (req.query.code as string) || '';
+  const formattedCode = rawCode.trim().toLowerCase().replace(/\s+/g, '-');
+  if (!formattedCode) {
+    res.json({ exists: false });
+    return;
+  }
+  const excludeId = (req.query.excludeId as string) || undefined;
+
+  let services: any[] | null = getReferenceCache(SERVICES_CACHE_KEY);
+  let service = services
+    ? services.find((s) => s.code.toLowerCase() === formattedCode && (!excludeId || s.id !== excludeId))
+    : null;
+  if (!service) {
+    service = await prisma.service.findFirst({
+      where: {
+        code: { equals: formattedCode, mode: 'insensitive' },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+  }
+  res.json({ exists: Boolean(service) });
+}));
+
 // GET /api/services/:id
 router.get('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id as string;
@@ -164,17 +189,16 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id as string;
   const { code, name, group, frequency, description, customDataModel } = req.body;
 
-  let formattedCode: string | undefined;
+  const existingService = await prisma.service.findUnique({ where: { id } });
+  if (!existingService) {
+    res.status(404).json({ error: 'Service not found' });
+    return;
+  }
+
   if (code && typeof code === 'string' && code.trim()) {
-    formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
-    const existingCode = await prisma.service.findFirst({
-      where: {
-        id: { not: id },
-        code: formattedCode,
-      },
-    });
-    if (existingCode) {
-      res.status(400).json({ error: 'A service with this code already exists' });
+    const formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
+    if (formattedCode !== existingService.code.toLowerCase()) {
+      res.status(400).json({ error: 'Service slug is non-editable' });
       return;
     }
   }
@@ -196,7 +220,6 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const updated = await prisma.service.update({
     where: { id },
     data: {
-      code: formattedCode,
       name: name ? name.trim() : undefined,
       group,
       frequency: Number(frequency) || 0,
