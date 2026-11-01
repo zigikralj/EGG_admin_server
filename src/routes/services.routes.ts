@@ -82,6 +82,28 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(filtered.map(formatService));
 }));
 
+// GET /api/services/:id
+router.get('/:id', asyncHandler(async (req, res) => {
+  const id = req.params.id as string;
+  let services: any[] | null = getReferenceCache(SERVICES_CACHE_KEY);
+  let service = services ? services.find((s) => s.id === id || s.code === id) : null;
+  if (!service) {
+    service = await prisma.service.findFirst({
+      where: {
+        OR: [
+          { id },
+          { code: id },
+        ],
+      },
+    });
+  }
+  if (!service) {
+    res.status(404).json({ error: 'Service not found' });
+    return;
+  }
+  res.json(service);
+}));
+
 // POST /api/services
 router.post('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
