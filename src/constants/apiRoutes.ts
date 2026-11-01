@@ -23,6 +23,7 @@ export const API_ROUTES = {
   INVOICES: '/api/invoices',
   PROVIDED_SERVICES: '/api/provided-services',
   PREFERENCES: '/api/preferences',
+  SYSTEM_SETTINGS: '/api/system-settings',
   COMPANY_INFO: '/api/company-info',
   NOTIFICATIONS: '/api/notifications',
   PERMITS: '/api/permits',
@@ -53,5 +54,6 @@ export const PRISMA_MODEL_TO_API_ROUTE: Record<string, string> = {
   Role: API_ROUTES.ROLES,
   WasteCatalog: API_ROUTES.WASTE_CATALOG,
   CompanyInfo: API_ROUTES.COMPANY_INFO,
+  SystemSetting: API_ROUTES.SYSTEM_SETTINGS,
   ActivityLog: API_ROUTES.ACTIVITY_LOGS.BASE,
 };

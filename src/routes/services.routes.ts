@@ -117,7 +117,22 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
-  const { name, group, frequency, description, customDataModel } = req.body;
+  const { code, name, group, frequency, description, customDataModel } = req.body;
+
+  let formattedCode: string | undefined;
+  if (code && typeof code === 'string' && code.trim()) {
+    formattedCode = code.trim().toLowerCase().replace(/\s+/g, '-');
+    const existingCode = await prisma.service.findFirst({
+      where: {
+        id: { not: id },
+        code: formattedCode,
+      },
+    });
+    if (existingCode) {
+      res.status(400).json({ error: 'A service with this code already exists' });
+      return;
+    }
+  }
 
   if (name && name.trim()) {
     const trimmedName = name.trim();
@@ -136,6 +151,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
   const updated = await prisma.service.update({
     where: { id },
     data: {
+      code: formattedCode,
       name: name ? name.trim() : undefined,
       group,
       frequency: Number(frequency) || 0,

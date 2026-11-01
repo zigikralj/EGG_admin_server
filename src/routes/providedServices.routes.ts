@@ -6,30 +6,10 @@ import { hasPermission } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
-function isWasteDisposalService(srv?: { code?: string | null; name?: string | null } | null): boolean {
-  if (!srv) return false;
-  const code = (srv.code || "").toLowerCase().trim();
-  const name = (srv.name || "").toLowerCase().trim();
-  return (
-    code === "waste-disposal" ||
-    code === "zbrinjavanje" ||
-    code === "zbrinjavanje-otpada" ||
-    code === "odlaganje" ||
-    code === "odlaganje-otpada" ||
-    code.includes("disposal") ||
-    code.includes("zbrinjavanje") ||
-    code.includes("odlaganje") ||
-    name === "waste disposal" ||
-    name === "zbrinjavanje otpada" ||
-    name === "збрињавање отпада" ||
-    name === "odlaganje otpada" ||
-    name === "одлагање отпада" ||
-    name.includes("disposal") ||
-    name.includes("zbrinjavanje") ||
-    name.includes("збрињавање") ||
-    name.includes("odlaganje") ||
-    name.includes("одлагање")
-  );
+async function getConfiguredWasteServiceId(): Promise<string | null> {
+  const wasteSetting = await prisma.systemSetting.findUnique({ where: { key: 'waste_disposal_service_id' } });
+  const val = typeof wasteSetting?.value === 'string' ? wasteSetting.value.trim() : '';
+  return val || null;
 }
 
 const router = Router();
@@ -62,21 +42,23 @@ router.get('/', asyncHandler(async (req, res) => {
   const conditions: any[] = [];
 
   if (isWasteDisposalOnly || (!canViewAll && canViewWaste)) {
-    conditions.push({
-      service: {
-        OR: [
-          { code: { in: ['waste-disposal', 'zbrinjavanje', 'zbrinjavanje-otpada', 'odlaganje', 'odlaganje-otpada'] } },
-          { code: { contains: 'disposal', mode: 'insensitive' } },
-          { code: { contains: 'zbrinjavanje', mode: 'insensitive' } },
-          { code: { contains: 'odlaganje', mode: 'insensitive' } },
-          { name: { contains: 'disposal', mode: 'insensitive' } },
-          { name: { contains: 'zbrinjavanje', mode: 'insensitive' } },
-          { name: { contains: 'збрињавање', mode: 'insensitive' } },
-          { name: { contains: 'odlaganje', mode: 'insensitive' } },
-          { name: { contains: 'одлагање', mode: 'insensitive' } },
-        ],
-      },
-    });
+    const wasteServiceId = await getConfiguredWasteServiceId();
+    if (!wasteServiceId) {
+      const sinceDate = parseSince(req.query.since);
+      const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
+      if (sinceDate || !isPaginated) {
+        res.json(buildDeltaResponse([], [], sinceDate));
+      } else {
+        const pagination = parsePagination(req.query, {
+          defaultSortBy: 'scheduledDate',
+          defaultSortOrder: 'desc',
+          maxLimit: 100,
+        });
+        res.json(buildPaginatedResponse([], 0, pagination));
+      }
+      return;
+    }
+    conditions.push({ serviceId: wasteServiceId });
   }
 
   if (status && status !== 'all') {
@@ -187,12 +169,7 @@ router.get('/', asyncHandler(async (req, res) => {
       sinceDate ? fetchDeletedIds('ProvidedService', sinceDate) : Promise.resolve([]),
     ]);
 
-    let items = rawItems;
-    if (!canViewAll && canViewWaste) {
-      items = items.filter((item) => isWasteDisposalService(item.service));
-    }
-
-    res.json(buildDeltaResponse(items, deletedIds, sinceDate));
+    res.json(buildDeltaResponse(rawItems, deletedIds, sinceDate));
     return;
   }
 
@@ -254,7 +231,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  const isWaste = isWasteDisposalService(item.service);
+  const wasteServiceId = await getConfiguredWasteServiceId();
+  const isWaste = Boolean(wasteServiceId && item.serviceId === wasteServiceId);
   const canView =
     hasPermission(req.authUser, 'providedServices', 'view') ||
     (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'view'));
@@ -300,7 +278,8 @@ router.post('/', asyncHandler(async (req, res) => {
     return;
   }
 
-  const isWaste = isWasteDisposalService(serviceExists);
+  const wasteServiceId = await getConfiguredWasteServiceId();
+  const isWaste = Boolean(wasteServiceId && serviceExists.id === wasteServiceId);
   const canCreate =
     hasPermission(req.authUser, 'providedServices', 'create') ||
     (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'create'));
@@ -371,7 +350,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  const isWaste = isWasteDisposalService(existing.service);
+  const wasteServiceId = await getConfiguredWasteServiceId();
+  const isWaste = Boolean(wasteServiceId && existing.serviceId === wasteServiceId);
   const canEdit =
     hasPermission(req.authUser, 'providedServices', 'edit') ||
     (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'edit'));
@@ -467,7 +447,8 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
-  const isWaste = isWasteDisposalService(existing.service);
+  const wasteServiceId = await getConfiguredWasteServiceId();
+  const isWaste = Boolean(wasteServiceId && existing.serviceId === wasteServiceId);
   const canDelete =
     hasPermission(req.authUser, 'providedServices', 'delete') ||
     (isWaste && hasPermission(req.authUser, 'wasteDisposal', 'delete'));
