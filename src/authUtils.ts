@@ -5,8 +5,9 @@ import { UserRole } from './types';
 
 const JWT_SECRET_ENV = process.env.JWT_SECRET;
 if (!JWT_SECRET_ENV) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('FATAL: JWT_SECRET environment variable is required in production');
+  const isDevOrTest = !process.env.NODE_ENV || process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+  if (!isDevOrTest) {
+    throw new Error('FATAL: JWT_SECRET environment variable is required outside development/test');
   }
   console.warn('⚠️ JWT_SECRET not set — using development fallback. DO NOT use in production.');
 }
@@ -91,6 +92,12 @@ export function generateTempPassword(length = 12): string {
   for (let i = password.length; i < length; i++) {
     password.push(all[crypto.randomInt(all.length)]);
   }
-  // Shuffle
-  return password.sort(() => crypto.randomInt(3) - 1).join('');
+  // Unbiased Fisher-Yates shuffle
+  for (let i = password.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    const temp = password[i];
+    password[i] = password[j];
+    password[j] = temp;
+  }
+  return password.join('');
 }

@@ -435,7 +435,16 @@ router.put('/:id', asyncHandler(async (req, res) => {
         });
       }
 
-      // 2. Update existing items or insert new items
+      // 2. Update existing items in parallel and batch-insert new items
+      const toCreate: Array<{
+        invoiceId: string;
+        description: string;
+        quantity: number;
+        unitPrice: number;
+        currency: string;
+      }> = [];
+      const updatePromises: Promise<unknown>[] = [];
+
       for (const item of items) {
         const itemData = {
           description: String(item.description || '').trim(),
@@ -445,18 +454,27 @@ router.put('/:id', asyncHandler(async (req, res) => {
         };
 
         if (item.id && existingItemIds.has(String(item.id))) {
-          await tx.invoiceItem.update({
-            where: { id: String(item.id) },
-            data: itemData,
-          });
+          updatePromises.push(
+            tx.invoiceItem.update({
+              where: { id: String(item.id) },
+              data: itemData,
+            })
+          );
         } else {
-          await tx.invoiceItem.create({
-            data: {
-              ...itemData,
-              invoiceId: id,
-            },
+          toCreate.push({
+            ...itemData,
+            invoiceId: id,
           });
         }
+      }
+
+      if (updatePromises.length > 0) {
+        await Promise.all(updatePromises);
+      }
+      if (toCreate.length > 0) {
+        await tx.invoiceItem.createMany({
+          data: toCreate,
+        });
       }
     }
 

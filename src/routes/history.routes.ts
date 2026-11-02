@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { hasPermission } from '../types';
+import { hasPermission, isUserSystemAdmin } from '../types';
 import {
   getEntityTimeline,
   rebuildEntityVersion,
@@ -155,6 +155,7 @@ router.post(
     const result = await restoreVersion(entityType, id, targetVersion, {
       userId: req.authUser!.id,
       userName: req.authUser!.name || 'Unknown',
+      isSystemAdmin: isUserSystemAdmin(req.authUser),
     });
 
     res.json(result);

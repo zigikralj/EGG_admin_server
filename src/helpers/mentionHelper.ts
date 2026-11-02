@@ -1,7 +1,16 @@
 import { prisma } from "../db";
 import { stripHtmlToText } from "./htmlUtils";
 
-export async function extractMentionedUserIds(content: string | null | undefined): Promise<string[]> {
+interface ActiveUserMentionCandidate {
+  id: string;
+  name: string;
+  email: string | null;
+}
+
+export async function extractMentionedUserIds(
+  content: string | null | undefined,
+  preloadedUsers?: ActiveUserMentionCandidate[]
+): Promise<string[]> {
   if (!content) return [];
   const userIds = new Set<string>();
 
@@ -14,19 +23,25 @@ export async function extractMentionedUserIds(content: string | null | undefined
     }
   }
 
-  // 2. Also match @Name in plain text if data-user-id wasn't present
-  // Fetch active users to match names
-  const allUsers = await prisma.user.findMany({
-    where: { isApproved: true, status: { not: "BLOCKED" } },
-    select: { id: true, name: true, email: true },
-  });
-
+  // 2. Also match @Name in plain text if content contains '@'
   const plainText = stripHtmlToText(content);
+  if (!plainText.includes("@")) {
+    return Array.from(userIds);
+  }
+
+  const allUsers =
+    preloadedUsers ??
+    (await prisma.user.findMany({
+      where: { isApproved: true, status: { not: "BLOCKED" } },
+      select: { id: true, name: true, email: true },
+    }));
+
+  const lowerPlain = plainText.toLowerCase();
   for (const u of allUsers) {
     if (!userIds.has(u.id)) {
-      if (u.name && plainText.toLowerCase().includes("@" + u.name.toLowerCase())) {
+      if (u.name && lowerPlain.includes("@" + u.name.toLowerCase())) {
         userIds.add(u.id);
-      } else if (u.email && plainText.toLowerCase().includes("@" + u.email.toLowerCase())) {
+      } else if (u.email && lowerPlain.includes("@" + u.email.toLowerCase())) {
         userIds.add(u.id);
       }
     }
@@ -44,8 +59,21 @@ export async function handleProjectNotesMentions(
 ): Promise<void> {
   if (!notes) return;
 
-  const currentMentionIds = await extractMentionedUserIds(notes);
-  const previousMentionIds = new Set(await extractMentionedUserIds(previousNotes));
+  const needsUserLookup =
+    notes.includes("@") || Boolean(previousNotes && previousNotes.includes("@"));
+  const activeUsers = needsUserLookup
+    ? await prisma.user.findMany({
+        where: { isApproved: true, status: { not: "BLOCKED" } },
+        select: { id: true, name: true, email: true },
+      })
+    : [];
+
+  const currentMentionIds = await extractMentionedUserIds(notes, activeUsers);
+  if (currentMentionIds.length === 0) return;
+
+  const previousMentionIds = new Set(
+    await extractMentionedUserIds(previousNotes, activeUsers)
+  );
 
   // Determine newly mentioned users
   const newMentionUserIds = currentMentionIds.filter(

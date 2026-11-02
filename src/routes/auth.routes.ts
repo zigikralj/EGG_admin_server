@@ -35,22 +35,19 @@ router.post('/login', asyncHandler(async (req, res) => {
     return;
   }
 
-  // Verify password if user has a password set
-  if (user.password) {
-    const isValid = verifyPassword(password, user.password);
-    if (!isValid) {
-      res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email/username or password.' });
-      return;
-    }
+  // Verify password — reject immediately if user has no password set
+  if (!user.password || !verifyPassword(password, user.password)) {
+    res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email/username or password.' });
+    return;
+  }
 
-    // Automatically upgrade legacy PBKDF2 hash to bcrypt
-    if (!user.password.startsWith('$2')) {
-      const bcryptHash = hashPassword(password);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { password: bcryptHash },
-      });
-    }
+  // Automatically upgrade legacy PBKDF2 hash to bcrypt
+  if (!user.password.startsWith('$2')) {
+    const bcryptHash = hashPassword(password);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: bcryptHash },
+    });
   }
 
   // Check approval status

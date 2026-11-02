@@ -27,7 +27,6 @@ async function runEndpointTests() {
 
   const headers = {
     'Authorization': `Bearer ${token}`,
-    'X-User-Id': admin.id,
     'Content-Type': 'application/json',
   };
 

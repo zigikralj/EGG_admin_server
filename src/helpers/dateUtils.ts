@@ -3,6 +3,13 @@
  */
 
 /**
+ * Returns today's ISO date string (YYYY-MM-DD).
+ */
+export function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
  * Advances a date string by the given number of months.
  * Returns an ISO date string (YYYY-MM-DD).
  */

@@ -11,6 +11,7 @@ interface CacheEntry<T = any> {
 
 const cache = new Map<string, CacheEntry>();
 const DEFAULT_TTL_MS = 60_000;
+const MAX_CACHE_ENTRIES = 200;
 
 export function getAnalyticsCache<T = any>(key: string): T | null {
   const entry = cache.get(key);
@@ -23,6 +24,12 @@ export function getAnalyticsCache<T = any>(key: string): T | null {
 }
 
 export function setAnalyticsCache<T = any>(key: string, data: T, ttlMs: number = DEFAULT_TTL_MS): void {
+  if (!cache.has(key) && cache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      cache.delete(oldestKey);
+    }
+  }
   cache.set(key, {
     expires: Date.now() + ttlMs,
     data,

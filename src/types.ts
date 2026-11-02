@@ -5,16 +5,21 @@ export enum UserRole {
   ACCOUNTANT = 'Accountant',
 }
 
-export function isAdminOrManager(role?: string | null): boolean {
-  return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-}
-
-export function canManageInvoices(role?: string | null): boolean {
-  return (
-    role === UserRole.ADMINISTRATOR ||
-    role === UserRole.MANAGER ||
-    role === UserRole.ACCOUNTANT
-  );
+export interface AuthenticatedUser {
+  id: string;
+  name: string;
+  email: string | null;
+  role: string;
+  isApproved?: boolean;
+  status?: string;
+  isSystemAdmin?: boolean;
+  permissions?: Record<string, any>;
+  roleEntity?: {
+    name?: string;
+    isSystemAdmin?: boolean;
+    permissions?: any;
+  } | null;
+  [key: string]: any;
 }
 
 export function getDefaultResourcePermission(role?: string | null, resource?: string, action?: string): boolean {

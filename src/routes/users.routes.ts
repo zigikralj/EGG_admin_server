@@ -187,6 +187,11 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
     return;
   }
 
+  if (!isUserSystemAdmin(authUser) && targetUser.role === UserRole.ADMINISTRATOR) {
+    res.status(403).json({ error: 'Permission denied. Only System Administrators can force log out Administrator accounts.' });
+    return;
+  }
+
   userForceLogoutMap.set(targetId, Date.now());
   invalidateUserAuthCache(targetId);
 
@@ -328,6 +333,15 @@ router.put('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  if (avatarUrl !== undefined && avatarUrl !== null && avatarUrl !== '') {
+    const isSafeHttp = typeof avatarUrl === 'string' && /^https?:\/\//i.test(avatarUrl);
+    const isSafeDataUri = typeof avatarUrl === 'string' && /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=\s]+$/i.test(avatarUrl);
+    if (!isSafeHttp && !isSafeDataUri) {
+      res.status(400).json({ error: 'Invalid avatar URL format.' });
+      return;
+    }
+  }
+
   const updatedData: any = {
     name: trimmedName !== undefined ? trimmedName : existingUser.name,
     email: trimmedEmail !== undefined ? trimmedEmail : existingUser.email,
@@ -343,8 +357,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       res.status(400).json({ error: passValidation.message });
       return;
     }
-    if (isSelf && currentPassword !== undefined) {
-      if (!verifyPassword(currentPassword, existingUser.password)) {
+    if (isSelf) {
+      if (!currentPassword || !verifyPassword(currentPassword, existingUser.password)) {
         res.status(400).json({ error: 'Current password is incorrect' });
         return;
       }

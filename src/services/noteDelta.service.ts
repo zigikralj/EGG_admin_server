@@ -1,8 +1,7 @@
 import { diff_match_patch } from 'diff-match-patch';
 import { basePrisma, compactDiffPair } from '../db';
-import { extractNotesPreview } from '../routes/projects.routes';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
-import { cleanWordHtml, stripHtmlToText } from '../helpers/htmlUtils';
+import { cleanWordHtml, stripHtmlToText, extractNotesPreview } from '../helpers/htmlUtils';
 import { enqueueActivityLog, isActivityLoggingEnabled } from '../helpers/activityLogger';
 import { requestContext } from '../context';
 
@@ -18,8 +17,9 @@ export async function saveNoteRevision(params: {
   authorName?: string;
   reason?: string;
   skipActivityLog?: boolean;
+  skipProjectPreviewSync?: boolean;
 }): Promise<{ id: string; content: string; version: number; notesPreview: string | null }> {
-  const { projectId, authorId, authorName, reason, skipActivityLog } = params;
+  const { projectId, authorId, authorName, reason, skipActivityLog, skipProjectPreviewSync } = params;
   const rawContent = params.newContent || '';
   // Defense-in-depth: strip MS Word/Office metadata and comments
   const newContent = cleanWordHtml(rawContent);
@@ -61,10 +61,12 @@ export async function saveNoteRevision(params: {
         },
       });
 
-      await tx.project.update({
-        where: { id: projectId },
-        data: { notesPreview: preview },
-      });
+      if (!skipProjectPreviewSync) {
+        await tx.project.update({
+          where: { id: projectId },
+          data: { notesPreview: preview },
+        });
+      }
 
       await tx.projectNoteVersion.create({
         data: {
@@ -322,18 +324,25 @@ export async function resolveNoteVersionsByDate(
   dateFromStr?: string,
   dateToStr?: string
 ): Promise<{ from: number; to: number; dateFrom?: string; dateTo?: string }> {
-  const versions = await basePrisma.projectNoteVersion.findMany({
-    where: { noteId },
-    select: { version: true, createdAt: true },
-    orderBy: { version: 'asc' },
-  });
+  const [firstVer, lastVer] = await Promise.all([
+    basePrisma.projectNoteVersion.findFirst({
+      where: { noteId },
+      select: { version: true },
+      orderBy: { version: 'asc' },
+    }),
+    basePrisma.projectNoteVersion.findFirst({
+      where: { noteId },
+      select: { version: true },
+      orderBy: { version: 'desc' },
+    }),
+  ]);
 
-  if (versions.length === 0) {
+  if (!firstVer || !lastVer) {
     throw new Error(`No history versions found for noteId ${noteId}`);
   }
 
-  const minVersion = versions[0].version;
-  const maxVersion = versions[versions.length - 1].version;
+  const minVersion = firstVer.version;
+  const maxVersion = lastVer.version;
 
   let resolvedFrom = minVersion;
   let resolvedTo = maxVersion;
@@ -344,8 +353,12 @@ export async function resolveNoteVersionsByDate(
   if (safeDateFrom) {
     const fromDate = new Date(safeDateFrom);
     if (!isNaN(fromDate.getTime())) {
-      const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
-      resolvedFrom = matching.length > 0 ? matching[matching.length - 1].version : minVersion;
+      const matching = await basePrisma.projectNoteVersion.findFirst({
+        where: { noteId, createdAt: { lte: fromDate } },
+        select: { version: true },
+        orderBy: { version: 'desc' },
+      });
+      resolvedFrom = matching ? matching.version : minVersion;
     }
   }
 
@@ -353,8 +366,12 @@ export async function resolveNoteVersionsByDate(
     const toDate = new Date(safeDateTo);
     if (!isNaN(toDate.getTime())) {
       if (safeDateTo.length === 10) toDate.setHours(23, 59, 59, 999);
-      const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
-      resolvedTo = matching.length > 0 ? matching[matching.length - 1].version : maxVersion;
+      const matching = await basePrisma.projectNoteVersion.findFirst({
+        where: { noteId, createdAt: { lte: toDate } },
+        select: { version: true },
+        orderBy: { version: 'desc' },
+      });
+      resolvedTo = matching ? matching.version : maxVersion;
     }
   }
 

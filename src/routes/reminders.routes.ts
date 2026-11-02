@@ -244,6 +244,12 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // POST /api/reminders
 router.post('/', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  if (!hasPermission(authUser, 'reminders', 'create') && !hasPermission(authUser, 'tracker_reminders', 'create')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to create reminders.' });
+    return;
+  }
+
   const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber } = req.body;
 
   const finalTitle = title || projectName;
@@ -252,6 +258,10 @@ router.post('/', asyncHandler(async (req, res) => {
     return;
   }
 
+  const isOnlyOwn = isRestrictedToOwn(authUser, 'reminders') && isRestrictedToOwn(authUser, 'tracker_reminders');
+  const finalResponsibleId = isOnlyOwn ? authUser.id : (responsibleId || null);
+  const finalResponsible = isOnlyOwn ? (authUser.name || null) : (responsible || null);
+
   const reminder = await prisma.reminder.create({
     data: {
       title: finalTitle,
@@ -259,8 +269,8 @@ router.post('/', asyncHandler(async (req, res) => {
       projectName: projectName || null,
       clientId: clientId || null,
       clientName: clientName || null,
-      responsibleId: responsibleId || null,
-      responsible: responsible || null,
+      responsibleId: finalResponsibleId,
+      responsible: finalResponsible,
       status: status || 'Pending',
       notes: notes || null,
       dueDate: dueDate || null,

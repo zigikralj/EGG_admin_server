@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth, invalidateUserAuthCache } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { prisma } from '../db';
+import { hasPermission, isUserSystemAdmin } from '../types';
 import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
 
 const router = Router();
@@ -9,7 +10,7 @@ const ROLES_CACHE_KEY = 'reference:roles';
 
 router.use(requireAuth);
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', asyncHandler(async (_req, res) => {
   const cached = getReferenceCache(ROLES_CACHE_KEY);
   if (cached) {
     res.json(cached);
@@ -25,11 +26,10 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
-  const authUser = (req as any).authUser;
-  const userRole = authUser?.roleEntity;
-  const isSysAdmin = authUser?.role === 'Administrator' || Boolean(userRole?.isSystemAdmin);
-  
-  if (!isSysAdmin && !userRole?.permissions?.roles?.includes('create')) {
+  const authUser = req.authUser;
+  const isSysAdmin = isUserSystemAdmin(authUser);
+
+  if (!hasPermission(authUser, 'roles', 'create')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -74,11 +74,10 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 router.put('/:name', asyncHandler(async (req, res) => {
-  const authUser = (req as any).authUser;
-  const userRole = authUser?.roleEntity;
-  const isSysAdmin = authUser?.role === 'Administrator' || Boolean(userRole?.isSystemAdmin);
-  
-  if (!isSysAdmin && !userRole?.permissions?.roles?.includes('edit')) {
+  const authUser = req.authUser;
+  const isSysAdmin = isUserSystemAdmin(authUser);
+
+  if (!hasPermission(authUser, 'roles', 'edit')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -124,11 +123,9 @@ router.put('/:name', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/:name', asyncHandler(async (req, res) => {
-  const authUser = (req as any).authUser;
-  const userRole = authUser?.roleEntity;
-  const isSysAdmin = authUser?.role === 'Administrator' || Boolean(userRole?.isSystemAdmin);
-  
-  if (!isSysAdmin && !userRole?.permissions?.roles?.includes('delete')) {
+  const authUser = req.authUser;
+
+  if (!hasPermission(authUser, 'roles', 'delete')) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }

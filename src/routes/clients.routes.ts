@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { prisma } from "../db";
+import { prisma, auditedTransaction } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission } from "../types";
@@ -205,49 +205,53 @@ router.post("/", asyncHandler(async (req, res) => {
     targetPermitIds = [permitId];
   }
 
-  const client = await prisma.client.create({
-    data: {
-      name: trimmedName,
-      contactPerson: contactPerson ? contactPerson.trim() : null,
-      email: email ? email.trim() : null,
-      phone: phone ? phone.trim() : null,
-      city: city ? city.trim() : null,
-      permits: targetPermitIds.length > 0 ? {
-        connect: targetPermitIds.map(id => ({ id })),
-      } : undefined,
-      extraData: targetPermitIds[0] ? {
-        create: { permitId: targetPermitIds[0] }
-      } : undefined,
-    },
-    include: {
-      projects: true,
-      permits: {
-        include: {
-          permitWastes: {
-            include: { wasteCatalog: true },
+  const client = await auditedTransaction(async () => {
+    const created = await prisma.client.create({
+      data: {
+        name: trimmedName,
+        contactPerson: contactPerson ? contactPerson.trim() : null,
+        email: email ? email.trim() : null,
+        phone: phone ? phone.trim() : null,
+        city: city ? city.trim() : null,
+        permits: targetPermitIds.length > 0 ? {
+          connect: targetPermitIds.map(id => ({ id })),
+        } : undefined,
+        extraData: targetPermitIds[0] ? {
+          create: { permitId: targetPermitIds[0] }
+        } : undefined,
+      },
+      include: {
+        projects: true,
+        permits: {
+          include: {
+            permitWastes: {
+              include: { wasteCatalog: true },
+            },
           },
         },
-      },
-      extraData: {
-        include: {
-          permit: {
-            include: {
-              permitWastes: {
-                include: { wasteCatalog: true },
+        extraData: {
+          include: {
+            permit: {
+              include: {
+                permitWastes: {
+                  include: { wasteCatalog: true },
+                },
               },
             },
           },
         },
       },
-    },
-  });
-
-  if (targetPermitIds.length > 0) {
-    await prisma.clientExtraData.updateMany({
-      where: { permitId: { in: targetPermitIds }, clientId: { not: client.id } },
-      data: { permitId: null },
     });
-  }
+
+    if (targetPermitIds.length > 0) {
+      await prisma.clientExtraData.updateMany({
+        where: { permitId: { in: targetPermitIds }, clientId: { not: created.id } },
+        data: { permitId: null },
+      });
+    }
+
+    return created;
+  });
 
   res.status(201).json({
     ...client,
@@ -280,25 +284,67 @@ router.put("/:id", asyncHandler(async (req, res) => {
     }
   }
 
-  const updated = await prisma.client.update({
-    where: { id },
-    data: {
-      name: name ? name.trim() : undefined,
-      contactPerson: contactPerson !== undefined ? (contactPerson ? contactPerson.trim() : null) : undefined,
-      email: email !== undefined ? (email ? email.trim() : null) : undefined,
-      phone: phone !== undefined ? (phone ? phone.trim() : null) : undefined,
-      city: city !== undefined ? (city ? city.trim() : null) : undefined,
-    },
-    include: {
-      projects: true,
-      permits: {
-        include: {
-          permitWastes: {
-            include: { wasteCatalog: true },
+  const { updated, clientPermits } = await auditedTransaction(async () => {
+    const updatedClient = await prisma.client.update({
+      where: { id },
+      data: {
+        name: name ? name.trim() : undefined,
+        contactPerson: contactPerson !== undefined ? (contactPerson ? contactPerson.trim() : null) : undefined,
+        email: email !== undefined ? (email ? email.trim() : null) : undefined,
+        phone: phone !== undefined ? (phone ? phone.trim() : null) : undefined,
+        city: city !== undefined ? (city ? city.trim() : null) : undefined,
+      },
+      include: {
+        projects: true,
+        permits: {
+          include: {
+            permitWastes: {
+              include: { wasteCatalog: true },
+            },
+          },
+        },
+        extraData: {
+          include: {
+            permit: {
+              include: {
+                permitWastes: {
+                  include: { wasteCatalog: true },
+                },
+              },
+            },
           },
         },
       },
-      extraData: {
+    });
+
+    let targetPermitIds: string[] | null = null;
+    if (Array.isArray(permitIds)) {
+      targetPermitIds = permitIds.filter(Boolean);
+    } else if (permitId !== undefined) {
+      targetPermitIds = permitId ? [permitId] : [];
+    }
+
+    if (targetPermitIds !== null) {
+      await prisma.permit.updateMany({
+        where: { clientId: id, id: { notIn: targetPermitIds } },
+        data: { clientId: null },
+      });
+      if (targetPermitIds.length > 0) {
+        await prisma.permit.updateMany({
+          where: { id: { in: targetPermitIds } },
+          data: { clientId: id },
+        });
+        await prisma.clientExtraData.updateMany({
+          where: { permitId: { in: targetPermitIds }, clientId: { not: id } },
+          data: { permitId: null },
+        });
+      }
+
+      const firstPermitId = targetPermitIds[0] || null;
+      const extraData = await prisma.clientExtraData.upsert({
+        where: { clientId: id },
+        create: { clientId: id, permitId: firstPermitId },
+        update: { permitId: firstPermitId },
         include: {
           permit: {
             include: {
@@ -308,58 +354,20 @@ router.put("/:id", asyncHandler(async (req, res) => {
             },
           },
         },
-      },
-    },
-  });
-
-  let targetPermitIds: string[] | null = null;
-  if (Array.isArray(permitIds)) {
-    targetPermitIds = permitIds.filter(Boolean);
-  } else if (permitId !== undefined) {
-    targetPermitIds = permitId ? [permitId] : [];
-  }
-
-  if (targetPermitIds !== null) {
-    await prisma.permit.updateMany({
-      where: { clientId: id, id: { notIn: targetPermitIds } },
-      data: { clientId: null },
-    });
-    if (targetPermitIds.length > 0) {
-      await prisma.permit.updateMany({
-        where: { id: { in: targetPermitIds } },
-        data: { clientId: id },
       });
-      await prisma.clientExtraData.updateMany({
-        where: { permitId: { in: targetPermitIds }, clientId: { not: id } },
-        data: { permitId: null },
-      });
+      updatedClient.extraData = extraData;
     }
 
-    const firstPermitId = targetPermitIds[0] || null;
-    const extraData = await prisma.clientExtraData.upsert({
+    const permitsForClient = await prisma.permit.findMany({
       where: { clientId: id },
-      create: { clientId: id, permitId: firstPermitId },
-      update: { permitId: firstPermitId },
       include: {
-        permit: {
-          include: {
-            permitWastes: {
-              include: { wasteCatalog: true },
-            },
-          },
+        permitWastes: {
+          include: { wasteCatalog: true },
         },
       },
     });
-    updated.extraData = extraData;
-  }
 
-  const clientPermits = await prisma.permit.findMany({
-    where: { clientId: id },
-    include: {
-      permitWastes: {
-        include: { wasteCatalog: true },
-      },
-    },
+    return { updated: updatedClient, clientPermits: permitsForClient };
   });
 
   res.json({

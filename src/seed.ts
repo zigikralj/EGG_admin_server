@@ -4,22 +4,13 @@ import fs from 'fs';
 import { prisma } from './db';
 import { hashPassword } from './authUtils';
 import { UserRole } from './types';
+import { addMonths, todayStr } from './helpers/dateUtils';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
   dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 } else {
   dotenv.config();
-}
-
-function addMonths(dateStr: string, months: number): string {
-  const d = new Date(dateStr);
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export async function seed(force = false) {

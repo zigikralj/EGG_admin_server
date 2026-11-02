@@ -4,7 +4,7 @@ import type { User } from '@prisma/client';
 import { prisma } from '../db';
 import { verifyToken } from '../authUtils';
 import { requestContext } from '../context';
-import { isUserSystemAdmin, getUserPermissions } from '../types';
+import { isUserSystemAdmin, getUserPermissions, type AuthenticatedUser } from '../types';
 
 // ---------------------------------------------------------------------------
 // Type extension — gives every Express Request typed auth properties.
@@ -12,7 +12,7 @@ import { isUserSystemAdmin, getUserPermissions } from '../types';
 declare global {
   namespace Express {
     interface Request {
-      authUser?: User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean };
+      authUser?: AuthenticatedUser;
       requestId?: string;
     }
   }
@@ -82,14 +82,9 @@ async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?:
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves the authenticated user from the request.
- * Tries JWT Bearer token first, then falls back to X-User-Id header.
- *
- * NOTE: The X-User-Id fallback is a critical security vulnerability and
- *       will be removed in Phase 3.
+ * Resolves the authenticated user from the request via JWT Bearer token.
  */
 export async function getAuthUser(req: Request): Promise<User | null> {
-  // 1. JWT Bearer token
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7).trim();
@@ -105,26 +100,8 @@ export async function getAuthUser(req: Request): Promise<User | null> {
       return null;
     }
 
-    // Check if Administrator or Manager is switching user (impersonation / preview)
-    const xUserId = req.headers["x-user-id"] as string;
     const authDbUser = await fetchUserWithRole(payload.userId);
-
-    if (authDbUser && xUserId && xUserId !== payload.userId) {
-      if (authDbUser.role === "Administrator" || authDbUser.role === "Manager") {
-        const impersonatedUser = await fetchUserWithRole(xUserId);
-        if (impersonatedUser && impersonatedUser.isApproved && impersonatedUser.status !== "BLOCKED") {
-          return impersonatedUser;
-        }
-      }
-    }
     return authDbUser ?? null;
-  }
-
-  // Fallback X-User-Id
-  const fallbackXUserId = req.headers["x-user-id"] as string;
-  if (fallbackXUserId) {
-    const fallbackUser = await fetchUserWithRole(fallbackXUserId);
-    return fallbackUser ?? null;
   }
 
   return null;
@@ -136,7 +113,7 @@ export async function getAuthUser(req: Request): Promise<User | null> {
 
 /**
  * Enforces authentication. Attaches the resolved user to req.authUser.
- * Returns 401 if no valid session is found.
+ * Returns 401 if no valid session is found, or 403 if the account is blocked/unapproved.
  */
 export async function requireAuth(
   req: Request,
@@ -148,6 +125,12 @@ export async function requireAuth(
     res
       .status(401)
       .json({ error: 'UNAUTHORIZED', message: 'Authentication required. Please log in.' });
+    return;
+  }
+  if (user.status === 'BLOCKED' || !user.isApproved || user.status !== 'APPROVED') {
+    res
+      .status(403)
+      .json({ error: 'ACCOUNT_BLOCKED', message: 'Contact administrator for more information.' });
     return;
   }
   req.authUser = user;

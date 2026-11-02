@@ -11,6 +11,7 @@ interface CacheEntry<T = any> {
 
 const cache = new Map<string, CacheEntry>();
 export const DEFAULT_REFERENCE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_CACHE_ENTRIES = 200;
 
 export function getReferenceCache<T = any>(key: string): T | null {
   const entry = cache.get(key);
@@ -27,6 +28,12 @@ export function setReferenceCache<T = any>(
   data: T,
   ttlMs: number = DEFAULT_REFERENCE_TTL_MS
 ): void {
+  if (!cache.has(key) && cache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      cache.delete(oldestKey);
+    }
+  }
   cache.set(key, {
     expires: Date.now() + ttlMs,
     data,

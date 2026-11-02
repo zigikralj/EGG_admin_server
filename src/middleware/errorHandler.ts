@@ -55,8 +55,19 @@ export function errorHandler(
     return;
   }
 
+  // Prisma: foreign key constraint violation (e.g., Restrict on delete or invalid reference)
+  if (prismaError?.code === 'P2003') {
+    res.status(409).json({
+      error: 'Operation failed due to a related record constraint. Ensure referenced records exist or remove dependent items first.',
+    });
+    return;
+  }
+
   // Generic server error
-  const message = prismaError?.message || 'An unexpected error occurred.';
   console.error('[%s] %s', req.method, req.path, error);
+  const isProd = process.env.NODE_ENV === 'production';
+  const message = isProd
+    ? 'An unexpected server error occurred.'
+    : (prismaError?.message || 'An unexpected error occurred.');
   res.status(500).json({ error: message });
 }

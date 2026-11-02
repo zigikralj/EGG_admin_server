@@ -15,7 +15,23 @@ export function cleanWordHtml(html?: string | null): string {
       ...sanitizeHtml.defaults.allowedAttributes,
       '*': ['style', 'class', 'data-*'],
     },
-    allowedSchemes: ['http', 'https', 'mailto', 'data'],
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: {
+      img: ['http', 'https', 'data'],
+    },
+    allowedStyles: {
+      '*': {
+        'color': [/^#(0x)?[0-9a-f]+$/i, /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i, /^[a-z]+$/i],
+        'background-color': [/^#(0x)?[0-9a-f]+$/i, /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i, /^[a-z]+$/i],
+        'text-align': [/^left$/, /^right$/, /^center$/, /^justify$/],
+        'font-weight': [/^(bold|normal|[1-9]00)$/],
+        'font-style': [/^(italic|normal)$/],
+        'text-decoration': [/^(underline|line-through|none)$/],
+        'width': [/^\d+(?:px|%|em|rem)$/],
+        'min-width': [/^\d+(?:px|%|em|rem)$/],
+        'max-width': [/^\d+(?:px|%|em|rem)$/],
+      },
+    },
   }).trim();
 }
 
@@ -39,4 +55,14 @@ export function stripHtmlToText(html?: string | null): string {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n\s*\n+/g, '\n')
     .trim();
+}
+
+/**
+ * Extracts a truncated plain-text preview (up to 300 chars) from HTML notes.
+ */
+export function extractNotesPreview(notes?: string | null): string | null {
+  if (!notes) return null;
+  const plainText = stripHtmlToText(notes).replace(/\s+/g, ' ').trim();
+  if (!plainText) return null;
+  return plainText.length > 300 ? plainText.slice(0, 300) : plainText;
 }

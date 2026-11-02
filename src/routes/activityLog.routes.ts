@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/errorHandler";
 import { prisma } from "../db";
-import { UserRole } from "../types";
+import { isUserSystemAdmin } from "../types";
 import {
   enqueueActivityLog,
   flushActivityLogs,
@@ -39,10 +39,7 @@ const LIST_SELECT = {
   timestamp: true,
 } as const;
 
-function isUserAdmin(authUser: any): boolean {
-  if (!authUser) return false;
-  return authUser.role === UserRole.ADMINISTRATOR || Boolean(authUser.roleEntity?.isSystemAdmin);
-}
+const isUserAdmin = isUserSystemAdmin;
 
 // GET /api/activity-logs/status — check whether logging is active and retention period
 router.get("/status", asyncHandler(async (_req, res) => {

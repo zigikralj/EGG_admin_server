@@ -13,10 +13,6 @@ All endpoints (except login, register, health, and root) require a JWT Bearer to
 Authorization: Bearer <jwt_token>
 ```
 
-### Optional Headers
-
-- **`X-User-Id`**: Legacy fallback that trusts the provided user ID without JWT (marked for removal).
-
 ---
 
 ## System Endpoints

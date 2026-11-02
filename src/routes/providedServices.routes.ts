@@ -120,11 +120,16 @@ router.get('/', asyncHandler(async (req, res) => {
     const validDateFields = ['scheduledDate', 'completionDate', 'createdAt'];
     const field = validDateFields.includes(dateField) ? dateField : 'scheduledDate';
     const dateCond: any = {};
-    if (dateFrom) dateCond.gte = new Date(dateFrom);
-    if (dateTo) {
-      const endOfDay = new Date(dateTo);
-      endOfDay.setHours(23, 59, 59, 999);
-      dateCond.lte = endOfDay;
+    if (field === 'createdAt') {
+      if (dateFrom) dateCond.gte = new Date(dateFrom);
+      if (dateTo) {
+        const endOfDay = new Date(dateTo);
+        endOfDay.setHours(23, 59, 59, 999);
+        dateCond.lte = endOfDay;
+      }
+    } else {
+      if (dateFrom) dateCond.gte = dateFrom;
+      if (dateTo) dateCond.lte = dateTo;
     }
     conditions.push({ [field]: dateCond });
   }
