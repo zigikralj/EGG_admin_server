@@ -9,6 +9,8 @@ import {
   USER_STATUSES,
   REMINDER_STATUSES,
   PROVIDED_SERVICE_STATUSES,
+  INVOICE_STATUSES,
+  INVOICE_TYPES,
   SYSTEM_SETTING_KEYS,
 } from './constants';
 
@@ -1838,6 +1840,8 @@ export async function seed(force = false) {
 
       const allWasteRecords = [...historicalWasteRecords, ...augustWasteRecords];
 
+      const seedMonthCounters = new Map<string, number>();
+
       for (const rec of allWasteRecords) {
         const client = clientMap[rec.clientKey];
         if (!client) continue;
@@ -1850,16 +1854,51 @@ export async function seed(force = false) {
           ? ['15 01 01']
           : ['15 01 02'];
 
+        let attachedInvoiceId: string | null = null;
+        if (rec.price && rec.price > 0) {
+          const year = rec.date.slice(0, 4);
+          const month = rec.date.slice(5, 7);
+          const monthKey = `${year}/${month}`;
+          const count = (seedMonthCounters.get(monthKey) || 0) + 1;
+          seedMonthCounters.set(monthKey, count);
+          const invoiceNumber = `HIST-${year}/${month}/${String(count).padStart(3, '0')}`;
+          const firstOfMonth = `${year}-${month}-01`;
+
+          const inv = await prisma.invoice.create({
+            data: {
+              invoiceNumber,
+              invoiceType: INVOICE_TYPES.STANDARD,
+              status: INVOICE_STATUSES.PAID,
+              dateCreated: firstOfMonth,
+              dueDate: firstOfMonth,
+              paymentDate: firstOfMonth,
+              clientId: client.id,
+              clientName: client.name,
+              totalAmount: rec.price,
+              currency: 'RSD',
+              notes: 'Automatski generisano iz istorijskih podataka pružene usluge (db:import-waste)',
+              items: {
+                create: {
+                  description: rec.notes || 'Preuzimanje i zbrinjavanje industrijskog otpada',
+                  quantity: 1,
+                  unitPrice: rec.price,
+                  currency: 'RSD',
+                },
+              },
+            },
+          });
+          attachedInvoiceId = inv.id;
+        }
+
         await prisma.providedService.create({
           data: {
             serviceId: wasteDisposalService.id,
             clientId: client.id,
+            invoiceId: attachedInvoiceId,
             status: rec.status.toLowerCase(),
             location: rec.location,
             scheduledDate: rec.date,
             completionDate: rec.status.toLowerCase() === PROVIDED_SERVICE_STATUSES.COMPLETED ? rec.date : null,
-            price: rec.price,
-            currency: 'RSD',
             notes: rec.notes,
             customData: {
               kolicina_kg: rec.kg,
