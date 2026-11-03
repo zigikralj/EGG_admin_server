@@ -37,18 +37,24 @@ router.get('/', asyncHandler(async (req, res) => {
       } : {}),
     };
 
-    const [items, deletedIds] = await Promise.all([
+    const [items, deletedIds, totalCount] = await Promise.all([
       prisma.wasteCatalog.findMany({
         where: deltaWhere,
         orderBy,
       }),
       fetchDeletedIds('WasteCatalog', sinceDate),
+      prisma.wasteCatalog.count(),
     ]);
 
-    res.json(buildDeltaResponse(items, deletedIds, sinceDate));
+    const deltaResponse = buildDeltaResponse(items, deletedIds, sinceDate);
+    if (typeof deltaResponse === 'object' && !Array.isArray(deltaResponse)) {
+      (deltaResponse as any).totalCount = totalCount;
+    }
+    res.json(deltaResponse);
     return;
   }
 
+  const isFresh = req.query.fresh === 'true';
   let cacheKey: string | null = null;
   if (!search) {
     if (!isPaginated) {
@@ -58,7 +64,7 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
 
-  if (cacheKey) {
+  if (cacheKey && !isFresh) {
     const cached = getReferenceCache(cacheKey);
     if (cached) {
       res.json(cached);

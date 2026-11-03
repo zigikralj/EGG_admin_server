@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { prisma } from './db';
+import { invalidateReferenceCachePrefix } from './helpers/referenceCache';
 
 /**
  * Parses CSV text taking into account quotes, commas inside quotes,
@@ -175,6 +176,12 @@ export async function importWasteCatalogFromCsv(options: ImportWasteCatalogOptio
   console.log(`   - Hazardous items (with *): ${hazardousCount}`);
   console.log(`   - Non-hazardous items: ${nonHazardousCount}`);
   console.log(`   - Total active in catalog: ${created + updated}`);
+
+  try {
+    invalidateReferenceCachePrefix('reference:wasteCatalog');
+  } catch {
+    // Ignore cache error in standalone CLI
+  }
 }
 
 if (require.main === module) {
