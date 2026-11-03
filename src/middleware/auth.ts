@@ -5,6 +5,7 @@ import { prisma } from '../db';
 import { verifyToken } from '../authUtils';
 import { requestContext } from '../context';
 import { isUserSystemAdmin, getUserPermissions, type AuthenticatedUser } from '../types';
+import { USER_STATUSES, ERROR_CODES } from '../constants';
 
 // ---------------------------------------------------------------------------
 // Type extension — gives every Express Request typed auth properties.
@@ -127,10 +128,10 @@ export async function requireAuth(
       .json({ error: 'UNAUTHORIZED', message: 'Authentication required. Please log in.' });
     return;
   }
-  if (user.status === 'BLOCKED' || !user.isApproved || user.status !== 'APPROVED') {
+  if (user.status === USER_STATUSES.BLOCKED || !user.isApproved || user.status !== USER_STATUSES.APPROVED) {
     res
       .status(403)
-      .json({ error: 'ACCOUNT_BLOCKED', message: 'Contact administrator for more information.' });
+      .json({ error: ERROR_CODES.ACCOUNT_BLOCKED, message: 'Contact administrator for more information.' });
     return;
   }
   req.authUser = user;

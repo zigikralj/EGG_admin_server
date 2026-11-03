@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { INVOICE_STATUSES, INVOICE_TYPES } from '../constants';
 
 const router = Router();
 
@@ -41,24 +42,24 @@ router.get('/', asyncHandler(async (req, res) => {
     conditions.push({ id: { notIn: excludeIds } });
   }
   if (status && status !== 'all') {
-    const s = status.toLowerCase();
-    if (s === 'unpaid') {
-      conditions.push({ status: { notIn: ['Paid', 'Cancelled'] } });
-    } else if (s === 'overdue') {
+    const paidOrCancelled = [INVOICE_STATUSES.PAID, INVOICE_STATUSES.CANCELLED];
+    if (status === 'unpaid') {
+      conditions.push({ status: { notIn: paidOrCancelled } });
+    } else if (status === INVOICE_STATUSES.OVERDUE) {
       const todayStr = new Date().toISOString().slice(0, 10);
       conditions.push({
         OR: [
-          { status: { equals: 'Overdue', mode: 'insensitive' as const } },
+          { status: INVOICE_STATUSES.OVERDUE },
           {
             AND: [
-              { status: { notIn: ['Paid', 'Cancelled'] } },
+              { status: { notIn: paidOrCancelled } },
               { dueDate: { not: null, lt: todayStr } },
             ],
           },
         ],
       });
     } else {
-      conditions.push({ status: { equals: status, mode: 'insensitive' as const } });
+      conditions.push({ status });
     }
   }
   if (clientId && clientId !== 'all') {
@@ -81,15 +82,16 @@ router.get('/', asyncHandler(async (req, res) => {
     conditions.push({ currency });
   }
   if (invoiceType && invoiceType !== 'all') {
-    if (invoiceType === 'Standard') {
+    const t = invoiceType.toLowerCase();
+    if (t === INVOICE_TYPES.STANDARD) {
       conditions.push({
         OR: [
-          { invoiceType: 'Standard' },
+          { invoiceType: { in: [INVOICE_TYPES.STANDARD, 'Standard', 'standard'] } },
           { invoiceType: null },
         ],
       });
     } else {
-      conditions.push({ invoiceType });
+      conditions.push({ invoiceType: { in: [t, invoiceType], mode: 'insensitive' as const } });
     }
   }
   if (linkedStatus && linkedStatus !== 'all') {
@@ -336,7 +338,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const invoice = await prisma.invoice.create({
     data: {
       invoiceNumber: String(invoiceNumber).trim(),
-      invoiceType: invoiceType || 'Standard',
+      invoiceType: invoiceType ? invoiceType.toLowerCase() : INVOICE_TYPES.STANDARD,
       parentInvoiceId: parentInvoiceId || null,
       dateCreated: dateCreated || new Date().toISOString().slice(0, 10),
       dueDate: dueDate || null,
@@ -345,7 +347,7 @@ router.post('/', asyncHandler(async (req, res) => {
       clientName: resolvedClientName,
       projectId: projectId || null,
       projectName: resolvedProjectName,
-      status: status || 'Draft',
+      status: status || INVOICE_STATUSES.DRAFT,
       notes: notes || null,
       totalAmount: computedTotal,
       currency: currency || (itemsData.length > 0 ? itemsData[0].currency : 'RSD'),
@@ -482,7 +484,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       where: { id },
       data: {
         invoiceNumber: invoiceNumber !== undefined ? String(invoiceNumber).trim() : existing.invoiceNumber,
-        invoiceType: invoiceType !== undefined ? invoiceType : existing.invoiceType,
+        invoiceType: invoiceType !== undefined ? (invoiceType ? invoiceType.toLowerCase() : INVOICE_TYPES.STANDARD) : existing.invoiceType,
         parentInvoiceId: parentInvoiceId !== undefined ? parentInvoiceId : existing.parentInvoiceId,
         dateCreated: dateCreated !== undefined ? (dateCreated || null) : existing.dateCreated,
         dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
@@ -491,7 +493,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
         clientName: resolvedClientName,
         projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
         projectName: resolvedProjectName,
-        status: status || existing.status,
+        status: status !== undefined ? (status || INVOICE_STATUSES.DRAFT) : existing.status,
         notes: notes !== undefined ? (notes || null) : existing.notes,
         totalAmount: computedTotal,
         currency: currency !== undefined ? (currency || 'RSD') : existing.currency,
@@ -524,7 +526,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 
   const newStatus = status || existing.status;
   let resolvedPaymentDate = paymentDate !== undefined ? paymentDate : existing.paymentDate;
-  if (newStatus === 'Paid' && !resolvedPaymentDate) {
+  if (newStatus === INVOICE_STATUSES.PAID && !resolvedPaymentDate) {
     resolvedPaymentDate = new Date().toISOString().slice(0, 10);
   }
 

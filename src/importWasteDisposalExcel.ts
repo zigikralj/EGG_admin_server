@@ -286,7 +286,8 @@ export async function importWasteDisposalServices() {
 
         const customDataPayload = {
           kolicina_kg: kg,
-          vrsta_otpada: 'Industrijski i ambalažni otpad',
+          vrsta_otpada: ['15 01 02'],
+          transport: 'EcoRecycling d.o.o.',
         };
 
         if (existing) {

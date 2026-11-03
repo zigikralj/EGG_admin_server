@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission, isRestrictedToOwn } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { REMINDER_STATUSES } from '../constants';
 
 const router = Router();
 
@@ -56,31 +57,23 @@ router.get('/', asyncHandler(async (req, res) => {
 
   // Status filtering
   if (status && status !== 'all') {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const tenDaysFromNow = new Date();
-    tenDaysFromNow.setDate(tenDaysFromNow.getDate() + 10);
-    const in10DaysStr = tenDaysFromNow.toISOString().slice(0, 10);
-
-    if (status === 'pending') {
-      conditions.push({ status: { in: ['Pending', 'U toku', 'Čeka se', 'Draft', 'In Progress'] } });
-    } else if (status === 'completed') {
-      conditions.push({ status: { in: ['Completed', 'Završeno', 'Done'] } });
-    } else if (status === 'overdue') {
+    if (status === REMINDER_STATUSES.OVERDUE) {
+      const todayStr = new Date().toISOString().slice(0, 10);
       conditions.push({
-        status: { notIn: ['Completed', 'Završeno', 'Done'] },
+        status: { not: REMINDER_STATUSES.COMPLETED },
         dueDate: { lt: todayStr },
       });
     } else if (status === 'approaching') {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const in10DaysStr = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
       conditions.push({
-        status: { notIn: ['Completed', 'Završeno', 'Done'] },
+        status: { not: REMINDER_STATUSES.COMPLETED },
         dueDate: { gte: todayStr, lte: in10DaysStr },
       });
     } else if (status === 'active') {
-      conditions.push({ status: { notIn: ['Completed', 'Završeno', 'Done'] } });
-    } else if (status.toLowerCase() === 'in progress' || status.toLowerCase() === 'in_progress') {
-      conditions.push({ status: { in: ['In Progress', 'U toku', 'У току'] } });
+      conditions.push({ status: { not: REMINDER_STATUSES.COMPLETED } });
     } else {
-      conditions.push({ status: { equals: status, mode: 'insensitive' as const } });
+      conditions.push({ status });
     }
   }
 
@@ -271,7 +264,7 @@ router.post('/', asyncHandler(async (req, res) => {
       clientName: clientName || null,
       responsibleId: finalResponsibleId,
       responsible: finalResponsible,
-      status: status || 'Pending',
+      status: status || REMINDER_STATUSES.PENDING,
       notes: notes || null,
       dueDate: dueDate || null,
       permitId: permitId || null,
@@ -309,7 +302,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       clientName: clientName !== undefined ? (clientName || null) : existing.clientName,
       responsibleId: responsibleId !== undefined ? (responsibleId || null) : existing.responsibleId,
       responsible: responsible !== undefined ? (responsible || null) : existing.responsible,
-      status: status || existing.status,
+      status: status !== undefined ? (status || REMINDER_STATUSES.PENDING) : existing.status,
       notes: notes !== undefined ? (notes || null) : existing.notes,
       dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
       permitId: permitId !== undefined ? (permitId || null) : existing.permitId,
@@ -339,7 +332,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 
   const updated = await prisma.reminder.update({
     where: { id },
-    data: { status: status || 'Completed' },
+    data: { status: status || REMINDER_STATUSES.COMPLETED },
   });
 
   res.json(updated);

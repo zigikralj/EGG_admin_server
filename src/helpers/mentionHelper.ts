@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import { stripHtmlToText } from "./htmlUtils";
+import { USER_STATUSES } from "../constants";
 
 interface ActiveUserMentionCandidate {
   id: string;
@@ -32,7 +33,7 @@ export async function extractMentionedUserIds(
   const allUsers =
     preloadedUsers ??
     (await prisma.user.findMany({
-      where: { isApproved: true, status: { not: "BLOCKED" } },
+      where: { isApproved: true, status: { not: USER_STATUSES.BLOCKED } },
       select: { id: true, name: true, email: true },
     }));
 
@@ -63,7 +64,7 @@ export async function handleProjectNotesMentions(
     notes.includes("@") || Boolean(previousNotes && previousNotes.includes("@"));
   const activeUsers = needsUserLookup
     ? await prisma.user.findMany({
-        where: { isApproved: true, status: { not: "BLOCKED" } },
+        where: { isApproved: true, status: { not: USER_STATUSES.BLOCKED } },
         select: { id: true, name: true, email: true },
       })
     : [];
@@ -87,7 +88,7 @@ export async function handleProjectNotesMentions(
     where: {
       id: { in: newMentionUserIds },
       isApproved: true,
-      status: { not: "BLOCKED" },
+      status: { not: USER_STATUSES.BLOCKED },
     },
     select: { id: true, name: true },
   });

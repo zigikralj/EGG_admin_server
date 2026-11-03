@@ -5,6 +5,12 @@ import { prisma } from './db';
 import { hashPassword } from './authUtils';
 import { UserRole } from './types';
 import { addMonths, todayStr } from './helpers/dateUtils';
+import {
+  USER_STATUSES,
+  REMINDER_STATUSES,
+  PROVIDED_SERVICE_STATUSES,
+  SYSTEM_SETTING_KEYS,
+} from './constants';
 
 const envFile = process.env.DOTENV_CONFIG_PATH || process.env.ENV_FILE || '.env';
 if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
@@ -63,14 +69,14 @@ export async function seed(force = false) {
   // 2. Seed Users / Staff
   const defaultPasswordHash = hashPassword('password123');
   const initialUsers = [
-    { name: 'Zigi', email: 'zigi@ekosgreen.rs', role: UserRole.ADMINISTRATOR, phone: '+381 36 311 099', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Marija Petrović', email: 'marija@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 102', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Petar Marković', email: 'petar@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 103', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Katarina Popović', email: 'katarina@ekosgreen.rs', role: UserRole.ACCOUNTANT, phone: '+381 36 311 106', password: defaultPasswordHash, isApproved: true, status: 'APPROVED' },
-    { name: 'Jovana Nikolić', email: 'jovana@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 104', password: defaultPasswordHash, isApproved: false, status: 'BLOCKED' },
-    { name: 'Marko Simić', email: 'marko@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 105', password: defaultPasswordHash, isApproved: false, status: 'PENDING' },
+    { name: 'Zigi', email: 'zigi@ekosgreen.rs', role: UserRole.ADMINISTRATOR, phone: '+381 36 311 099', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Marija Petrović', email: 'marija@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 102', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Petar Marković', email: 'petar@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 103', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Katarina Popović', email: 'katarina@ekosgreen.rs', role: UserRole.ACCOUNTANT, phone: '+381 36 311 106', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Jovana Nikolić', email: 'jovana@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 104', password: defaultPasswordHash, isApproved: false, status: USER_STATUSES.BLOCKED },
+    { name: 'Marko Simić', email: 'marko@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 105', password: defaultPasswordHash, isApproved: false, status: USER_STATUSES.PENDING },
   ];
 
   const createdUsers: Record<string, string> = {};
@@ -925,7 +931,7 @@ export async function seed(force = false) {
           clientName: client.name,
           responsibleId,
           responsible: r.responsible,
-          status: r.status,
+          status: r.status.toLowerCase().replace(' ', '_'),
           notes: r.notes,
           dueDate: r.dueDate,
         },
@@ -1677,7 +1683,7 @@ export async function seed(force = false) {
           clientName: client?.name || inv.clientKey,
           projectId: projectId,
           projectName: inv.projectName || null,
-          status: inv.status,
+          status: inv.status.toLowerCase(),
           notes: inv.notes,
           totalAmount: inv.totalAmount,
           currency: inv.currency,
@@ -1704,15 +1710,33 @@ export async function seed(force = false) {
   if (wasteDisposalService) {
     // Ensure system setting for waste disposal service id is stored
     await prisma.systemSetting.upsert({
-      where: { key: 'waste_disposal_service_id' },
+      where: { key: SYSTEM_SETTING_KEYS.WASTE_DISPOSAL_SERVICE_ID },
       update: { value: wasteDisposalService.id },
-      create: { key: 'waste_disposal_service_id', value: wasteDisposalService.id },
+      create: { key: SYSTEM_SETTING_KEYS.WASTE_DISPOSAL_SERVICE_ID, value: wasteDisposalService.id },
     });
 
     // Custom data model definition for waste disposal directly on Service
     const customModels = [
-      { id: 'kolicina_kg', name: 'Količina', type: 'number', unit: 'kg', required: true },
-      { id: 'vrsta_otpada', name: 'Vrsta otpada', type: 'text', required: false },
+      {
+        id: 'kolicina_kg',
+        name: 'Količina otpada',
+        type: 'number',
+        unit: 'kg',
+      },
+      {
+        id: 'vrsta_otpada',
+        name: 'Vrsta otpada',
+        type: 'list',
+        options: [],
+        linkedList: 'index_number',
+      },
+      {
+        id: 'transport',
+        name: 'Transport',
+        type: 'client',
+        linkedList: 'clients',
+        permitTypeFilter: 'Transport',
+      },
     ];
 
     await prisma.service.update({
@@ -1818,20 +1842,29 @@ export async function seed(force = false) {
         const client = clientMap[rec.clientKey];
         if (!client) continue;
 
+        const wasteIndexCodes = rec.wasteType.includes('Metal')
+          ? ['17 04 05']
+          : rec.wasteType.includes('Elektron') || rec.wasteType.includes('opas')
+          ? ['15 01 10*']
+          : rec.wasteType.includes('Drv') || rec.wasteType.includes('Karton') || rec.wasteType.includes('papir')
+          ? ['15 01 01']
+          : ['15 01 02'];
+
         await prisma.providedService.create({
           data: {
             serviceId: wasteDisposalService.id,
             clientId: client.id,
-            status: rec.status,
+            status: rec.status.toLowerCase(),
             location: rec.location,
             scheduledDate: rec.date,
-            completionDate: rec.status === 'Completed' ? rec.date : null,
+            completionDate: rec.status.toLowerCase() === PROVIDED_SERVICE_STATUSES.COMPLETED ? rec.date : null,
             price: rec.price,
             currency: 'RSD',
             notes: rec.notes,
             customData: {
               kolicina_kg: rec.kg,
-              vrsta_otpada: rec.wasteType,
+              vrsta_otpada: wasteIndexCodes,
+              transport: 'EcoRecycling d.o.o.',
             },
             createdAt: new Date(`${rec.date}T09:00:00.000Z`),
             updatedAt: new Date(`${rec.date}T10:30:00.000Z`),
@@ -2006,7 +2039,7 @@ export async function seed(force = false) {
             permitNumber: p.permitNumber,
             dueDate: '2026-10-20',
             notes: 'Rok za dopunu dokumentacije za produženje dozvole.',
-            status: 'Pending',
+            status: REMINDER_STATUSES.PENDING,
           },
         });
       }

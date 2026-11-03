@@ -5,9 +5,10 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { PROVIDED_SERVICE_STATUSES, SYSTEM_SETTING_KEYS } from '../constants';
 
 async function getConfiguredWasteServiceId(): Promise<string | null> {
-  const wasteSetting = await prisma.systemSetting.findUnique({ where: { key: 'waste_disposal_service_id' } });
+  const wasteSetting = await prisma.systemSetting.findUnique({ where: { key: SYSTEM_SETTING_KEYS.WASTE_DISPOSAL_SERVICE_ID } });
   const val = typeof wasteSetting?.value === 'string' ? wasteSetting.value.trim() : '';
   return val || null;
 }
@@ -62,28 +63,7 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   if (status && status !== 'all') {
-    const s = status.toLowerCase();
-    if (s === 'planned' || s === 'planirano' || s === 'планирано') {
-      conditions.push({
-        status: { in: ['Planned', 'planirano', 'планирано', 'planned'], mode: 'insensitive' },
-      });
-    } else if (s === 'in progress' || s === 'in_progress' || s === 'u toku' || s === 'у току') {
-      conditions.push({
-        status: { in: ['In Progress', 'in_progress', 'u toku', 'у току', 'in progress'], mode: 'insensitive' },
-      });
-    } else if (s === 'completed' || s === 'završeno' || s === 'завршено') {
-      conditions.push({
-        status: { in: ['Completed', 'završeno', 'завршено', 'completed'], mode: 'insensitive' },
-      });
-    } else if (s === 'cancelled' || s === 'otkazano' || s === 'отказано') {
-      conditions.push({
-        status: { in: ['Cancelled', 'otkazano', 'отказано', 'cancelled'], mode: 'insensitive' },
-      });
-    } else {
-      conditions.push({
-        status: { equals: status, mode: 'insensitive' },
-      });
-    }
+    conditions.push({ status });
   }
 
   if (clientId && clientId !== 'all') {
@@ -323,7 +303,7 @@ router.post('/', asyncHandler(async (req, res) => {
       clientId,
       projectId: projectId || null,
       invoiceId: invoiceId || null,
-      status: status || 'Planned',
+      status: status || PROVIDED_SERVICE_STATUSES.PLANNED,
       location: location ? String(location).trim() : null,
       scheduledDate: scheduledDate || null,
       completionDate: completionDate || null,
@@ -420,7 +400,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       clientId: clientId !== undefined ? clientId : existing.clientId,
       projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
       invoiceId: invoiceId !== undefined ? (invoiceId || null) : existing.invoiceId,
-      status: status !== undefined ? status : existing.status,
+      status: status !== undefined ? (status || PROVIDED_SERVICE_STATUSES.PLANNED) : existing.status,
       location: location !== undefined ? (location ? String(location).trim() : null) : existing.location,
       scheduledDate: scheduledDate !== undefined ? (scheduledDate || null) : existing.scheduledDate,
       completionDate: completionDate !== undefined ? (completionDate || null) : existing.completionDate,
