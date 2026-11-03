@@ -1,3 +1,4 @@
 # Gitleaks ignore list for false positives
 561b6729b4206835f3de1cee17cac58053adae9f:.github/workflows/deploy.yml:generic-api-key:17
 561b6729b4206835f3de1cee17cac58053adae9f:.github/workflows/ci.yml:generic-api-key:24
+
