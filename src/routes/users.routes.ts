@@ -392,7 +392,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
-  const { role } = req.body;
+  const { role } = req.body || {};
   const targetRole = role || UserRole.USER;
 
   if (!isUserSystemAdmin(authUser) && targetRole === UserRole.ADMINISTRATOR) {
@@ -448,6 +448,10 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
+  if (authUser.id === id) {
+    res.status(400).json({ error: 'You cannot delete your own account.' });
+    return;
+  }
   const existingUser = await prisma.user.findUnique({ where: { id } });
   if (!existingUser) {
     res.status(404).json({ error: 'User not found' });

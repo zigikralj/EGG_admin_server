@@ -192,7 +192,12 @@ const where = search ? {
 # Development
 npm run dev                    # Start dev server (hot-reload)
 npm run dev:local              # Start with .env.localhost
-npm run build                  # Build for production
+npm run build                  # Build for production (prisma generate && tsc)
+
+# Automated Testing (Vitest + Supertest with Deep Mocked Prisma)
+npm test                       # Start vitest in watch mode
+npm run test:run               # Run all server unit & route tests once (141+ tests across 26 suites)
+npm run test:coverage          # Run all tests and generate v8 coverage report
 
 # Database
 npm run migrate:dev -- --name <name>   # Create and apply new migration locally

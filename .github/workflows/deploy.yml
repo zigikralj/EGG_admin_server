@@ -11,12 +11,32 @@ permissions:
 jobs:
   test_and_deploy:
     runs-on: ubuntu-latest
+
+    env:
+      NODE_ENV: test
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # (Optional) Run tests / linting here
-      # - run: npm test
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Run Tests
+        run: npm run test:run
+
+      - name: Verify Build
+        run: npm run build
 
       - name: Trigger Render Deploy Hook
         run: |

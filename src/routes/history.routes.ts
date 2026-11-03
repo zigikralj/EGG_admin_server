@@ -15,6 +15,25 @@ import {
 const router = Router();
 router.use(requireAuth);
 
+// GET /api/history/changesets/:id — transaction-level diff across entities
+router.get(
+  '/changesets/:id',
+  asyncHandler(async (req, res) => {
+    if (!hasPermission(req.authUser, 'history', 'view')) {
+      res.status(403).json({ error: 'Permission denied. You cannot view history.' });
+      return;
+    }
+
+    const changeSet = await getChangeSetDetails(String(req.params.id));
+    if (!changeSet) {
+      res.status(404).json({ error: 'ChangeSet not found.' });
+      return;
+    }
+
+    res.json(changeSet);
+  })
+);
+
 // GET /api/history/:entityType/:id — version list with metadata & changed fields
 router.get(
   '/:entityType/:id',
