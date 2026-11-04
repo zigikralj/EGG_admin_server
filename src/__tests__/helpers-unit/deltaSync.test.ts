@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../../helpers/deltaSync';
+import { describe, it, expect, vi } from 'vitest';
+import { parseSince, fetchDeletedIds, buildDeltaResponse, purgeOldEntityVersions } from '../../helpers/deltaSync';
 import { mockPrisma } from '../helpers/prismaMock';
 
 describe('Delta Sync Helper', () => {
@@ -66,6 +66,31 @@ describe('Delta Sync Helper', () => {
         orderBy: { createdAt: 'asc' },
       });
       expect(deletedIds).toEqual(['id-deleted-1', 'id-deleted-2']);
+    });
+  });
+
+  describe('purgeOldEntityVersions', () => {
+    it('executes in transactions with audit.allow_cleanup set to true and returns count of deleted versions', async () => {
+      mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
+      // First call for EntityVersion returns 10, then ChangeSet returns 0
+      mockPrisma.$executeRaw
+        .mockResolvedValueOnce(10) // EntityVersion chunk
+        .mockResolvedValueOnce(0);  // ChangeSet chunk
+
+      const count = await purgeOldEntityVersions(30);
+
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+      expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(
+        "SELECT set_config('audit.allow_cleanup', 'true', true)"
+      );
+      expect(count).toBe(10);
+    });
+
+    it('returns 0 and catches errors if transaction fails', async () => {
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error('DB failure'));
+
+      const count = await purgeOldEntityVersions(30);
+      expect(count).toBe(0);
     });
   });
 });

@@ -3,7 +3,6 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { PROVIDED_SERVICE_STATUSES, SYSTEM_SETTING_KEYS } from '../constants';
 
@@ -45,10 +44,9 @@ router.get('/', asyncHandler(async (req, res) => {
   if (isWasteDisposalOnly || (!canViewAll && canViewWaste)) {
     const wasteServiceId = await getConfiguredWasteServiceId();
     if (!wasteServiceId) {
-      const sinceDate = parseSince(req.query.since);
       const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
-      if (sinceDate || !isPaginated) {
-        res.json(buildDeltaResponse([], [], sinceDate));
+      if (!isPaginated) {
+        res.json([]);
       } else {
         const pagination = parsePagination(req.query, {
           defaultSortBy: 'scheduledDate',
@@ -130,7 +128,6 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const where: any = conditions.length > 0 ? { AND: conditions } : {};
 
-  const sinceDate = parseSince(req.query.since);
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
 
   const includeRelations = {
@@ -140,21 +137,15 @@ router.get('/', asyncHandler(async (req, res) => {
     invoice: { select: { id: true, invoiceNumber: true, status: true } },
   };
 
-  // Delta sync or unpaginated request
-  if (sinceDate || !isPaginated) {
-    if (sinceDate) {
-      where.updatedAt = { gt: sinceDate };
-    }
-    const [rawItems, deletedIds] = await Promise.all([
-      prisma.providedService.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        include: includeRelations,
-      }),
-      sinceDate ? fetchDeletedIds('ProvidedService', sinceDate) : Promise.resolve([]),
-    ]);
+  // Unpaginated request
+  if (!isPaginated) {
+    const rawItems = await prisma.providedService.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: includeRelations,
+    });
 
-    res.json(buildDeltaResponse(rawItems, deletedIds, sinceDate));
+    res.json(rawItems);
     return;
   }
 

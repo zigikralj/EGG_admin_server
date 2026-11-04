@@ -108,10 +108,10 @@ export function initActivityLogger(prismaClient: PrismaClient): void {
   // Retention: first run shortly after boot, then once per day.
   const initial = setTimeout(() => {
     void purgeOldActivityLogs();
-    void purgeOldEntityVersions(30);
+    void purgeOldEntityVersions(getRetentionDays());
     retentionTimer = setInterval(() => {
       void purgeOldActivityLogs();
-      void purgeOldEntityVersions(30);
+      void purgeOldEntityVersions(getRetentionDays());
     }, RETENTION_CHECK_INTERVAL_MS);
     retentionTimer.unref();
   }, RETENTION_INITIAL_DELAY_MS);

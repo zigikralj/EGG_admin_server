@@ -33,22 +33,21 @@ describe('Projects Routes (GET, POST, PUT, PATCH, DELETE, Notes, Diffs)', () => 
       expect(res.body.page).toBe(1);
     });
 
-    it('returns delta envelope when ?since is provided', async () => {
+    it('returns array directly and ignores ?since parameter (delta sync removed from projects)', async () => {
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValue(admin);
       mockPrisma.project.findMany.mockResolvedValueOnce([
         { id: 'proj-1', name: 'Factory Waste Plan' },
       ]);
-      mockPrisma.entityVersion.findMany.mockResolvedValueOnce([]);
 
       const res = await request(app)
         .get(`/api/projects?since=${encodeURIComponent(new Date().toISOString())}`)
         .set('Authorization', createAuthHeader(admin));
 
       expect(res.status).toBe(200);
-      expect(res.body.delta).toBe(true);
-      expect(Array.isArray(res.body.items)).toBe(true);
-      expect(Array.isArray(res.body.deletedIds)).toBe(true);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].id).toBe('proj-1');
     });
 
     it('GET /api/projects/:id returns single project details', async () => {

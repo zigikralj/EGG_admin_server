@@ -3,7 +3,6 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission, isRestrictedToOwn } from '../types';
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { REMINDER_STATUSES } from '../constants';
 
@@ -15,7 +14,6 @@ router.use(requireAuth);
 // GET /api/reminders
 router.get('/', asyncHandler(async (req, res) => {
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
-  const sinceDate = parseSince(req.query.since);
 
   const search = ((req.query.search as string) || '').trim();
   const status = (req.query.status as string) || '';
@@ -148,20 +146,14 @@ router.get('/', asyncHandler(async (req, res) => {
     ? { select: reminderSummarySelect }
     : { include: reminderInclude };
 
-  // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
-  if (sinceDate || !isPaginated) {
-    if (sinceDate) {
-      where.updatedAt = { gt: sinceDate };
-    }
-    const [reminders, deletedIds] = await Promise.all([
-      prisma.reminder.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        ...(queryOptions as any),
-      }),
-      sinceDate ? fetchDeletedIds('Reminder', sinceDate) : Promise.resolve([]),
-    ]);
-    res.json(buildDeltaResponse(reminders, deletedIds, sinceDate));
+  // Unpaginated request
+  if (!isPaginated) {
+    const reminders = await prisma.reminder.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      ...(queryOptions as any),
+    });
+    res.json(reminders);
     return;
   }
 

@@ -38,7 +38,9 @@ export function createPrismaMock() {
       return Promise.all(fnOrArray);
     }),
     $executeRaw: vi.fn().mockResolvedValue(1),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(1),
     $queryRaw: vi.fn().mockResolvedValue([]),
+    $queryRawUnsafe: vi.fn().mockResolvedValue([]),
     $extends: vi.fn().mockReturnThis(),
   };
 

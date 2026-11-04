@@ -3,7 +3,6 @@ import { prisma, auditedTransaction } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { INVOICE_STATUSES, INVOICE_TYPES } from '../constants';
 
@@ -15,7 +14,6 @@ router.use(requireAuth);
 // GET /api/invoices
 router.get('/', asyncHandler(async (req, res) => {
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
-  const sinceDate = parseSince(req.query.since);
 
   const search = ((req.query.search as string) || '').trim();
   const status = (req.query.status as string) || '';
@@ -169,20 +167,14 @@ router.get('/', asyncHandler(async (req, res) => {
     ? { select: invoiceSummarySelect }
     : { include: invoiceInclude };
 
-  // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
-  if (sinceDate || !isPaginated) {
-    if (sinceDate) {
-      where.updatedAt = { gt: sinceDate };
-    }
-    const [invoices, deletedIds] = await Promise.all([
-      prisma.invoice.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        ...(queryOptions as any),
-      }),
-      sinceDate ? fetchDeletedIds('Invoice', sinceDate) : Promise.resolve([]),
-    ]);
-    res.json(buildDeltaResponse(invoices, deletedIds, sinceDate));
+  // Unpaginated request
+  if (!isPaginated) {
+    const invoices = await prisma.invoice.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      ...(queryOptions as any),
+    });
+    res.json(invoices);
     return;
   }
 

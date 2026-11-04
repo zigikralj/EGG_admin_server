@@ -26,21 +26,21 @@ describe('Clients Routes (GET, POST, PUT, DELETE)', () => {
       expect(res.body.total).toBe(1);
     });
 
-    it('returns delta envelope when ?since is provided', async () => {
+    it('returns array directly and ignores ?since parameter (delta sync removed from clients)', async () => {
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValue(admin);
       mockPrisma.client.findMany.mockResolvedValueOnce([
         { id: 'c1', name: 'Client A' },
       ]);
-      mockPrisma.entityVersion.findMany.mockResolvedValueOnce([]);
 
       const res = await request(app)
         .get(`/api/clients?since=${encodeURIComponent(new Date().toISOString())}`)
         .set('Authorization', createAuthHeader(admin));
 
       expect(res.status).toBe(200);
-      expect(res.body.delta).toBe(true);
-      expect(Array.isArray(res.body.items)).toBe(true);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].id).toBe('c1');
     });
   });
 

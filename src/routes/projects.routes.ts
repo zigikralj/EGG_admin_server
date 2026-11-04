@@ -16,11 +16,6 @@ import {
   resolveVersionsByDate,
   diffVersions,
 } from '../services/versioning.service';
-import {
-  parseSince,
-  fetchDeletedIds,
-  buildDeltaResponse,
-} from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { todayStr, addMonths } from '../helpers/dateUtils';
 
@@ -142,14 +137,10 @@ router.get('/', asyncHandler(async (req, res) => {
     ? { done: doneParam === 'true' }
     : undefined;
 
-  const sinceDate = parseSince(req.query.since);
-  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
-
   const conditions: any[] = [];
   if (ownerCondition) conditions.push(ownerCondition);
   if (searchCondition) conditions.push(searchCondition);
   if (doneCondition) conditions.push(doneCondition);
-  if (deltaCondition) conditions.push(deltaCondition);
 
   // Status filter (active, done, overdue, stale, creation, missing_invoice)
   const status = ((req.query.status as string) || '').trim();
@@ -303,17 +294,14 @@ router.get('/', asyncHandler(async (req, res) => {
     return;
   }
 
-  const [projects, deletedIds] = await Promise.all([
-    prisma.project.findMany({
-      where,
-      orderBy,
-      select: projectListSelect,
-    }),
-    sinceDate ? fetchDeletedIds('Project', sinceDate) : Promise.resolve([]),
-  ]);
+  const projects = await prisma.project.findMany({
+    where,
+    orderBy,
+    select: projectListSelect,
+  });
 
   const enrichedProjects = await enrichProjectsWithServiceName(projects);
-  res.json(buildDeltaResponse(enrichedProjects, deletedIds, sinceDate));
+  res.json(enrichedProjects);
 }));
 
 // GET /api/projects/updates

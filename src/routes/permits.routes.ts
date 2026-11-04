@@ -3,7 +3,6 @@ import { prisma, auditedTransaction } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission } from "../types";
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from "../helpers/deltaSync";
 import { parsePagination, buildPaginatedResponse } from "../helpers/pagination";
 
 const router = Router();
@@ -73,12 +72,8 @@ router.get("/", asyncHandler(async (req, res) => {
     ],
   } : undefined;
 
-  const sinceDate = parseSince(req.query.since);
-  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
-
   const conditions: any[] = [];
   if (searchCondition) conditions.push(searchCondition);
-  if (deltaCondition) conditions.push(deltaCondition);
 
   // Status filter (active | expiring | expired)
   const status = ((req.query.status as string) || "").trim();
@@ -189,15 +184,12 @@ router.get("/", asyncHandler(async (req, res) => {
       return;
     }
 
-    const [permits, deletedIds] = await Promise.all([
-      prisma.permit.findMany({
-        where,
-        orderBy,
-        select: summarySelect,
-      }),
-      sinceDate ? fetchDeletedIds("Permit", sinceDate) : Promise.resolve([]),
-    ]);
-    res.json(buildDeltaResponse(permits.map(formatSummaryPermit), deletedIds, sinceDate));
+    const permits = await prisma.permit.findMany({
+      where,
+      orderBy,
+      select: summarySelect,
+    });
+    res.json(permits.map(formatSummaryPermit));
     return;
   }
 
@@ -225,25 +217,22 @@ router.get("/", asyncHandler(async (req, res) => {
     return;
   }
 
-  const [permits, deletedIds] = await Promise.all([
-    prisma.permit.findMany({
-      where,
-      orderBy,
-      include: {
-        client: { select: { id: true, name: true } },
-        reminders: { select: { id: true, title: true, dueDate: true, status: true } },
-        clientExtraData: {
-          include: { client: { select: { id: true, name: true } } },
-        },
-        permitWastes: {
-          include: { wasteCatalog: true },
-        },
+  const permits = await prisma.permit.findMany({
+    where,
+    orderBy,
+    include: {
+      client: { select: { id: true, name: true } },
+      reminders: { select: { id: true, title: true, dueDate: true, status: true } },
+      clientExtraData: {
+        include: { client: { select: { id: true, name: true } } },
       },
-    }),
-    sinceDate ? fetchDeletedIds("Permit", sinceDate) : Promise.resolve([]),
-  ]);
+      permitWastes: {
+        include: { wasteCatalog: true },
+      },
+    },
+  });
 
-  res.json(buildDeltaResponse(permits.map(formatPermit), deletedIds, sinceDate));
+  res.json(permits.map(formatPermit));
 }));
 
 // GET /api/permits/:id
