@@ -7,6 +7,9 @@
     "dev": "prisma generate && tsx watch src/index.ts",
     "dev:local": "DOTENV_CONFIG_PATH=.env.localhost prisma generate && DOTENV_CONFIG_PATH=.env.localhost tsx watch --env-file=.env.localhost src/index.ts",
     "build": "prisma generate && tsc",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "prestart": "npm run build",
     "start": "node dist/index.js",
     "db:push:local": "DOTENV_CONFIG_PATH=.env.localhost prisma db push",
@@ -19,8 +22,10 @@
     "db:seed": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/seed.ts",
     "db:import-clients": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importClientsCsv.ts",
     "db:import-clients:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importClientsCsv.ts",
-    "db:import-waste": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importWasteDisposalExcel.ts",
-    "db:import-waste:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importWasteDisposalExcel.ts",
+    "db:import-provided-services": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importProvidedServicesFromDump.ts",
+    "db:migrate-waste-invoices": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/migrateWastePricesToInvoices.ts",
+    "db:migrate-waste-invoices:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/migrateWastePricesToInvoices.ts",
+    "db:migrate-waste-invoices:neon:dry-run": "npm run db:migrate-waste-invoices:neon -- --dry-run",
     "db:import-waste-catalog": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importWasteCatalogCsv.ts",
     "db:import-waste-catalog:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importWasteCatalogCsv.ts",
     "db:clean-word-notes": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/cleanWordNotes.ts",
@@ -56,8 +61,12 @@
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "@types/sanitize-html": "^2.16.2",
+    "@types/supertest": "^7.2.1",
+    "@vitest/coverage-v8": "^5.1.0",
     "prisma": "^7.10.1",
+    "supertest": "^7.3.1",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   }
 }

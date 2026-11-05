@@ -2,13 +2,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { createApp } from './app';
-import { prisma } from './db';
-import { shutdownActivityLogger } from './helpers/activityLogger';
+import { prisma, basePrisma } from './db';
+import { initActivityLogger, shutdownActivityLogger } from './helpers/activityLogger';
 
 const PORT = process.env.PORT || 3001;
 
 async function startServer() {
   try {
+    initActivityLogger(basePrisma);
     const app = createApp();
 
     const server = app.listen(PORT, () => {

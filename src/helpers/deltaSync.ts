@@ -82,8 +82,15 @@ export function buildDeltaResponse<T>(
 }
 
 /**
- * Deletes EntityVersion and orphan ChangeSet records older than the specified retention days.
- * Executes deletions in chunks of 5,000 to avoid table locks on PostgreSQL / Neon.
+ * Deletes EntityVersion and orphan ChangeSet records older than the specified retention days,
+ * while safely preserving entity history reconstruction and audit tampering constraints:
+ * 1. Enables audit cleanup locally within the transaction (`set_config('audit.allow_cleanup', 'true', true)`).
+ * 2. Only purges EntityVersion rows older than cutoff IF:
+ *    a) A newer keyframe snapshot ('S') exists before or at cutoff (the version belongs to a superseded epoch), OR
+ *    b) The entity was deleted ('D') and its deletion is older than cutoff.
+ *    Active entities with no newer snapshot retain their baseline snapshot indefinitely.
+ * 3. Deletes orphan ChangeSet records whose associated versions have been purged.
+ * Executes deletions in chunks of 5,000 to avoid table locks.
  */
 export async function purgeOldEntityVersions(days: number = 30): Promise<number> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -91,36 +98,77 @@ export async function purgeOldEntityVersions(days: number = 30): Promise<number>
   let totalVersionsDeleted = 0;
 
   try {
-    // 1. Delete EntityVersion rows in chunks
+    // 1. Delete eligible EntityVersion rows in chunks inside transactions
     while (true) {
-      const deletedChunk = await basePrisma.$executeRaw`
-        DELETE FROM "EntityVersion"
-        WHERE id IN (
-          SELECT id FROM "EntityVersion"
-          WHERE "createdAt" < ${cutoff}
-          LIMIT ${CHUNK_SIZE}
-        )
-      `;
+      const deletedChunk = await basePrisma.$transaction(async (tx) => {
+        // Set local audit cleanup flag for tampering prevention trigger
+        await tx.$executeRawUnsafe(`SELECT set_config('audit.allow_cleanup', 'true', true)`);
+
+        return await tx.$executeRaw`
+          DELETE FROM "EntityVersion"
+          WHERE id IN (
+            SELECT ev.id FROM "EntityVersion" ev
+            WHERE ev."createdAt" < ${cutoff}
+              AND (
+                -- Case A: Belonging to a superseded epoch (newer snapshot exists before cutoff)
+                EXISTS (
+                  SELECT 1 FROM "EntityVersion" s
+                  WHERE s."entityType" = ev."entityType"
+                    AND s."entityId" = ev."entityId"
+                    AND s.kind = 'S'
+                    AND s.version > ev.version
+                    AND s."createdAt" < ${cutoff}
+                )
+                OR
+                -- Case B: Entity was deleted and deletion is older than cutoff
+                (
+                  (
+                    SELECT last_ev.op FROM "EntityVersion" last_ev
+                    WHERE last_ev."entityType" = ev."entityType"
+                      AND last_ev."entityId" = ev."entityId"
+                    ORDER BY last_ev.version DESC
+                    LIMIT 1
+                  ) = 'D'
+                  AND
+                  (
+                    SELECT last_ev."createdAt" FROM "EntityVersion" last_ev
+                    WHERE last_ev."entityType" = ev."entityType"
+                      AND last_ev."entityId" = ev."entityId"
+                    ORDER BY last_ev.version DESC
+                    LIMIT 1
+                  ) < ${cutoff}
+                )
+              )
+            LIMIT ${CHUNK_SIZE}
+          )
+        `;
+      });
+
       totalVersionsDeleted += deletedChunk;
       if (deletedChunk < CHUNK_SIZE) break;
     }
 
     // 2. Delete orphan ChangeSet records that have no remaining EntityVersion records
     while (true) {
-      const deletedChangeSets = await basePrisma.$executeRaw`
-        DELETE FROM "ChangeSet"
-        WHERE id IN (
-          SELECT cs.id FROM "ChangeSet" cs
-          LEFT JOIN "EntityVersion" ev ON cs.id = ev."changeSetId"
-          WHERE cs."createdAt" < ${cutoff} AND ev.id IS NULL
-          LIMIT ${CHUNK_SIZE}
-        )
-      `;
+      const deletedChangeSets = await basePrisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('audit.allow_cleanup', 'true', true)`);
+
+        return await tx.$executeRaw`
+          DELETE FROM "ChangeSet"
+          WHERE id IN (
+            SELECT cs.id FROM "ChangeSet" cs
+            LEFT JOIN "EntityVersion" ev ON cs.id = ev."changeSetId"
+            WHERE cs."createdAt" < ${cutoff} AND ev.id IS NULL
+            LIMIT ${CHUNK_SIZE}
+          )
+        `;
+      });
+
       if (deletedChangeSets < CHUNK_SIZE) break;
     }
 
     if (totalVersionsDeleted > 0) {
-      console.log(`[deltaSync] Retention: removed ${totalVersionsDeleted} EntityVersion records older than ${days} days.`);
+      console.log(`[deltaSync] Retention: safely removed ${totalVersionsDeleted} superseded EntityVersion records older than ${days} days.`);
     }
 
     return totalVersionsDeleted;

@@ -1,9 +1,8 @@
 import { Router } from "express";
-import { prisma } from "../db";
+import { prisma, auditedTransaction } from "../db";
 import { asyncHandler } from "../middleware/errorHandler";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission } from "../types";
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from "../helpers/deltaSync";
 import { parsePagination, buildPaginatedResponse } from "../helpers/pagination";
 
 const router = Router();
@@ -73,12 +72,8 @@ router.get("/", asyncHandler(async (req, res) => {
     ],
   } : undefined;
 
-  const sinceDate = parseSince(req.query.since);
-  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
-
   const conditions: any[] = [];
   if (searchCondition) conditions.push(searchCondition);
-  if (deltaCondition) conditions.push(deltaCondition);
 
   // Status filter (active | expiring | expired)
   const status = ((req.query.status as string) || "").trim();
@@ -189,15 +184,12 @@ router.get("/", asyncHandler(async (req, res) => {
       return;
     }
 
-    const [permits, deletedIds] = await Promise.all([
-      prisma.permit.findMany({
-        where,
-        orderBy,
-        select: summarySelect,
-      }),
-      sinceDate ? fetchDeletedIds("Permit", sinceDate) : Promise.resolve([]),
-    ]);
-    res.json(buildDeltaResponse(permits.map(formatSummaryPermit), deletedIds, sinceDate));
+    const permits = await prisma.permit.findMany({
+      where,
+      orderBy,
+      select: summarySelect,
+    });
+    res.json(permits.map(formatSummaryPermit));
     return;
   }
 
@@ -225,25 +217,22 @@ router.get("/", asyncHandler(async (req, res) => {
     return;
   }
 
-  const [permits, deletedIds] = await Promise.all([
-    prisma.permit.findMany({
-      where,
-      orderBy,
-      include: {
-        client: { select: { id: true, name: true } },
-        reminders: { select: { id: true, title: true, dueDate: true, status: true } },
-        clientExtraData: {
-          include: { client: { select: { id: true, name: true } } },
-        },
-        permitWastes: {
-          include: { wasteCatalog: true },
-        },
+  const permits = await prisma.permit.findMany({
+    where,
+    orderBy,
+    include: {
+      client: { select: { id: true, name: true } },
+      reminders: { select: { id: true, title: true, dueDate: true, status: true } },
+      clientExtraData: {
+        include: { client: { select: { id: true, name: true } } },
       },
-    }),
-    sinceDate ? fetchDeletedIds("Permit", sinceDate) : Promise.resolve([]),
-  ]);
+      permitWastes: {
+        include: { wasteCatalog: true },
+      },
+    },
+  });
 
-  res.json(buildDeltaResponse(permits.map(formatPermit), deletedIds, sinceDate));
+  res.json(permits.map(formatPermit));
 }));
 
 // GET /api/permits/:id
@@ -309,35 +298,39 @@ router.post("/", asyncHandler(async (req, res) => {
     return;
   }
 
-  const permit = await prisma.permit.create({
-    data: {
-      permitNumber: permitNumber.trim(),
-      startDate: startDate || null,
-      endDate: endDate || null,
-      notes: notes ? notes.trim() : null,
-      permitTypes: normalizedPermitTypes,
-      clientId: clientId.trim(),
-      permitWastes: {
-        create: targetWcIds.map(id => ({ wasteCatalogId: id })),
+  const permit = await auditedTransaction(async () => {
+    const created = await prisma.permit.create({
+      data: {
+        permitNumber: permitNumber.trim(),
+        startDate: startDate || null,
+        endDate: endDate || null,
+        notes: notes ? notes.trim() : null,
+        permitTypes: normalizedPermitTypes,
+        clientId: clientId.trim(),
+        permitWastes: {
+          create: targetWcIds.map(id => ({ wasteCatalogId: id })),
+        },
       },
-    },
-    include: {
-      client: true,
-      reminders: true,
-      clientExtraData: {
-        include: { client: true },
+      include: {
+        client: true,
+        reminders: true,
+        clientExtraData: {
+          include: { client: true },
+        },
+        permitWastes: {
+          include: { wasteCatalog: true },
+        },
       },
-      permitWastes: {
-        include: { wasteCatalog: true },
-      },
-    },
-  });
+    });
 
-  // Keep legacy ClientExtraData in sync for fallback
-  await prisma.clientExtraData.upsert({
-    where: { clientId: clientId.trim() },
-    create: { clientId: clientId.trim(), permitId: permit.id },
-    update: { permitId: permit.id },
+    // Keep legacy ClientExtraData in sync for fallback
+    await prisma.clientExtraData.upsert({
+      where: { clientId: clientId.trim() },
+      create: { clientId: clientId.trim(), permitId: created.id },
+      update: { permitId: created.id },
+    });
+
+    return created;
   });
 
   res.status(201).json(formatPermit(permit));
@@ -384,7 +377,7 @@ router.put("/:id", asyncHandler(async (req, res) => {
 
   const targetClientId = clientId !== undefined ? (clientId ? String(clientId).trim() : null) : existing.clientId;
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const updated = await auditedTransaction(async (tx) => {
     if (targetWcIds !== undefined) {
       await tx.permitWaste.deleteMany({
         where: { permitId: id },
@@ -400,7 +393,7 @@ router.put("/:id", asyncHandler(async (req, res) => {
       }
     }
 
-    const permitUpdate = await tx.permit.update({
+    const permitUpdate = await prisma.permit.update({
       where: { id },
       data: {
         permitNumber: permitNumber !== undefined ? permitNumber.trim() : existing.permitNumber,
@@ -463,18 +456,20 @@ router.delete("/:id", asyncHandler(async (req, res) => {
     return;
   }
 
-  await prisma.permit.delete({ where: { id } });
+  await auditedTransaction(async (tx) => {
+    await prisma.permit.delete({ where: { id } });
 
-  // Update clientExtraData fallback if needed
-  if (existing.clientId) {
-    const nextPermit = await prisma.permit.findFirst({
-      where: { clientId: existing.clientId },
-    });
-    await prisma.clientExtraData.updateMany({
-      where: { clientId: existing.clientId },
-      data: { permitId: nextPermit ? nextPermit.id : null },
-    });
-  }
+    // Update clientExtraData fallback if needed
+    if (existing.clientId) {
+      const nextPermit = await tx.permit.findFirst({
+        where: { clientId: existing.clientId },
+      });
+      await tx.clientExtraData.updateMany({
+        where: { clientId: existing.clientId },
+        data: { permitId: nextPermit ? nextPermit.id : null },
+      });
+    }
+  });
 
   res.json({ message: "Permit deleted successfully" });
 }));

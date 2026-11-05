@@ -6,6 +6,7 @@ import { requireAuth, userForceLogoutMap, invalidateUserAuthCache } from '../mid
 import { validatePassword, sanitizeString } from '../middleware/validate';
 import { formatUserWithPermissions, UserRole } from '../types';
 import { isActivityLoggingEnabled } from '../helpers/activityLogger';
+import { USER_STATUSES, ERROR_CODES } from '../constants';
 
 const router = Router();
 
@@ -31,48 +32,45 @@ router.post('/login', asyncHandler(async (req, res) => {
   });
 
   if (!user) {
-    res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email/username or password.' });
+    res.status(401).json({ error: ERROR_CODES.INVALID_CREDENTIALS, message: 'Invalid email/username or password.' });
     return;
   }
 
-  // Verify password if user has a password set
-  if (user.password) {
-    const isValid = verifyPassword(password, user.password);
-    if (!isValid) {
-      res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email/username or password.' });
-      return;
-    }
+  // Verify password — reject immediately if user has no password set
+  if (!user.password || !verifyPassword(password, user.password)) {
+    res.status(401).json({ error: ERROR_CODES.INVALID_CREDENTIALS, message: 'Invalid email/username or password.' });
+    return;
+  }
 
-    // Automatically upgrade legacy PBKDF2 hash to bcrypt
-    if (!user.password.startsWith('$2')) {
-      const bcryptHash = hashPassword(password);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { password: bcryptHash },
-      });
-    }
+  // Automatically upgrade legacy PBKDF2 hash to bcrypt
+  if (!user.password.startsWith('$2')) {
+    const bcryptHash = hashPassword(password);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: bcryptHash },
+    });
   }
 
   // Check approval status
-  if (user.status === 'PENDING') {
+  if (user.status === USER_STATUSES.PENDING) {
     res.status(403).json({
-      error: 'PENDING_APPROVAL',
+      error: ERROR_CODES.PENDING_APPROVAL,
       message: 'Your account is pending manager approval.',
     });
     return;
   }
 
-  if (user.status === 'BLOCKED' || user.isApproved === false) {
+  if (user.status === USER_STATUSES.BLOCKED || user.isApproved === false) {
     res.status(403).json({
-      error: 'ACCOUNT_BLOCKED',
+      error: ERROR_CODES.ACCOUNT_BLOCKED,
       message: 'Contact administrator for more information.',
     });
     return;
   }
 
-  if (user.status === 'REJECTED') {
+  if (user.status === USER_STATUSES.REJECTED) {
     res.status(403).json({
-      error: 'ACCOUNT_REJECTED',
+      error: ERROR_CODES.ACCOUNT_REJECTED,
       message: 'Your registration request was not approved.',
     });
     return;
@@ -141,7 +139,7 @@ router.post('/register', asyncHandler(async (req, res) => {
       password: hashedPassword,
       gender,
       isApproved: false,
-      status: 'PENDING',
+      status: USER_STATUSES.PENDING,
       role: UserRole.USER,
     },
     include: {
@@ -162,8 +160,8 @@ router.post('/register', asyncHandler(async (req, res) => {
 router.get('/me', requireAuth, asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
   
-  if (authUser.status === 'BLOCKED' || (authUser.isApproved === false && authUser.status !== 'PENDING')) {
-    res.status(403).json({ error: 'ACCOUNT_BLOCKED', message: 'Contact administrator for more information.' });
+  if (authUser.status === USER_STATUSES.BLOCKED || !authUser.isApproved || authUser.status !== USER_STATUSES.APPROVED) {
+    res.status(403).json({ error: ERROR_CODES.ACCOUNT_BLOCKED, message: 'Contact administrator for more information.' });
     return;
   }
   res.json({

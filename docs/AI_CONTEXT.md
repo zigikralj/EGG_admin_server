@@ -51,7 +51,7 @@ Every route file follows the same pattern:
 | `providedServices.routes.ts` | `/api/provided-services` | Service delivery records, delta sync support. Validates FK references. Admin/Manager write. |
 | `reminders.routes.ts` | `/api/reminders` | Reminders/tasks linked to project/client/permit, delta sync support. Owner or Admin/Manager write. |
 | `permits.routes.ts` | `/api/permits` | Permit CRUD with waste catalog junction, delta sync support. Admin/Manager write. |
-| `wasteCatalog.routes.ts` | `/api/waste-catalog` | Serbian waste index catalog. Auto-seeds, delta sync, reference cache. Supports pagination & delete. Admin/Manager write. |
+| `wasteCatalog.routes.ts` | `/api/waste-catalog` | Serbian waste index catalog. Delta sync, reference cache. Supports pagination & delete. Admin/Manager write. |
 | `history.routes.ts` | `/api/history` | Entity version timeline, diffs by version/date, snapshot inspection, and point-in-time restoration. |
 | `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions. Own notifications only. |
 | `companyInfo.routes.ts` | `/api/company-info` | Singleton company record with reference caching. Admin/Manager write. |
@@ -73,7 +73,6 @@ Every route file follows the same pattern:
 | `src/helpers/mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes, creates Notification records |
 | `src/cleanWordNotes.ts` / `src/cleanWordHtml.ts` | Utilities to sanitize and clean Microsoft Word metadata, XML, and non-breaking spaces from rich text notes |
 | `src/purgeLogs.ts` | Command-line and automated maintenance utility to purge expired activity logs and optimize storage |
-| `src/helpers/prismaErrors.ts` | `handlePrismaError()` — legacy inline Prisma error handler (mostly superseded by global errorHandler) |
 
 ### Import Scripts (standalone, run via `npm run`)
 | File | Command | What it does |
@@ -193,7 +192,12 @@ const where = search ? {
 # Development
 npm run dev                    # Start dev server (hot-reload)
 npm run dev:local              # Start with .env.localhost
-npm run build                  # Build for production
+npm run build                  # Build for production (prisma generate && tsc)
+
+# Automated Testing (Vitest + Supertest with Deep Mocked Prisma)
+npm test                       # Start vitest in watch mode
+npm run test:run               # Run all server unit & route tests once (141+ tests across 26 suites)
+npm run test:coverage          # Run all tests and generate v8 coverage report
 
 # Database
 npm run migrate:dev -- --name <name>   # Create and apply new migration locally
@@ -232,9 +236,8 @@ npm run release:major          # Bump major version
 ## Gotchas & Important Notes
 
 1. **Dates are strings** — stored as `String` type (ISO `YYYY-MM-DD`), not Prisma `DateTime`. Only `createdAt`/`updatedAt` are actual timestamps.
-2. **X-User-Id fallback** — The auth middleware has a legacy fallback that trusts `X-User-Id` header without JWT. Marked for removal in "Phase 3". Security risk.
-3. **Stats route has optional auth** — `GET /api/projects/stats` is mounted before the auth-protected project routes, so it's publicly accessible, but respects the authenticated user's resource ownership restrictions if a token is provided.
-4. **Waste catalog auto-seeds** — The `GET /api/waste-catalog` endpoint auto-seeds ~50 entries on first call if table is empty.
+2. **JWT Bearer authentication** — All protected endpoints require `Authorization: Bearer <jwt_token>`. Blocked or unapproved accounts are rejected immediately in `requireAuth`.
+3. **Waste catalog auto-seeds** — The `GET /api/waste-catalog` endpoint auto-seeds ~50 entries on first call if table is empty.
 5. **Invoice items are replaced** — `PUT /api/invoices/:id` with `items` array deletes all existing items and re-creates them (inside a transaction).
 6. **Force logout is in-memory** — `userForceLogoutMap` is process-local. Resets on server restart. For multi-instance deployments, a shared store (e.g. Redis) is needed.
 7. **Password never returned** — All user endpoints destructure out the `password` field before responding.

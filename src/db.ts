@@ -9,11 +9,12 @@ if (fs.existsSync(path.resolve(process.cwd(), envFile))) {
   dotenv.config({ override: true });
 }
 
+import { AsyncLocalStorage } from 'async_hooks';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { requestContext } from './context';
-import { initActivityLogger, enqueueActivityLog, isActivityLoggingEnabled } from './helpers/activityLogger';
+import { setActivityLoggerClient, enqueueActivityLog, isActivityLoggingEnabled } from './helpers/activityLogger';
 import { PRISMA_MODEL_TO_API_ROUTE } from './constants/apiRoutes';
 import { stripHtmlToText } from './helpers/htmlUtils';
 
@@ -33,7 +34,9 @@ const pool = new Pool({
 const adapter = new PrismaPg(pool);
 
 export const basePrisma = new PrismaClient({ adapter });
-initActivityLogger(basePrisma);
+setActivityLoggerClient(basePrisma);
+
+const activeTransactionStorage = new AsyncLocalStorage<Prisma.TransactionClient>();
 
 export interface AuditTransactionOptions {
   source?: string;
@@ -46,6 +49,11 @@ export async function auditedTransaction<T>(
   callback: (tx: Prisma.TransactionClient) => Promise<T>,
   options?: AuditTransactionOptions
 ): Promise<T> {
+  const existingTx = activeTransactionStorage.getStore();
+  if (existingTx && !options) {
+    return callback(existingTx);
+  }
+
   const ctx = requestContext.getStore();
   const userId = options?.userId ?? ctx?.userId ?? null;
   const userName = options?.userName ?? ctx?.userName ?? null;
@@ -69,7 +77,7 @@ export async function auditedTransaction<T>(
         set_config('audit.reason', COALESCE(${reason}, ''), true)
     `;
 
-    return callback(tx);
+    return activeTransactionStorage.run(tx, () => callback(tx));
   });
 }
 
@@ -206,23 +214,20 @@ export const prisma = basePrisma.$extends({
           operation === 'update' && data ? Object.keys(data).filter((k) => isScalarAssignment(data[k])) : [];
 
         const delegateName = model.charAt(0).toLowerCase() + model.slice(1);
-        const delegate = (basePrisma as any)[delegateName] || (basePrisma as any)[model];
 
-        // Before-state: for updates only the fields being changed; for deletes the full row.
+        // Before-state and mutation execute inside the same audited transaction
         let before: any = null;
-        if (where && delegate && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
-          try {
-            const select =
-              operation === 'update' ? Object.fromEntries(changedKeys.map((k) => [k, true])) : undefined;
-            before = await delegate.findUnique({ where, ...(select ? { select } : {}) });
-          } catch {
-            // Ignore fetch errors — audit is best-effort
-          }
-        }
-
-        // Automatic context propagation for mutations through PostgreSQL transaction
         const result = await auditedTransaction(async (tx) => {
           const txDelegate = (tx as any)[delegateName] || (tx as any)[model];
+          if (where && txDelegate && (operation === 'delete' || (operation === 'update' && changedKeys.length > 0))) {
+            try {
+              const select =
+                operation === 'update' ? Object.fromEntries(changedKeys.map((k) => [k, true])) : undefined;
+              before = await txDelegate.findUnique({ where, ...(select ? { select } : {}) });
+            } catch {
+              // Ignore fetch errors — audit is best-effort
+            }
+          }
           return txDelegate[operation](args);
         });
 

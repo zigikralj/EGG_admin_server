@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client';
+import { USER_STATUSES } from '../constants';
 
 export interface AnalyticsFilters {
   from: Date;
@@ -308,6 +309,7 @@ export async function getActivityAnalytics(
         name: true,
         role: true,
         status: true,
+        isApproved: true,
       },
     }),
 
@@ -696,7 +698,9 @@ export async function getActivityAnalytics(
   const wau = wauRaw.length > 0 ? Number(wauRaw[0].wau) || 0 : 0;
   const mau = mauRaw.length > 0 ? Number(mauRaw[0].mau) || 0 : 0;
 
-  const totalRegisteredActiveUsers = allUsers.filter((u) => u.status === 'Active').length;
+  const totalRegisteredActiveUsers = allUsers.filter(
+    (u) => u.status === USER_STATUSES.APPROVED && u.isApproved
+  ).length;
 
   return {
     range: {

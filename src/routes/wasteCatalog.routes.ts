@@ -5,103 +5,21 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { getReferenceCache, setReferenceCache, invalidateReferenceCachePrefix } from '../helpers/referenceCache';
 import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
+import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 
 const router = Router();
 
 router.use(requireAuth);
 
-const INITIAL_WASTE_CATALOG = [
-  // 15 01 - Ambalaža (uključujući posebno sakupljenu ambalažu u komunalnom otpadu)
-  { code: '15 01 01', description: 'Papirna i kartonska ambalaža', isHazardous: false },
-  { code: '15 01 02', description: 'Plastična ambalaža', isHazardous: false },
-  { code: '15 01 03', description: 'Drvena ambalaža', isHazardous: false },
-  { code: '15 01 04', description: 'Metalna ambalaža', isHazardous: false },
-  { code: '15 01 05', description: 'Kompozitna ambalaža', isHazardous: false },
-  { code: '15 01 06', description: 'Mešana ambalaža', isHazardous: false },
-  { code: '15 01 07', description: 'Staklena ambalaža', isHazardous: false },
-  { code: '15 01 09', description: 'Tekstilna ambalaža', isHazardous: false },
-  { code: '15 01 10*', description: 'Ambalaža koja sadrži ostatke opasnih supstanci ili je kontaminirana opasnim supstancama', hazardListMark: 'Y46', isHazardous: true },
-  { code: '15 01 11*', description: 'Metalna ambalaža koja sadrži opasne čvrste porozne materijale (npr. azbest), uključujući prazne posude pod pritiskom', hazardListMark: 'Y46', isHazardous: true },
-
-  // 16 - Otpadi koji nisu drugačije specificirani u listi
-  { code: '16 01 03', description: 'Otpadne gume', isHazardous: false },
-  { code: '16 01 04*', description: 'Istrošena motorna vozila', hazardListMark: 'Y46', isHazardous: true },
-  { code: '16 01 06', description: 'Istrošena motorna vozila koja ne sadrže tečnosti i druge opasne komponente', isHazardous: false },
-  { code: '16 01 07*', description: 'Uljni filteri', hazardListMark: 'Y46', isHazardous: true },
-  { code: '16 01 17', description: 'Crni metali (delovi vozila)', isHazardous: false },
-  { code: '16 01 18', description: 'Obojeni metali (delovi vozila)', isHazardous: false },
-  { code: '16 01 19', description: 'Plastika (delovi vozila)', isHazardous: false },
-  { code: '16 01 20', description: 'Staklo (delovi vozila)', isHazardous: false },
-  { code: '16 02 13*', description: 'Odbačena oprema koja sadrži opasne komponente osim onih navedenih u 16 02 09 do 16 02 12', hazardListMark: 'Y46', isHazardous: true },
-  { code: '16 02 14', description: 'Odbačena oprema osim one navedene u 16 02 09 do 16 02 13 (EE otpad)', isHazardous: false },
-  { code: '16 06 01*', description: 'Olovne baterije (akumulatori)', hazardListMark: 'Y31', isHazardous: true },
-  { code: '16 06 02*', description: 'Ni-Cd baterije', hazardListMark: 'Y26', isHazardous: true },
-  { code: '16 06 04', description: 'Alkalne baterije (osim 16 06 03)', isHazardous: false },
-  { code: '16 06 05', description: 'Druge baterije i akumulatori', isHazardous: false },
-
-  // 17 - Građevinski otpad i otpad od rušenja
-  { code: '17 01 01', description: 'Beton', isHazardous: false },
-  { code: '17 01 02', description: 'Cigle', isHazardous: false },
-  { code: '17 01 03', description: 'Crep i keramika', isHazardous: false },
-  { code: '17 01 07', description: 'Mešavina betona, cigle, crepa i keramike', isHazardous: false },
-  { code: '17 02 01', description: 'Drvo (građevinsko)', isHazardous: false },
-  { code: '17 02 02', description: 'Staklo (građevinsko)', isHazardous: false },
-  { code: '17 02 03', description: 'Plastika (građevinska)', isHazardous: false },
-  { code: '17 04 01', description: 'Bakar, bronza, mesing', isHazardous: false },
-  { code: '17 04 02', description: 'Aluminijum', isHazardous: false },
-  { code: '17 04 05', description: 'Gvožđe i čelik', isHazardous: false },
-  { code: '17 04 07', description: 'Mešani metali', isHazardous: false },
-  { code: '17 05 04', description: 'Zemlja i kamen koji ne sadrže opasne supstance', isHazardous: false },
-  { code: '17 06 05*', description: 'Građevinski materijali koji sadrže azbest', hazardListMark: 'Y36', isHazardous: true },
-
-  // 19 - Otpadi iz postrojenja za upravljanje otpadom
-  { code: '19 12 01', description: 'Papir i karton (mehanička obrada otpada)', isHazardous: false },
-  { code: '19 12 02', description: 'Crni metali (mehanička obrada otpada)', isHazardous: false },
-  { code: '19 12 03', description: 'Obojeni metali (mehanička obrada otpada)', isHazardous: false },
-  { code: '19 12 04', description: 'Plastika i guma (mehanička obrada otpada)', isHazardous: false },
-  { code: '19 12 07', description: 'Drvo osim onog navedenog u 19 12 06', isHazardous: false },
-  { code: '19 12 12', description: 'Drugi otpadi (uključujući mešavine materijala) iz mehaničke obrade otpada osim onih navedenih u 19 12 11', isHazardous: false },
-
-  // 20 - Komunalni otpadi (kućni otpad i slični komercijalni, industrijski i institucionalni otpadi)
-  { code: '20 01 01', description: 'Papir i karton (komunalni)', isHazardous: false },
-  { code: '20 01 02', description: 'Staklo (komunalno)', isHazardous: false },
-  { code: '20 01 39', description: 'Plastika (komunalna)', isHazardous: false },
-  { code: '20 01 40', description: 'Metali (komunalni)', isHazardous: false },
-  { code: '20 03 01', description: 'Mešani komunalni otpad', isHazardous: false },
-  { code: '20 03 07', description: 'Krupni (kabasti) otpad', isHazardous: false },
-];
-
-let hasSeededCatalog = false;
-
-async function ensureSeed() {
-  if (hasSeededCatalog) return;
-  const count = await prisma.wasteCatalog.count();
-  if (count === 0) {
-    for (const item of INITIAL_WASTE_CATALOG) {
-      await prisma.wasteCatalog.upsert({
-        where: { code: item.code },
-        update: {},
-        create: {
-          code: item.code,
-          description: item.description,
-          hazardListMark: item.hazardListMark || null,
-          isHazardous: item.isHazardous,
-        },
-      });
-    }
-  }
-  hasSeededCatalog = true;
-}
-
 // GET /api/waste-catalog
 router.get('/', asyncHandler(async (req, res) => {
-  await ensureSeed();
 
   const sinceDate = parseSince(req.query.since);
   const search = ((req.query.search as string) || '').trim();
-  const isPaginated = req.query.limit !== undefined || req.query.page !== undefined;
-  const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
-  const limit = req.query.limit === 'all' ? undefined : Math.max(1, parseInt((req.query.limit as string) || '20', 10));
+  const pagination = parsePagination(req.query, { defaultLimit: 20, maxLimit: 500 });
+  const isPaginated = pagination.isPaginated;
+  const page = pagination.page;
+  const limit = pagination.take;
 
   const orderBy = [
     { frequent: { sort: 'asc' as const, nulls: 'last' as const } },
@@ -119,18 +37,24 @@ router.get('/', asyncHandler(async (req, res) => {
       } : {}),
     };
 
-    const [items, deletedIds] = await Promise.all([
+    const [items, deletedIds, totalCount] = await Promise.all([
       prisma.wasteCatalog.findMany({
         where: deltaWhere,
         orderBy,
       }),
       fetchDeletedIds('WasteCatalog', sinceDate),
+      prisma.wasteCatalog.count(),
     ]);
 
-    res.json(buildDeltaResponse(items, deletedIds, sinceDate));
+    const deltaResponse = buildDeltaResponse(items, deletedIds, sinceDate);
+    if (typeof deltaResponse === 'object' && !Array.isArray(deltaResponse)) {
+      (deltaResponse as any).totalCount = totalCount;
+    }
+    res.json(deltaResponse);
     return;
   }
 
+  const isFresh = req.query.fresh === 'true';
   let cacheKey: string | null = null;
   if (!search) {
     if (!isPaginated) {
@@ -140,7 +64,7 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
 
-  if (cacheKey) {
+  if (cacheKey && !isFresh) {
     const cached = getReferenceCache(cacheKey);
     if (cached) {
       res.json(cached);
@@ -156,26 +80,17 @@ router.get('/', asyncHandler(async (req, res) => {
   } : {};
 
   if (isPaginated) {
-    const skip = limit ? (page - 1) * limit : undefined;
-
     const [items, total] = await Promise.all([
       prisma.wasteCatalog.findMany({
         where,
         orderBy,
-        take: limit,
-        skip,
+        take: pagination.take,
+        skip: pagination.skip,
       }),
       prisma.wasteCatalog.count({ where }),
     ]);
 
-    const response = {
-      items,
-      total,
-      page,
-      limit: limit || total,
-      totalPages: limit ? Math.ceil(total / limit) : 1,
-      hasMore: limit ? (skip || 0) + items.length < total : false,
-    };
+    const response = buildPaginatedResponse(items, total, pagination);
 
     if (cacheKey) {
       setReferenceCache(cacheKey, response);
@@ -210,6 +125,10 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 // PATCH /api/waste-catalog/:id/frequent - Toggle or set frequent rank
 router.patch('/:id/frequent', asyncHandler(async (req, res) => {
+  if (!hasPermission(req.authUser, 'permits', 'edit') && !hasPermission(req.authUser, 'permits', 'create')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to modify waste catalog items.' });
+    return;
+  }
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const { frequent } = req.body || {};
 

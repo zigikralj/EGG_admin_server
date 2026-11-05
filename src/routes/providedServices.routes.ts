@@ -3,11 +3,12 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { PROVIDED_SERVICE_STATUSES, SYSTEM_SETTING_KEYS } from '../constants';
+import { getWasteDisposalStatistics, getWasteDisposalClients } from '../services/wasteStatistics.service';
 
 async function getConfiguredWasteServiceId(): Promise<string | null> {
-  const wasteSetting = await prisma.systemSetting.findUnique({ where: { key: 'waste_disposal_service_id' } });
+  const wasteSetting = await prisma.systemSetting.findUnique({ where: { key: SYSTEM_SETTING_KEYS.WASTE_DISPOSAL_SERVICE_ID } });
   const val = typeof wasteSetting?.value === 'string' ? wasteSetting.value.trim() : '';
   return val || null;
 }
@@ -44,15 +45,13 @@ router.get('/', asyncHandler(async (req, res) => {
   if (isWasteDisposalOnly || (!canViewAll && canViewWaste)) {
     const wasteServiceId = await getConfiguredWasteServiceId();
     if (!wasteServiceId) {
-      const sinceDate = parseSince(req.query.since);
       const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
-      if (sinceDate || !isPaginated) {
-        res.json(buildDeltaResponse([], [], sinceDate));
+      if (!isPaginated) {
+        res.json([]);
       } else {
         const pagination = parsePagination(req.query, {
           defaultSortBy: 'scheduledDate',
           defaultSortOrder: 'desc',
-          maxLimit: 100,
         });
         res.json(buildPaginatedResponse([], 0, pagination));
       }
@@ -62,28 +61,7 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   if (status && status !== 'all') {
-    const s = status.toLowerCase();
-    if (s === 'planned' || s === 'planirano' || s === 'планирано') {
-      conditions.push({
-        status: { in: ['Planned', 'planirano', 'планирано', 'planned'], mode: 'insensitive' },
-      });
-    } else if (s === 'in progress' || s === 'in_progress' || s === 'u toku' || s === 'у току') {
-      conditions.push({
-        status: { in: ['In Progress', 'in_progress', 'u toku', 'у току', 'in progress'], mode: 'insensitive' },
-      });
-    } else if (s === 'completed' || s === 'završeno' || s === 'завршено') {
-      conditions.push({
-        status: { in: ['Completed', 'završeno', 'завршено', 'completed'], mode: 'insensitive' },
-      });
-    } else if (s === 'cancelled' || s === 'otkazano' || s === 'отказано') {
-      conditions.push({
-        status: { in: ['Cancelled', 'otkazano', 'отказано', 'cancelled'], mode: 'insensitive' },
-      });
-    } else {
-      conditions.push({
-        status: { equals: status, mode: 'insensitive' },
-      });
-    }
+    conditions.push({ status });
   }
 
   if (clientId && clientId !== 'all') {
@@ -120,11 +98,16 @@ router.get('/', asyncHandler(async (req, res) => {
     const validDateFields = ['scheduledDate', 'completionDate', 'createdAt'];
     const field = validDateFields.includes(dateField) ? dateField : 'scheduledDate';
     const dateCond: any = {};
-    if (dateFrom) dateCond.gte = new Date(dateFrom);
-    if (dateTo) {
-      const endOfDay = new Date(dateTo);
-      endOfDay.setHours(23, 59, 59, 999);
-      dateCond.lte = endOfDay;
+    if (field === 'createdAt') {
+      if (dateFrom) dateCond.gte = new Date(dateFrom);
+      if (dateTo) {
+        const endOfDay = new Date(dateTo);
+        endOfDay.setHours(23, 59, 59, 999);
+        dateCond.lte = endOfDay;
+      }
+    } else {
+      if (dateFrom) dateCond.gte = dateFrom;
+      if (dateTo) dateCond.lte = dateTo;
     }
     conditions.push({ [field]: dateCond });
   }
@@ -145,7 +128,6 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const where: any = conditions.length > 0 ? { AND: conditions } : {};
 
-  const sinceDate = parseSince(req.query.since);
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
 
   const includeRelations = {
@@ -155,21 +137,15 @@ router.get('/', asyncHandler(async (req, res) => {
     invoice: { select: { id: true, invoiceNumber: true, status: true } },
   };
 
-  // Delta sync or unpaginated request
-  if (sinceDate || !isPaginated) {
-    if (sinceDate) {
-      where.updatedAt = { gt: sinceDate };
-    }
-    const [rawItems, deletedIds] = await Promise.all([
-      prisma.providedService.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        include: includeRelations,
-      }),
-      sinceDate ? fetchDeletedIds('ProvidedService', sinceDate) : Promise.resolve([]),
-    ]);
+  // Unpaginated request
+  if (!isPaginated) {
+    const rawItems = await prisma.providedService.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: includeRelations,
+    });
 
-    res.json(buildDeltaResponse(rawItems, deletedIds, sinceDate));
+    res.json(rawItems);
     return;
   }
 
@@ -177,7 +153,6 @@ router.get('/', asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query, {
     defaultSortBy: 'scheduledDate',
     defaultSortOrder: 'desc',
-    maxLimit: 100,
   });
 
   const sortFieldMap: Record<string, string> = {
@@ -211,6 +186,60 @@ router.get('/', asyncHandler(async (req, res) => {
   ]);
 
   res.json(buildPaginatedResponse(items, total, pagination));
+}));
+
+// GET /api/provided-services/statistics/waste
+router.get('/statistics/waste', asyncHandler(async (req, res) => {
+  const canViewAll = hasPermission(req.authUser, 'providedServices', 'view');
+  const canViewWaste = hasPermission(req.authUser, 'wasteDisposal', 'view');
+
+  if (!canViewAll && !canViewWaste) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view waste statistics.' });
+    return;
+  }
+
+  const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+  const monthIndex = req.query.monthIndex !== undefined ? parseInt(req.query.monthIndex as string, 10) : undefined;
+  const statusFilter = (req.query.status as any) || 'all';
+
+  const stats = await getWasteDisposalStatistics({
+    year: !isNaN(year as number) ? year : undefined,
+    monthIndex: !isNaN(monthIndex as number) ? monthIndex : undefined,
+    statusFilter: ['all', 'completed', 'canceled'].includes(statusFilter) ? statusFilter : 'all',
+  });
+
+  res.json(stats);
+}));
+
+// GET /api/provided-services/statistics/waste/clients
+router.get('/statistics/waste/clients', asyncHandler(async (req, res) => {
+  const canViewAll = hasPermission(req.authUser, 'providedServices', 'view');
+  const canViewWaste = hasPermission(req.authUser, 'wasteDisposal', 'view');
+
+  if (!canViewAll && !canViewWaste) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view waste statistics.' });
+    return;
+  }
+
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+  const search = ((req.query.search as string) || '').trim();
+  const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+  const statusFilter = (req.query.status as any) || 'all';
+  const sortBy = (req.query.sortBy as any) || 'totalValue';
+  const sortOrder = (req.query.sortOrder as any) || 'desc';
+
+  const clientsData = await getWasteDisposalClients({
+    page: !isNaN(page) ? page : 1,
+    limit: !isNaN(limit) ? limit : 10,
+    search,
+    year: !isNaN(year as number) ? year : undefined,
+    statusFilter: ['all', 'completed', 'canceled'].includes(statusFilter) ? statusFilter : 'all',
+    sortBy: ['totalValue', 'totalWaste', 'count', 'clientName'].includes(sortBy) ? sortBy : 'totalValue',
+    sortOrder: ['asc', 'desc'].includes(sortOrder.toLowerCase()) ? sortOrder.toLowerCase() : 'desc',
+  });
+
+  res.json(clientsData);
 }));
 
 // GET /api/provided-services/:id
@@ -256,8 +285,6 @@ router.post('/', asyncHandler(async (req, res) => {
     location,
     scheduledDate,
     completionDate,
-    price,
-    currency,
     notes,
     customData,
   } = req.body;
@@ -318,12 +345,10 @@ router.post('/', asyncHandler(async (req, res) => {
       clientId,
       projectId: projectId || null,
       invoiceId: invoiceId || null,
-      status: status || 'Planned',
+      status: status || PROVIDED_SERVICE_STATUSES.PLANNED,
       location: location ? String(location).trim() : null,
       scheduledDate: scheduledDate || null,
       completionDate: completionDate || null,
-      price: price !== undefined && price !== null ? Number(price) : 0,
-      currency: currency || 'RSD',
       notes: notes ? String(notes).trim() : null,
       customData: customData !== undefined ? customData : null,
     },
@@ -370,8 +395,6 @@ router.put('/:id', asyncHandler(async (req, res) => {
     location,
     scheduledDate,
     completionDate,
-    price,
-    currency,
     notes,
     customData,
   } = req.body;
@@ -415,12 +438,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
       clientId: clientId !== undefined ? clientId : existing.clientId,
       projectId: projectId !== undefined ? (projectId || null) : existing.projectId,
       invoiceId: invoiceId !== undefined ? (invoiceId || null) : existing.invoiceId,
-      status: status !== undefined ? status : existing.status,
+      status: status !== undefined ? (status || PROVIDED_SERVICE_STATUSES.PLANNED) : existing.status,
       location: location !== undefined ? (location ? String(location).trim() : null) : existing.location,
       scheduledDate: scheduledDate !== undefined ? (scheduledDate || null) : existing.scheduledDate,
       completionDate: completionDate !== undefined ? (completionDate || null) : existing.completionDate,
-      price: price !== undefined && price !== null ? Number(price) : existing.price,
-      currency: currency !== undefined ? currency : existing.currency,
       notes: notes !== undefined ? (notes ? String(notes).trim() : null) : existing.notes,
       customData: customData !== undefined ? customData : existing.customData,
     },

@@ -6,6 +6,7 @@ import { generateTempPassword, hashPassword, verifyPassword } from '../authUtils
 import { validatePassword } from '../middleware/validate';
 import { UserRole, hasPermission, isUserSystemAdmin, formatUserWithPermissions } from '../types';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { USER_STATUSES, ERROR_CODES } from '../constants';
 
 const router = Router();
 
@@ -25,10 +26,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const where: any = {};
   if (role && role !== 'all') where.role = role;
   if (status && status !== 'all') {
-    if (status.toLowerCase() === 'pending') where.status = 'PENDING';
-    else if (status.toLowerCase() === 'approved') where.status = 'APPROVED';
-    else if (status.toLowerCase() === 'blocked') where.status = 'BLOCKED';
-    else where.status = status;
+    where.status = status;
   }
 
   // Filter for project / reminder assignees: exclude blocked, unapproved (non-pending), and system administrators
@@ -36,15 +34,15 @@ router.get('/', asyncHandler(async (req, res) => {
     const assigneeConditions: any[] = [
       {
         NOT: [
-          { status: 'BLOCKED' },
-          { role: 'Administrator' },
+          { status: USER_STATUSES.BLOCKED },
+          { role: UserRole.ADMINISTRATOR },
           { roleEntity: { isSystemAdmin: true } },
         ],
       },
       {
         OR: [
           { isApproved: true },
-          { status: 'PENDING' },
+          { status: USER_STATUSES.PENDING },
         ],
       },
     ];
@@ -83,7 +81,7 @@ router.get('/', asyncHandler(async (req, res) => {
   if (req.query.fields === 'mention') {
     const mentionWhere = {
       ...where,
-      status: { not: 'BLOCKED' },
+      status: { not: USER_STATUSES.BLOCKED },
       isApproved: true,
     };
 
@@ -187,6 +185,11 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
     return;
   }
 
+  if (!isUserSystemAdmin(authUser) && targetUser.role === UserRole.ADMINISTRATOR) {
+    res.status(403).json({ error: 'Permission denied. Only System Administrators can force log out Administrator accounts.' });
+    return;
+  }
+
   userForceLogoutMap.set(targetId, Date.now());
   invalidateUserAuthCache(targetId);
 
@@ -258,7 +261,7 @@ router.post('/', asyncHandler(async (req, res) => {
       gender: gender ? gender.trim() : null,
       password: hashedPassword,
       isApproved: true,
-      status: 'APPROVED',
+      status: USER_STATUSES.APPROVED,
     },
     include: { roleEntity: true },
   });
@@ -328,6 +331,15 @@ router.put('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  if (avatarUrl !== undefined && avatarUrl !== null && avatarUrl !== '') {
+    const isSafeHttp = typeof avatarUrl === 'string' && /^https?:\/\//i.test(avatarUrl);
+    const isSafeDataUri = typeof avatarUrl === 'string' && /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=\s]+$/i.test(avatarUrl);
+    if (!isSafeHttp && !isSafeDataUri) {
+      res.status(400).json({ error: 'Invalid avatar URL format.' });
+      return;
+    }
+  }
+
   const updatedData: any = {
     name: trimmedName !== undefined ? trimmedName : existingUser.name,
     email: trimmedEmail !== undefined ? trimmedEmail : existingUser.email,
@@ -343,9 +355,9 @@ router.put('/:id', asyncHandler(async (req, res) => {
       res.status(400).json({ error: passValidation.message });
       return;
     }
-    if (isSelf && currentPassword !== undefined) {
-      if (!verifyPassword(currentPassword, existingUser.password)) {
-        res.status(400).json({ error: 'Current password is incorrect' });
+    if (isSelf) {
+      if (!currentPassword || !verifyPassword(currentPassword, existingUser.password)) {
+        res.status(400).json({ error: 'Current password is incorrect', code: ERROR_CODES.INCORRECT_CURRENT_PASSWORD });
         return;
       }
     }
@@ -355,10 +367,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
   if (hasPermission(authUser, "users", "edit")) {
     if (status !== undefined) {
       updatedData.status = status;
-      updatedData.isApproved = status === 'APPROVED';
+      updatedData.isApproved = status === USER_STATUSES.APPROVED;
     } else if (isApproved !== undefined) {
       updatedData.isApproved = isApproved;
-      updatedData.status = isApproved ? 'APPROVED' : 'BLOCKED';
+      updatedData.status = isApproved ? USER_STATUSES.APPROVED : USER_STATUSES.BLOCKED;
     }
   }
 
@@ -380,7 +392,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
-  const { role } = req.body;
+  const { role } = req.body || {};
   const targetRole = role || UserRole.USER;
 
   if (!isUserSystemAdmin(authUser) && targetRole === UserRole.ADMINISTRATOR) {
@@ -392,7 +404,7 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
     where: { id },
     data: {
       isApproved: true,
-      status: 'APPROVED',
+      status: USER_STATUSES.APPROVED,
       role: targetRole,
     },
     include: { roleEntity: true },
@@ -436,6 +448,10 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
+  if (authUser.id === id) {
+    res.status(400).json({ error: 'You cannot delete your own account.' });
+    return;
+  }
   const existingUser = await prisma.user.findUnique({ where: { id } });
   if (!existingUser) {
     res.status(404).json({ error: 'User not found' });

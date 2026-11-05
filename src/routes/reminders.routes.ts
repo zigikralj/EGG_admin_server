@@ -3,8 +3,8 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { hasPermission, isRestrictedToOwn } from '../types';
-import { parseSince, fetchDeletedIds, buildDeltaResponse } from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { REMINDER_STATUSES } from '../constants';
 
 const router = Router();
 
@@ -14,7 +14,6 @@ router.use(requireAuth);
 // GET /api/reminders
 router.get('/', asyncHandler(async (req, res) => {
   const isPaginated = req.query.page !== undefined || req.query.limit !== undefined;
-  const sinceDate = parseSince(req.query.since);
 
   const search = ((req.query.search as string) || '').trim();
   const status = (req.query.status as string) || '';
@@ -56,31 +55,23 @@ router.get('/', asyncHandler(async (req, res) => {
 
   // Status filtering
   if (status && status !== 'all') {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const tenDaysFromNow = new Date();
-    tenDaysFromNow.setDate(tenDaysFromNow.getDate() + 10);
-    const in10DaysStr = tenDaysFromNow.toISOString().slice(0, 10);
-
-    if (status === 'pending') {
-      conditions.push({ status: { in: ['Pending', 'U toku', 'Čeka se', 'Draft', 'In Progress'] } });
-    } else if (status === 'completed') {
-      conditions.push({ status: { in: ['Completed', 'Završeno', 'Done'] } });
-    } else if (status === 'overdue') {
+    if (status === REMINDER_STATUSES.OVERDUE) {
+      const todayStr = new Date().toISOString().slice(0, 10);
       conditions.push({
-        status: { notIn: ['Completed', 'Završeno', 'Done'] },
+        status: { not: REMINDER_STATUSES.COMPLETED },
         dueDate: { lt: todayStr },
       });
     } else if (status === 'approaching') {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const in10DaysStr = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
       conditions.push({
-        status: { notIn: ['Completed', 'Završeno', 'Done'] },
+        status: { not: REMINDER_STATUSES.COMPLETED },
         dueDate: { gte: todayStr, lte: in10DaysStr },
       });
     } else if (status === 'active') {
-      conditions.push({ status: { notIn: ['Completed', 'Završeno', 'Done'] } });
-    } else if (status.toLowerCase() === 'in progress' || status.toLowerCase() === 'in_progress') {
-      conditions.push({ status: { in: ['In Progress', 'U toku', 'У току'] } });
+      conditions.push({ status: { not: REMINDER_STATUSES.COMPLETED } });
     } else {
-      conditions.push({ status: { equals: status, mode: 'insensitive' as const } });
+      conditions.push({ status });
     }
   }
 
@@ -155,20 +146,14 @@ router.get('/', asyncHandler(async (req, res) => {
     ? { select: reminderSummarySelect }
     : { include: reminderInclude };
 
-  // If delta sync requested or unpaginated request, preserve legacy / delta sync envelope
-  if (sinceDate || !isPaginated) {
-    if (sinceDate) {
-      where.updatedAt = { gt: sinceDate };
-    }
-    const [reminders, deletedIds] = await Promise.all([
-      prisma.reminder.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        ...(queryOptions as any),
-      }),
-      sinceDate ? fetchDeletedIds('Reminder', sinceDate) : Promise.resolve([]),
-    ]);
-    res.json(buildDeltaResponse(reminders, deletedIds, sinceDate));
+  // Unpaginated request
+  if (!isPaginated) {
+    const reminders = await prisma.reminder.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      ...(queryOptions as any),
+    });
+    res.json(reminders);
     return;
   }
 
@@ -244,6 +229,12 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // POST /api/reminders
 router.post('/', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  if (!hasPermission(authUser, 'reminders', 'create') && !hasPermission(authUser, 'tracker_reminders', 'create')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to create reminders.' });
+    return;
+  }
+
   const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber } = req.body;
 
   const finalTitle = title || projectName;
@@ -252,6 +243,10 @@ router.post('/', asyncHandler(async (req, res) => {
     return;
   }
 
+  const isOnlyOwn = isRestrictedToOwn(authUser, 'reminders') && isRestrictedToOwn(authUser, 'tracker_reminders');
+  const finalResponsibleId = isOnlyOwn ? authUser.id : (responsibleId || null);
+  const finalResponsible = isOnlyOwn ? (authUser.name || null) : (responsible || null);
+
   const reminder = await prisma.reminder.create({
     data: {
       title: finalTitle,
@@ -259,9 +254,9 @@ router.post('/', asyncHandler(async (req, res) => {
       projectName: projectName || null,
       clientId: clientId || null,
       clientName: clientName || null,
-      responsibleId: responsibleId || null,
-      responsible: responsible || null,
-      status: status || 'Pending',
+      responsibleId: finalResponsibleId,
+      responsible: finalResponsible,
+      status: status || REMINDER_STATUSES.PENDING,
       notes: notes || null,
       dueDate: dueDate || null,
       permitId: permitId || null,
@@ -299,7 +294,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       clientName: clientName !== undefined ? (clientName || null) : existing.clientName,
       responsibleId: responsibleId !== undefined ? (responsibleId || null) : existing.responsibleId,
       responsible: responsible !== undefined ? (responsible || null) : existing.responsible,
-      status: status || existing.status,
+      status: status !== undefined ? (status || REMINDER_STATUSES.PENDING) : existing.status,
       notes: notes !== undefined ? (notes || null) : existing.notes,
       dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
       permitId: permitId !== undefined ? (permitId || null) : existing.permitId,
@@ -329,7 +324,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 
   const updated = await prisma.reminder.update({
     where: { id },
-    data: { status: status || 'Completed' },
+    data: { status: status || REMINDER_STATUSES.COMPLETED },
   });
 
   res.json(updated);

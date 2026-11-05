@@ -91,20 +91,27 @@ export async function syncActivityLoggerSettings(): Promise<{ enabled: boolean; 
 
 import { purgeOldEntityVersions } from './deltaSync';
 
+export function setActivityLoggerClient(prismaClient: PrismaClient): void {
+  if (!client) {
+    client = prismaClient;
+  }
+}
+
 export function initActivityLogger(prismaClient: PrismaClient): void {
-  if (client) return;
   client = prismaClient;
 
   // Sync setting from DB
   void syncActivityLoggerSettings();
 
+  if (retentionTimer) return;
+
   // Retention: first run shortly after boot, then once per day.
   const initial = setTimeout(() => {
     void purgeOldActivityLogs();
-    void purgeOldEntityVersions(30);
+    void purgeOldEntityVersions(getRetentionDays());
     retentionTimer = setInterval(() => {
       void purgeOldActivityLogs();
-      void purgeOldEntityVersions(30);
+      void purgeOldEntityVersions(getRetentionDays());
     }, RETENTION_CHECK_INTERVAL_MS);
     retentionTimer.unref();
   }, RETENTION_INITIAL_DELAY_MS);
@@ -221,37 +228,41 @@ export async function purgeOldActivityLogs(): Promise<PurgeResult> {
   const shortSessionsPurged = await purgeShortLifecycleSessions();
   const cutoff = new Date(Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000);
   try {
-    // 1. Roll up logs older than retention cutoff into monthly stats
-    const monthlyStatsRollups = await client.$executeRaw`
-      INSERT INTO "ActivityLogMonthlyStats" (id, "userId", "yearMonth", "totalDurationSeconds", "actionCount", "updatedAt")
-      SELECT gen_random_uuid()::text, "userId", to_char("timestamp", 'YYYY-MM'),
-             COALESCE(SUM("durationSeconds"), 0)::int,
-             COUNT(*) FILTER (WHERE "type" NOT IN ('LOGIN','LOGOUT','ONLINE','OFFLINE'))::int,
-             NOW()
-      FROM "ActivityLog"
-      WHERE "timestamp" < ${cutoff}
-      GROUP BY "userId", to_char("timestamp", 'YYYY-MM')
-      ON CONFLICT ("userId", "yearMonth") DO UPDATE SET
-        "totalDurationSeconds" = "ActivityLogMonthlyStats"."totalDurationSeconds" + EXCLUDED."totalDurationSeconds",
-        "actionCount"          = "ActivityLogMonthlyStats"."actionCount" + EXCLUDED."actionCount",
-        "updatedAt"            = NOW();
-    `;
-
-    // 2. Delete raw logs older than retention cutoff in loops of 5000 to avoid table locks
-    let rawLogsDeleted = 0;
-    const CHUNK_SIZE = 5000;
-    while (true) {
-      const deletedChunk = await client.$executeRaw`
-        DELETE FROM "ActivityLog"
-        WHERE id IN (
-          SELECT id FROM "ActivityLog"
-          WHERE "timestamp" < ${cutoff}
-          LIMIT ${CHUNK_SIZE}
-        )
+    const { monthlyStatsRollups, rawLogsDeleted } = await client.$transaction(async (tx) => {
+      // 1. Roll up logs older than retention cutoff into monthly stats
+      const rollups = await tx.$executeRaw`
+        INSERT INTO "ActivityLogMonthlyStats" (id, "userId", "yearMonth", "totalDurationSeconds", "actionCount", "updatedAt")
+        SELECT gen_random_uuid()::text, "userId", to_char("timestamp", 'YYYY-MM'),
+               COALESCE(SUM("durationSeconds"), 0)::int,
+               COUNT(*) FILTER (WHERE "type" NOT IN ('LOGIN','LOGOUT','ONLINE','OFFLINE'))::int,
+               NOW()
+        FROM "ActivityLog"
+        WHERE "timestamp" < ${cutoff}
+        GROUP BY "userId", to_char("timestamp", 'YYYY-MM')
+        ON CONFLICT ("userId", "yearMonth") DO UPDATE SET
+          "totalDurationSeconds" = "ActivityLogMonthlyStats"."totalDurationSeconds" + EXCLUDED."totalDurationSeconds",
+          "actionCount"          = "ActivityLogMonthlyStats"."actionCount" + EXCLUDED."actionCount",
+          "updatedAt"            = NOW();
       `;
-      rawLogsDeleted += deletedChunk;
-      if (deletedChunk < CHUNK_SIZE) break;
-    }
+
+      // 2. Delete raw logs older than retention cutoff in loops of 5000 to avoid long lock contention
+      let deletedTotal = 0;
+      const CHUNK_SIZE = 5000;
+      while (true) {
+        const deletedChunk = await tx.$executeRaw`
+          DELETE FROM "ActivityLog"
+          WHERE id IN (
+            SELECT id FROM "ActivityLog"
+            WHERE "timestamp" < ${cutoff}
+            LIMIT ${CHUNK_SIZE}
+          )
+        `;
+        deletedTotal += deletedChunk;
+        if (deletedChunk < CHUNK_SIZE) break;
+      }
+
+      return { monthlyStatsRollups: rollups, rawLogsDeleted: deletedTotal };
+    });
 
     if (rawLogsDeleted > 0 || shortSessionsPurged > 0) {
       console.log(`[activityLogger] Retention: aggregated ${monthlyStatsRollups} monthly stats, removed ${rawLogsDeleted} logs older than ${getRetentionDays()} days (and ${shortSessionsPurged} short-session logs).`);

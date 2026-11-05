@@ -248,7 +248,7 @@ export async function restoreVersion(
   entityType: string,
   entityId: string,
   targetVersion: number,
-  userContext: { userId: string; userName?: string }
+  userContext: { userId: string; userName?: string; isSystemAdmin?: boolean }
 ) {
   const normType = normalizeEntityType(entityType);
   if (!normType) throw new Error(`Unsupported entity type: ${entityType}`);
@@ -269,6 +269,16 @@ export async function restoreVersion(
   // Protect sensitive user password field from being replaced with "[redacted]"
   if (normType === 'User' && cleanAttributes.password === '[redacted]') {
     delete cleanAttributes.password;
+  }
+
+  if (normType === 'User' && !userContext.isSystemAdmin) {
+    if (cleanAttributes.role === 'Administrator') {
+      throw new Error('Permission denied. Only System Administrators can restore Administrator user accounts.');
+    }
+    const existingTargetUser = await basePrisma.user.findUnique({ where: { id: entityId }, select: { role: true } });
+    if (existingTargetUser?.role === 'Administrator') {
+      throw new Error('Permission denied. Only System Administrators can modify Administrator user accounts.');
+    }
   }
 
   return auditedTransaction(
@@ -322,18 +332,25 @@ export async function resolveVersionsByDate(
   const normType = normalizeEntityType(entityType);
   if (!normType) throw new Error(`Unsupported entity type: ${entityType}`);
 
-  const versions = await basePrisma.entityVersion.findMany({
-    where: { entityType: normType, entityId },
-    select: { version: true, createdAt: true },
-    orderBy: { version: 'asc' },
-  });
+  const [firstVer, lastVer] = await Promise.all([
+    basePrisma.entityVersion.findFirst({
+      where: { entityType: normType, entityId },
+      select: { version: true },
+      orderBy: { version: 'asc' },
+    }),
+    basePrisma.entityVersion.findFirst({
+      where: { entityType: normType, entityId },
+      select: { version: true },
+      orderBy: { version: 'desc' },
+    }),
+  ]);
 
-  if (versions.length === 0) {
+  if (!firstVer || !lastVer) {
     throw new Error(`No history versions found for ${normType} ${entityId}`);
   }
 
-  const minVersion = versions[0].version;
-  const maxVersion = versions[versions.length - 1].version;
+  const minVersion = firstVer.version;
+  const maxVersion = lastVer.version;
 
   let resolvedFrom = minVersion;
   let resolvedTo = maxVersion;
@@ -344,12 +361,12 @@ export async function resolveVersionsByDate(
   if (safeDateFrom) {
     const fromDate = new Date(safeDateFrom);
     if (!isNaN(fromDate.getTime())) {
-      const matching = versions.filter((v) => new Date(v.createdAt) <= fromDate);
-      if (matching.length > 0) {
-        resolvedFrom = matching[matching.length - 1].version;
-      } else {
-        resolvedFrom = minVersion;
-      }
+      const matching = await basePrisma.entityVersion.findFirst({
+        where: { entityType: normType, entityId, createdAt: { lte: fromDate } },
+        select: { version: true },
+        orderBy: { version: 'desc' },
+      });
+      resolvedFrom = matching ? matching.version : minVersion;
     }
   }
 
@@ -359,12 +376,12 @@ export async function resolveVersionsByDate(
       if (safeDateTo.length === 10) {
         toDate.setHours(23, 59, 59, 999);
       }
-      const matching = versions.filter((v) => new Date(v.createdAt) <= toDate);
-      if (matching.length > 0) {
-        resolvedTo = matching[matching.length - 1].version;
-      } else {
-        resolvedTo = maxVersion;
-      }
+      const matching = await basePrisma.entityVersion.findFirst({
+        where: { entityType: normType, entityId, createdAt: { lte: toDate } },
+        select: { version: true },
+        orderBy: { version: 'desc' },
+      });
+      resolvedTo = matching ? matching.version : maxVersion;
     }
   }
 

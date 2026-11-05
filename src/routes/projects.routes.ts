@@ -16,12 +16,9 @@ import {
   resolveVersionsByDate,
   diffVersions,
 } from '../services/versioning.service';
-import {
-  parseSince,
-  fetchDeletedIds,
-  buildDeltaResponse,
-} from '../helpers/deltaSync';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
+import { todayStr, addMonths } from '../helpers/dateUtils';
+import { getProjectStatistics } from '../services/projectStatistics.service';
 
 const router = Router();
 
@@ -47,12 +44,8 @@ function isProjectOwnerOrCan(
   return isOwner;
 }
 
-export function extractNotesPreview(notes?: string | null): string | null {
-  if (!notes) return null;
-  const plainText = stripHtmlToText(notes).replace(/\s+/g, ' ').trim();
-  if (!plainText) return null;
-  return plainText.length > 300 ? plainText.slice(0, 300) : plainText;
-}
+import { extractNotesPreview } from '../helpers/htmlUtils';
+export { extractNotesPreview };
 
 const projectListSelect = {
   id: true,
@@ -145,22 +138,16 @@ router.get('/', asyncHandler(async (req, res) => {
     ? { done: doneParam === 'true' }
     : undefined;
 
-  const sinceDate = parseSince(req.query.since);
-  const deltaCondition = sinceDate ? { updatedAt: { gt: sinceDate } } : undefined;
-
   const conditions: any[] = [];
   if (ownerCondition) conditions.push(ownerCondition);
   if (searchCondition) conditions.push(searchCondition);
   if (doneCondition) conditions.push(doneCondition);
-  if (deltaCondition) conditions.push(deltaCondition);
 
   // Status filter (active, done, overdue, stale, creation, missing_invoice)
   const status = ((req.query.status as string) || '').trim();
   if (status && status !== 'all') {
-    const today = new Date().toISOString().slice(0, 10);
-    const twoMonthsAgoDate = new Date();
-    twoMonthsAgoDate.setMonth(twoMonthsAgoDate.getMonth() - 2);
-    const twoMonthsAgo = twoMonthsAgoDate.toISOString().slice(0, 10);
+    const today = todayStr();
+    const twoMonthsAgo = addMonths(today, -2);
 
     if (status === 'done') {
       conditions.push({ done: true });
@@ -308,17 +295,37 @@ router.get('/', asyncHandler(async (req, res) => {
     return;
   }
 
-  const [projects, deletedIds] = await Promise.all([
-    prisma.project.findMany({
-      where,
-      orderBy,
-      select: projectListSelect,
-    }),
-    sinceDate ? fetchDeletedIds('Project', sinceDate) : Promise.resolve([]),
-  ]);
+  const projects = await prisma.project.findMany({
+    where,
+    orderBy,
+    select: projectListSelect,
+  });
 
   const enrichedProjects = await enrichProjectsWithServiceName(projects);
-  res.json(buildDeltaResponse(enrichedProjects, deletedIds, sinceDate));
+  res.json(enrichedProjects);
+}));
+
+// GET /api/projects/statistics
+router.get('/statistics', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const canViewProjects = hasPermission(authUser, 'projects', 'view');
+  const canViewTracker = hasPermission(authUser, 'tracker_projects', 'view');
+
+  if (!canViewProjects && !canViewTracker) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view project statistics.' });
+    return;
+  }
+
+  const statusFilter = (req.query.status as any) || 'all';
+  const language = (req.query.language as string) || 'sr-Latn';
+
+  const stats = await getProjectStatistics({
+    statusFilter: ['all', 'active', 'done'].includes(statusFilter) ? statusFilter : 'all',
+    user: authUser,
+    language,
+  });
+
+  res.json(stats);
 }));
 
 // GET /api/projects/updates
@@ -666,6 +673,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return;
   }
 
+  if (!isProjectOwnerOrCan(req.authUser!, project, 'view')) {
+    res.status(403).json({ error: 'Permission denied. You can only view your own projects.' });
+    return;
+  }
+
   let serviceName: string = project.type;
   let serviceObj: { id: string; code: string; name: string } | null = null;
   if (project.type) {
@@ -697,6 +709,10 @@ router.get('/:id', asyncHandler(async (req, res) => {
 // POST /api/projects
 router.post('/', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
+  if (!hasPermission(authUser, 'projects', 'create') && !hasPermission(authUser, 'tracker_projects', 'create')) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to create projects.' });
+    return;
+  }
   const { name, clientId, clientName, responsible, type, start, deadline, progress, done, notes } = req.body;
 
   if (!name || (!clientId && !clientName) || !type) {
@@ -748,6 +764,7 @@ router.post('/', asyncHandler(async (req, res) => {
       authorId: authUser.id,
       authorName: authUser.name,
       reason: 'Initial Note Creation',
+      skipProjectPreviewSync: true,
     });
   }
 
@@ -820,6 +837,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       authorId: authUser.id,
       authorName: authUser.name,
       skipActivityLog: true,
+      skipProjectPreviewSync: true,
     });
     currentNoteContent = noteRes.content;
   }

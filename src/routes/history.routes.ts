@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { hasPermission } from '../types';
+import { hasPermission, isUserSystemAdmin } from '../types';
 import {
   getEntityTimeline,
   rebuildEntityVersion,
@@ -14,6 +14,25 @@ import {
 
 const router = Router();
 router.use(requireAuth);
+
+// GET /api/history/changesets/:id — transaction-level diff across entities
+router.get(
+  '/changesets/:id',
+  asyncHandler(async (req, res) => {
+    if (!hasPermission(req.authUser, 'history', 'view')) {
+      res.status(403).json({ error: 'Permission denied. You cannot view history.' });
+      return;
+    }
+
+    const changeSet = await getChangeSetDetails(String(req.params.id));
+    if (!changeSet) {
+      res.status(404).json({ error: 'ChangeSet not found.' });
+      return;
+    }
+
+    res.json(changeSet);
+  })
+);
 
 // GET /api/history/:entityType/:id — version list with metadata & changed fields
 router.get(
@@ -155,6 +174,7 @@ router.post(
     const result = await restoreVersion(entityType, id, targetVersion, {
       userId: req.authUser!.id,
       userName: req.authUser!.name || 'Unknown',
+      isSystemAdmin: isUserSystemAdmin(req.authUser),
     });
 
     res.json(result);

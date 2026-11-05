@@ -110,8 +110,7 @@ server/
 │   │   ├── activityLogger.ts       # Buffered in-memory activity logger & retention
 │   │   ├── analyticsCache.ts       # In-memory 60s TTL cache for analytics
 │   │   ├── dateUtils.ts            # Date arithmetic (addMonths, daysUntil, isStale)
-│   │   ├── mentionHelper.ts        # @mention extraction & notification creation
-│   │   └── prismaErrors.ts         # Prisma error code handler (legacy, mostly superseded)
+│   │   └── mentionHelper.ts        # @mention extraction & notification creation
 │   └── routes/
 │       ├── auth.routes.ts          # /api/auth — login, register, me
 │       ├── roles.routes.ts         # /api/roles — CRUD, permissions matrix
@@ -419,10 +418,6 @@ erDiagram
 
 - **`API_ROUTES`**: Centralized string constants for all API endpoints, parameterized URL generators, and base paths.
 - **`PRISMA_MODEL_TO_API_ROUTE`**: Mapping between Prisma database models and corresponding REST endpoints, ensuring unified audit trails and activity tracking without path mismatches.
-
-### `src/helpers/prismaErrors.ts`
-
-Legacy Prisma error handler (`handlePrismaError`). Mostly superseded by the global `errorHandler` middleware but still available for inline usage.
 
 ---
 

@@ -218,8 +218,6 @@ model ProvidedService {
   location       String?
   scheduledDate  String?
   completionDate String?
-  price          Float?   @default(0)
-  currency       String?  @default("RSD")
   notes          String?
   customData     Json?
   createdAt      DateTime @default(now())
