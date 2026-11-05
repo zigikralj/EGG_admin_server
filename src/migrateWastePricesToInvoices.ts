@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { basePrisma } from './db';
 import { INVOICE_STATUSES, INVOICE_TYPES } from './constants';
 
@@ -186,19 +188,33 @@ export async function migrateWastePricesToInvoices(options: { dryRun?: boolean }
     return { totalMigrated: plan.length, totalAmountRSD, isDryRun: true };
   }
 
-  // 5. Execute migration in batches of 50 to avoid oversized transactions
+  // 5. Execute migration in batches of 50 using bulk operations + extended transaction timeout for remote DBs (Neon)
   console.log('\nStarting database write operations in transactions...');
   const BATCH_SIZE = 50;
   let migratedCount = 0;
 
   for (let i = 0; i < plan.length; i += BATCH_SIZE) {
     const chunk = plan.slice(i, i + BATCH_SIZE);
+    const now = new Date();
 
-    await basePrisma.$transaction(async (tx) => {
-      for (const item of chunk) {
-        // Create invoice with item
-        const invoice = await tx.invoice.create({
-          data: {
+    const chunkWithIds = chunk.map((item) => ({
+      ...item,
+      invoiceId: crypto.randomUUID(),
+      invoiceItemId: crypto.randomUUID(),
+    }));
+
+    await basePrisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
+          SELECT
+            set_config('audit.source', 'system', true),
+            set_config('audit.reason', 'Migrate historical waste prices to invoices', true)
+        `;
+
+        // 1. Bulk insert Invoices (1 roundtrip)
+        await tx.invoice.createMany({
+          data: chunkWithIds.map((item) => ({
+            id: item.invoiceId,
             invoiceNumber: item.invoiceNumber,
             invoiceType: INVOICE_TYPES.STANDARD,
             status: INVOICE_STATUSES.PAID,
@@ -212,24 +228,42 @@ export async function migrateWastePricesToInvoices(options: { dryRun?: boolean }
             totalAmount: item.amount,
             currency: item.currency,
             notes: 'Automatski generisano iz istorijskih podataka pružene usluge (db:import-waste)',
-            items: {
-              create: {
-                description: item.itemDescription,
-                quantity: 1,
-                unitPrice: item.amount,
-                currency: item.currency,
-              },
-            },
-          },
+            createdAt: now,
+            updatedAt: now,
+          })),
         });
 
-        // Link ProvidedService
-        await tx.providedService.update({
-          where: { id: item.serviceId },
-          data: { invoiceId: invoice.id },
+        // 2. Bulk insert InvoiceItems (1 roundtrip)
+        await tx.invoiceItem.createMany({
+          data: chunkWithIds.map((item) => ({
+            id: item.invoiceItemId,
+            invoiceId: item.invoiceId,
+            description: item.itemDescription,
+            quantity: 1,
+            unitPrice: item.amount,
+            currency: item.currency,
+            createdAt: now,
+            updatedAt: now,
+          })),
         });
+
+        // 3. Bulk link ProvidedServices (1 roundtrip)
+        const valuesSql = Prisma.join(
+          chunkWithIds.map((item) => Prisma.sql`(${item.serviceId}, ${item.invoiceId})`)
+        );
+        await tx.$executeRaw`
+          UPDATE "ProvidedService" AS ps
+          SET "invoiceId" = v.invoice_id,
+              "updatedAt" = NOW()
+          FROM (VALUES ${valuesSql}) AS v(service_id, invoice_id)
+          WHERE ps.id = v.service_id
+        `;
+      },
+      {
+        maxWait: 15000,
+        timeout: 120000,
       }
-    });
+    );
 
     migratedCount += chunk.length;
     console.log(`  ✓ Processed ${migratedCount} / ${plan.length} invoices`);
