@@ -22,6 +22,7 @@
     "db:seed": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/seed.ts",
     "db:import-clients": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importClientsCsv.ts",
     "db:import-clients:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/importClientsCsv.ts",
+    "db:import-provided-services": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/importProvidedServicesFromDump.ts",
     "db:migrate-waste-invoices": "DOTENV_CONFIG_PATH=.env.localhost tsx --env-file=.env.localhost src/migrateWastePricesToInvoices.ts",
     "db:migrate-waste-invoices:neon": "DOTENV_CONFIG_PATH=.env.neon tsx --env-file=.env.neon src/migrateWastePricesToInvoices.ts",
     "db:migrate-waste-invoices:neon:dry-run": "npm run db:migrate-waste-invoices:neon -- --dry-run",

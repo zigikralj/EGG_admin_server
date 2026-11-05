@@ -40,6 +40,67 @@ describe('ProvidedServices Routes (GET, POST, PUT, DELETE)', () => {
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('ps-1');
     });
+
+    it('GET /api/provided-services/statistics/waste returns aggregated statistics', async () => {
+      const admin = createTestUser();
+      mockPrisma.user.findUnique.mockResolvedValue(admin);
+      mockPrisma.systemSetting.findUnique.mockResolvedValueOnce({ key: 'waste_disposal_service_id', value: 'srv-waste' });
+      mockPrisma.service.findUnique.mockResolvedValueOnce({ id: 'srv-waste', customDataModel: [] });
+
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([{ totalCount: 10, completedCount: 8, inProgressCount: 1, plannedCount: 1 }])
+        .mockResolvedValueOnce([{ paidRevenueRSD: 50000, paidRevenueEUR: 0, paidInvoicesCount: 5 }])
+        .mockResolvedValueOnce([{ year: 2026 }, { year: 2025 }])
+        .mockResolvedValueOnce([{ clientId: 'c1', label: 'Client 1', count: 10, totalWasteKg: 5000, paidRevenueRSD: 50000 }])
+        .mockResolvedValueOnce([{ yr: 2026, m: 10, totalKg: 5000 }])
+        .mockResolvedValueOnce([{ m: 10 }])
+        .mockResolvedValueOnce([{ totalKg: 5000, totalEntries: 10, activeClientsCount: 1 }])
+        .mockResolvedValueOnce([{ totalKg: 5000, totalEntries: 10, activeClientsCount: 1 }])
+        .mockResolvedValueOnce([{ clientId: 'c1', clientName: 'Client 1', totalKg: 5000, entriesCount: 10 }]);
+
+      const res = await request(app)
+        .get('/api/provided-services/statistics/waste')
+        .set('Authorization', createAuthHeader(admin));
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('kpi');
+      expect(res.body.kpi.totalCount).toBe(10);
+      expect(res.body.availableYears).toEqual([2026, 2025]);
+      expect(res.body.topClients).toHaveLength(1);
+    });
+
+    it('GET /api/provided-services/statistics/waste/clients returns paginated clients', async () => {
+      const admin = createTestUser();
+      mockPrisma.user.findUnique.mockResolvedValue(admin);
+      mockPrisma.systemSetting.findUnique.mockResolvedValueOnce({ key: 'waste_disposal_service_id', value: 'srv-waste' });
+      mockPrisma.service.findUnique.mockResolvedValueOnce({ id: 'srv-waste', customDataModel: [] });
+
+      mockPrisma.$queryRawUnsafe
+        .mockResolvedValueOnce([{ total: 1 }]) // total count
+        .mockResolvedValueOnce([
+          {
+            clientId: 'c1',
+            clientName: 'Client 1',
+            city: 'Belgrade',
+            count: 5,
+            lastDeliveryDate: '2026-10-30',
+            totalWasteKg: 2500,
+            paidRevenueRSD: 50000,
+            totalInvoicedRSD: 50000,
+          },
+        ]);
+
+      const res = await request(app)
+        .get('/api/provided-services/statistics/waste/clients?page=1&limit=10&sortBy=totalValue&sortOrder=desc')
+        .set('Authorization', createAuthHeader(admin));
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('items');
+      expect(res.body.total).toBe(1);
+      expect(res.body.items[0].clientName).toBe('Client 1');
+      expect(res.body.items[0].paidRevenueRSD).toBe(50000);
+      expect(res.body.items[0].totalWasteTons).toBe(2.5);
+    });
   });
 
   describe('POST /api/provided-services', () => {

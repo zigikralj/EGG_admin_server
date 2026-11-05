@@ -67,6 +67,32 @@ describe('Projects Routes (GET, POST, PUT, PATCH, DELETE, Notes, Diffs)', () => 
       expect(res.status).toBe(200);
       expect(res.body.name).toBe('Factory Waste Plan');
     });
+
+    it('GET /api/projects/statistics returns aggregated project statistics', async () => {
+      const admin = createTestUser();
+      mockPrisma.user.findUnique.mockResolvedValue(admin);
+
+      mockPrisma.$queryRawUnsafe
+        .mockResolvedValueOnce([{ id: 'u1', name: 'Marija Petrović', role: 'User', isSystemAdmin: false }]) // all users
+        .mockResolvedValueOnce([{ all: 10, active: 4, done: 6 }]) // status counts
+        .mockResolvedValueOnce([{ userName: 'Marija Petrović', count: 10 }]) // user stats
+        .mockResolvedValueOnce([{ code: 'grp-waste', name: 'Waste Management' }]) // categories list
+        .mockResolvedValueOnce([{ type: 'waste-disposal', serviceGroup: 'grp-waste', count: 10 }]) // raw category projects
+        .mockResolvedValueOnce([{ owner: 'Marija Petrović', monthKey: '2026-10', count: 6 }]) // mountain chart
+        .mockResolvedValueOnce([{ clientKey: 'c1', clientName: 'Client 1', totalPaid: 150000, count: 3 }]); // top clients
+
+      const res = await request(app)
+        .get('/api/projects/statistics')
+        .set('Authorization', createAuthHeader(admin));
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('statusCounts');
+      expect(res.body.statusCounts.all).toBe(10);
+      expect(res.body.userStats).toHaveLength(1);
+      expect(res.body.categoryStats).toHaveLength(1);
+      expect(res.body.mountainStats.totalCompletedIn12Months).toBe(6);
+      expect(res.body.topClients).toHaveLength(1);
+    });
   });
 
   describe('POST /api/projects', () => {

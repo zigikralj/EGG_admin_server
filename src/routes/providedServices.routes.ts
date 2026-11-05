@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { hasPermission } from '../types';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { PROVIDED_SERVICE_STATUSES, SYSTEM_SETTING_KEYS } from '../constants';
+import { getWasteDisposalStatistics, getWasteDisposalClients } from '../services/wasteStatistics.service';
 
 async function getConfiguredWasteServiceId(): Promise<string | null> {
   const wasteSetting = await prisma.systemSetting.findUnique({ where: { key: SYSTEM_SETTING_KEYS.WASTE_DISPOSAL_SERVICE_ID } });
@@ -51,7 +52,6 @@ router.get('/', asyncHandler(async (req, res) => {
         const pagination = parsePagination(req.query, {
           defaultSortBy: 'scheduledDate',
           defaultSortOrder: 'desc',
-          maxLimit: 100,
         });
         res.json(buildPaginatedResponse([], 0, pagination));
       }
@@ -153,7 +153,6 @@ router.get('/', asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query, {
     defaultSortBy: 'scheduledDate',
     defaultSortOrder: 'desc',
-    maxLimit: 100,
   });
 
   const sortFieldMap: Record<string, string> = {
@@ -187,6 +186,60 @@ router.get('/', asyncHandler(async (req, res) => {
   ]);
 
   res.json(buildPaginatedResponse(items, total, pagination));
+}));
+
+// GET /api/provided-services/statistics/waste
+router.get('/statistics/waste', asyncHandler(async (req, res) => {
+  const canViewAll = hasPermission(req.authUser, 'providedServices', 'view');
+  const canViewWaste = hasPermission(req.authUser, 'wasteDisposal', 'view');
+
+  if (!canViewAll && !canViewWaste) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view waste statistics.' });
+    return;
+  }
+
+  const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+  const monthIndex = req.query.monthIndex !== undefined ? parseInt(req.query.monthIndex as string, 10) : undefined;
+  const statusFilter = (req.query.status as any) || 'all';
+
+  const stats = await getWasteDisposalStatistics({
+    year: !isNaN(year as number) ? year : undefined,
+    monthIndex: !isNaN(monthIndex as number) ? monthIndex : undefined,
+    statusFilter: ['all', 'completed', 'canceled'].includes(statusFilter) ? statusFilter : 'all',
+  });
+
+  res.json(stats);
+}));
+
+// GET /api/provided-services/statistics/waste/clients
+router.get('/statistics/waste/clients', asyncHandler(async (req, res) => {
+  const canViewAll = hasPermission(req.authUser, 'providedServices', 'view');
+  const canViewWaste = hasPermission(req.authUser, 'wasteDisposal', 'view');
+
+  if (!canViewAll && !canViewWaste) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view waste statistics.' });
+    return;
+  }
+
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+  const search = ((req.query.search as string) || '').trim();
+  const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+  const statusFilter = (req.query.status as any) || 'all';
+  const sortBy = (req.query.sortBy as any) || 'totalValue';
+  const sortOrder = (req.query.sortOrder as any) || 'desc';
+
+  const clientsData = await getWasteDisposalClients({
+    page: !isNaN(page) ? page : 1,
+    limit: !isNaN(limit) ? limit : 10,
+    search,
+    year: !isNaN(year as number) ? year : undefined,
+    statusFilter: ['all', 'completed', 'canceled'].includes(statusFilter) ? statusFilter : 'all',
+    sortBy: ['totalValue', 'totalWaste', 'count', 'clientName'].includes(sortBy) ? sortBy : 'totalValue',
+    sortOrder: ['asc', 'desc'].includes(sortOrder.toLowerCase()) ? sortOrder.toLowerCase() : 'desc',
+  });
+
+  res.json(clientsData);
 }));
 
 // GET /api/provided-services/:id

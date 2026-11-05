@@ -182,7 +182,6 @@ router.get('/', asyncHandler(async (req, res) => {
   const pagination = parsePagination(req.query, {
     defaultSortBy: 'dateCreated',
     defaultSortOrder: 'desc',
-    maxLimit: 100,
   });
 
   const sortFieldMap: Record<string, string> = {

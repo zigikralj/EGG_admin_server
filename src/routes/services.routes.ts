@@ -56,7 +56,6 @@ router.get('/', asyncHandler(async (req, res) => {
     const pagination = parsePagination(req.query, {
       defaultSortBy: 'name',
       defaultSortOrder: 'asc',
-      maxLimit: 1000,
     });
 
     const sortBy = pagination.sortBy || 'name';

@@ -18,6 +18,7 @@ import {
 } from '../services/versioning.service';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { todayStr, addMonths } from '../helpers/dateUtils';
+import { getProjectStatistics } from '../services/projectStatistics.service';
 
 const router = Router();
 
@@ -302,6 +303,29 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const enrichedProjects = await enrichProjectsWithServiceName(projects);
   res.json(enrichedProjects);
+}));
+
+// GET /api/projects/statistics
+router.get('/statistics', asyncHandler(async (req, res) => {
+  const authUser = req.authUser!;
+  const canViewProjects = hasPermission(authUser, 'projects', 'view');
+  const canViewTracker = hasPermission(authUser, 'tracker_projects', 'view');
+
+  if (!canViewProjects && !canViewTracker) {
+    res.status(403).json({ error: 'Permission denied. You do not have permission to view project statistics.' });
+    return;
+  }
+
+  const statusFilter = (req.query.status as any) || 'all';
+  const language = (req.query.language as string) || 'sr-Latn';
+
+  const stats = await getProjectStatistics({
+    statusFilter: ['all', 'active', 'done'].includes(statusFilter) ? statusFilter : 'all',
+    user: authUser,
+    language,
+  });
+
+  res.json(stats);
 }));
 
 // GET /api/projects/updates
