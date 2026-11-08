@@ -22,7 +22,7 @@ import { getCanonicalPagePath } from "../helpers/pathUtils";
 const router = Router();
 router.use(requireAuth);
 
-const CLIENT_EVENT_TYPES = new Set(["PAGE_VIEW", "LOGIN", "LOGOUT", "ONLINE", "OFFLINE"]);
+const CLIENT_EVENT_TYPES = new Set(["PAGE_VIEW", "LOGIN", "LOGOUT"]);
 const MAX_BATCH_SIZE = 100;
 const MAX_PATH_LENGTH = 300;
 const MAX_DURATION_SECONDS = 24 * 60 * 60;

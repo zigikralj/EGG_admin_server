@@ -67,7 +67,7 @@ describe('ActivityLog Routes (GET, POST, DELETE, /analytics, /monthly-stats)', (
         .set('Authorization', createAuthHeader(admin))
         .send([
           { type: 'PAGE_VIEW', path: '/projects' },
-          { type: 'ONLINE', path: '/projects/new' },
+          { type: 'LOGIN', path: '/login' },
         ]);
 
       expect(res.status).toBe(202);
