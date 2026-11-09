@@ -68,7 +68,7 @@ router.get('/', asyncHandler(async (req, res) => {
         status: { not: REMINDER_STATUSES.COMPLETED },
         dueDate: { gte: todayStr, lte: in10DaysStr },
       });
-    } else if (status === 'active') {
+    } else if (status === 'active' || status === 'not_completed') {
       conditions.push({ status: { not: REMINDER_STATUSES.COMPLETED } });
     } else {
       conditions.push({ status });

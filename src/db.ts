@@ -92,7 +92,19 @@ const MUTATION_OPERATIONS = new Set([
 ]);
 
 /** Models never audited: the log itself and high-frequency / low-value side-effect records. */
-const AUDIT_SKIP_MODELS = new Set(['ActivityLog', 'UserPreference', 'Notification', 'SystemSetting', 'ChangeSet', 'EntityVersion', 'ProjectNote', 'ProjectNoteVersion']);
+const AUDIT_SKIP_MODELS = new Set([
+  'ActivityLog',
+  'UserPreference',
+  'Notification',
+  'SystemSetting',
+  'ChangeSet',
+  'EntityVersion',
+  'ProjectNote',
+  'ProjectNoteVersion',
+  'ChatConversation',
+  'ChatParticipant',
+  'ChatMessage',
+]);
 const AUDIT_OPERATIONS = new Set(['create', 'update', 'delete']);
 /** Fields that must never be written to the activity log. */
 const SENSITIVE_FIELD_RE = /password|token|secret/i;
@@ -203,8 +215,8 @@ export const prisma = basePrisma.$extends({
       async $allOperations({ model, operation, args, query }) {
         const ctx = requestContext.getStore();
 
-        // If not a mutation operation or no context available, run query as-is
-        if (!MUTATION_OPERATIONS.has(operation) || !ctx) {
+        // If not a mutation operation, model is skipped from auditing, or no context available, run query directly without transaction overhead
+        if (!MUTATION_OPERATIONS.has(operation) || !ctx || AUDIT_SKIP_MODELS.has(model)) {
           return query(args);
         }
 

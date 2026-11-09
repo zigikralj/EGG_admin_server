@@ -86,9 +86,16 @@ async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?:
  * Resolves the authenticated user from the request via JWT Bearer token.
  */
 export async function getAuthUser(req: Request): Promise<User | null> {
+  let token: string | null = null;
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.substring(7).trim();
+    token = authHeader.substring(7).trim();
+  } else if (req.query && typeof req.query.token === 'string') {
+    // Support EventSource (SSE) which cannot send custom Authorization headers
+    token = req.query.token.trim();
+  }
+
+  if (token) {
     const payload = verifyToken(token);
     if (!payload || !payload.userId) return null;
 

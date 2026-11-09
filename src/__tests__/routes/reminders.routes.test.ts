@@ -24,6 +24,26 @@ describe('Reminders Routes (GET, POST, PUT, PATCH /status, DELETE)', () => {
       expect(res.body).toHaveProperty('items');
       expect(res.body.items).toHaveLength(1);
     });
+
+    it('filters out completed reminders when status=not_completed is passed', async () => {
+      const admin = createTestUser();
+      mockPrisma.user.findUnique.mockResolvedValue(admin);
+      mockPrisma.reminder.findMany.mockResolvedValueOnce([
+        { id: 'rem-1', title: 'Active Reminder', dueDate: '2026-12-31', status: 'in_progress' },
+      ]);
+      mockPrisma.reminder.count.mockResolvedValueOnce(1);
+
+      const res = await request(app)
+        .get('/api/reminders?page=1&limit=10&status=not_completed')
+        .set('Authorization', createAuthHeader(admin));
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.reminder.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: { not: 'completed' } },
+        })
+      );
+    });
   });
 
   describe('POST /api/reminders', () => {

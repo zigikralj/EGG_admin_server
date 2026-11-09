@@ -3,6 +3,7 @@ import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { UserRole } from '../types';
+import { SYSTEM_SETTING_KEYS } from '../constants/domain';
 
 function isUserAdmin(authUser: any): boolean {
   if (!authUser) return false;
@@ -25,6 +26,18 @@ router.get('/', asyncHandler(async (_req, res) => {
       settingsMap[s.key] = s.value;
     }
   }
+
+  // Enrich waste disposal service if configured
+  const wasteServiceId = settingsMap[SYSTEM_SETTING_KEYS.WASTE_DISPOSAL_SERVICE_ID];
+  if (wasteServiceId && typeof wasteServiceId === 'string' && wasteServiceId.trim()) {
+    const service = await prisma.service.findUnique({
+      where: { id: wasteServiceId.trim() },
+    });
+    if (service) {
+      settingsMap['waste_disposal_service'] = service;
+    }
+  }
+
   res.json(settingsMap);
 }));
 

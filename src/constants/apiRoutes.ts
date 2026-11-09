@@ -34,6 +34,7 @@ export const API_ROUTES = {
   },
   HISTORY: '/api/history',
   IMPORT: '/api/import',
+  CHAT: '/api/chat',
 } as const;
 
 /**

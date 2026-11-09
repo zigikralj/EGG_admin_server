@@ -26,6 +26,9 @@ export function createPrismaMock() {
     'activityLogMonthlyStats',
     'changeSet',
     'entityVersion',
+    'chatConversation',
+    'chatParticipant',
+    'chatMessage',
   ];
 
   const mock: Record<string, any> = {
