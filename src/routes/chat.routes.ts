@@ -5,7 +5,6 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { chatSSEHub } from '../services/chat/sseHub';
 import { enqueueActivityLog } from '../helpers/activityLogger';
 import { hasPermission } from '../types';
-import { parseSince } from '../helpers/deltaSync';
 
 export const chatRouter = Router();
 
@@ -90,7 +89,6 @@ chatRouter.get('/unread-summary', asyncHandler(async (req: Request, res: Respons
  */
 chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response) => {
   const userId = req.authUser!.id;
-  const sinceDate = parseSince(req.query.since);
   const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 50), 100);
 
   const participants = await prisma.chatParticipant.findMany({
@@ -101,7 +99,6 @@ chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response
         { conversation: { lastMessageAt: { not: null } } },
         { conversation: { type: 'GROUP' } },
       ],
-      ...(sinceDate ? { conversation: { updatedAt: { gt: sinceDate } } } : {}),
     },
     take: limit,
     select: {
@@ -165,7 +162,6 @@ chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response
       lastReadAt: p.lastReadAt,
       unreadCount,
       participantIds,
-      participants: participantIds,
       lastMessage,
     };
   });
@@ -301,19 +297,19 @@ chatRouter.get('/conversations/context/:type/:id', asyncHandler(async (req: Requ
     // Ensure current user is in participants list so unread counts work
     const isParticipant = conversation.participants.some((p) => p.userId === userId);
     if (!isParticipant) {
-      await prisma.chatParticipant.create({
-        data: { conversationId: conversation.id, userId },
-      });
-      conversation = await prisma.chatConversation.findUnique({
-        where: { id: conversation.id },
+      const createdParticipant = await prisma.chatParticipant.create({
+        data: {
+          conversationId: conversation.id,
+          userId,
+          lastReadSeq: conversation.messageSeq || 0,
+        },
         include: {
-          participants: {
-            include: {
-              user: { select: { id: true, name: true, avatarUrl: true, role: true } },
-            },
-          },
+          user: { select: { id: true, name: true, avatarUrl: true, role: true } },
         },
       });
+      if (createdParticipant) {
+        conversation.participants.push(createdParticipant);
+      }
     }
   }
 
@@ -410,10 +406,26 @@ chatRouter.patch('/conversations/:id', asyncHandler(async (req: Request, res: Re
   }
 
   const oldTitle = conversation.title;
+  const titleChanged = oldTitle !== cleanTitle;
+  const now = new Date();
+  const nextSeq = titleChanged ? (conversation.messageSeq || 0) + 1 : (conversation.messageSeq || 0);
+  const systemContent = `renamed the group to "${cleanTitle}"`;
 
   const updated = await prisma.chatConversation.update({
     where: { id: conversationId },
-    data: { title: cleanTitle, updatedAt: new Date() },
+    data: {
+      title: cleanTitle,
+      updatedAt: now,
+      ...(titleChanged
+        ? {
+            messageSeq: nextSeq,
+            lastMessageText: systemContent.slice(0, 160),
+            lastMessageSenderId: authUser.id,
+            lastMessageSenderName: authUser.name,
+            lastMessageAt: now,
+          }
+        : {}),
+    },
     include: {
       participants: {
         include: {
@@ -425,18 +437,23 @@ chatRouter.patch('/conversations/:id', asyncHandler(async (req: Request, res: Re
 
   // Create system announcement message in conversation
   let systemMessage: any = null;
-  if (oldTitle !== cleanTitle) {
+  if (titleChanged) {
     systemMessage = await prisma.chatMessage.create({
       data: {
         conversationId,
+        seq: nextSeq,
         senderId: authUser.id,
-        content: `renamed the group to "${cleanTitle}"`,
+        content: systemContent,
       },
       include: {
         sender: {
           select: { id: true, name: true, avatarUrl: true, role: true },
         },
       },
+    });
+    await prisma.chatParticipant.updateMany({
+      where: { conversationId, userId: authUser.id },
+      data: { lastReadSeq: nextSeq, lastReadAt: now, isManuallyUnread: false },
     });
   }
 
@@ -532,19 +549,38 @@ chatRouter.post('/conversations/:id/participants', asyncHandler(async (req: Requ
     return res.status(400).json({ error: 'No valid users to add' });
   }
 
+  const baseSeq = conversation.messageSeq || 0;
+  const nextSeq = baseSeq + 1;
+  const now = new Date();
+  const addedNames = foundUsers.map((u) => u.name).join(', ');
+  const systemContent = `added ${addedNames} to the group`;
+
   await prisma.$transaction(
     foundUsers.map((u) =>
       prisma.chatParticipant.upsert({
         where: { conversationId_userId: { conversationId, userId: u.id } },
-        create: { conversationId, userId: u.id, isArchived: false, lastReadAt: new Date(0) },
-        update: { isArchived: false },
+        create: {
+          conversationId,
+          userId: u.id,
+          isArchived: false,
+          lastReadSeq: baseSeq,
+          lastReadAt: new Date(0),
+        },
+        update: { isArchived: false, lastReadSeq: baseSeq },
       })
     )
   );
 
   const updatedConv = await prisma.chatConversation.update({
     where: { id: conversationId },
-    data: { updatedAt: new Date() },
+    data: {
+      messageSeq: nextSeq,
+      lastMessageText: systemContent.slice(0, 160),
+      lastMessageSenderId: authUser.id,
+      lastMessageSenderName: authUser.name,
+      lastMessageAt: now,
+      updatedAt: now,
+    },
     include: {
       participants: {
         include: {
@@ -554,18 +590,23 @@ chatRouter.post('/conversations/:id/participants', asyncHandler(async (req: Requ
     },
   });
 
-  const addedNames = foundUsers.map((u) => u.name).join(', ');
   const systemMessage = await prisma.chatMessage.create({
     data: {
       conversationId,
+      seq: nextSeq,
       senderId: authUser.id,
-      content: `added ${addedNames} to the group`,
+      content: systemContent,
     },
     include: {
       sender: {
         select: { id: true, name: true, avatarUrl: true, role: true },
       },
     },
+  });
+
+  await prisma.chatParticipant.updateMany({
+    where: { conversationId, userId: authUser.id },
+    data: { lastReadSeq: nextSeq, lastReadAt: now, isManuallyUnread: false },
   });
 
   const allParticipantIds = updatedConv.participants.map((p) => p.userId);
@@ -650,14 +691,29 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
   });
 
   const remainingParticipants = conversation.participants.filter((p) => p.userId !== targetUserId);
+  const nextSeq = (conversation.messageSeq || 0) + 1;
+  const now = new Date();
 
   const systemContent = isLeaving
     ? `left the group`
     : `removed ${targetParticipant.user.name} from the group`;
 
+  await prisma.chatConversation.update({
+    where: { id: conversationId },
+    data: {
+      messageSeq: nextSeq,
+      lastMessageText: systemContent.slice(0, 160),
+      lastMessageSenderId: authUser.id,
+      lastMessageSenderName: authUser.name,
+      lastMessageAt: now,
+      updatedAt: now,
+    },
+  });
+
   const systemMessage = await prisma.chatMessage.create({
     data: {
       conversationId,
+      seq: nextSeq,
       senderId: authUser.id,
       content: systemContent,
     },
@@ -668,14 +724,28 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
     },
   });
 
+  if (!isLeaving) {
+    await prisma.chatParticipant.updateMany({
+      where: { conversationId, userId: authUser.id },
+      data: { lastReadSeq: nextSeq, lastReadAt: now, isManuallyUnread: false },
+    });
+  }
+
   const remainingUserIds = remainingParticipants.map((p) => p.userId);
+  const updatedConversationPayload = {
+    ...conversation,
+    messageSeq: nextSeq,
+    lastMessageText: systemContent.slice(0, 160),
+    lastMessageSenderId: authUser.id,
+    lastMessageSenderName: authUser.name,
+    lastMessageAt: now,
+    updatedAt: now,
+    participants: remainingParticipants,
+  };
 
   chatSSEHub.sendToUsers(remainingUserIds, {
     type: 'CONVERSATION_UPDATED',
-    payload: {
-      ...conversation,
-      participants: remainingParticipants,
-    },
+    payload: updatedConversationPayload,
   });
 
   chatSSEHub.sendToUsers(remainingUserIds, {
@@ -683,7 +753,7 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
     payload: {
       conversationId,
       message: systemMessage,
-      conversation: { ...conversation, participants: remainingParticipants },
+      conversation: updatedConversationPayload,
     },
   });
 
@@ -709,7 +779,6 @@ chatRouter.get('/conversations/:id/messages', asyncHandler(async (req: Request, 
   const beforeSeq = req.query.beforeSeq ? Number(req.query.beforeSeq) : undefined;
   const afterSeq = req.query.afterSeq !== undefined ? Number(req.query.afterSeq) : undefined;
   const sinceUpdatedAtStr = req.query.sinceUpdatedAt as string | undefined;
-  const beforeDateStr = req.query.before as string | undefined;
 
   // Verify membership or admin
   const conversation = await prisma.chatConversation.findUnique({
@@ -791,12 +860,11 @@ chatRouter.get('/conversations/:id/messages', asyncHandler(async (req: Request, 
     });
   }
 
-  // 2. Standard / Backward Pagination Mode (supports both seq cursor and legacy createdAt cursor)
+  // 2. Standard / Backward Pagination Mode (seq cursor)
   const messages = await prisma.chatMessage.findMany({
     where: {
       conversationId,
       ...(beforeSeq !== undefined ? { seq: { lt: beforeSeq } } : {}),
-      ...(beforeDateStr ? { createdAt: { lt: new Date(beforeDateStr) } } : {}),
     },
     take: limit,
     orderBy: { seq: 'desc' },
@@ -915,27 +983,37 @@ chatRouter.post('/conversations/:id/messages', asyncHandler(async (req: Request,
 
   // 2. Process @mentions -> create notifications and add mentioned users as participants to contextual conversation
   if (Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0) {
-    const validMentionIds = mentionedUserIds.filter(
-      (mId: string) => typeof mId === 'string' && mId !== authUser.id
+    const validMentionIds = Array.from(
+      new Set(
+        mentionedUserIds.filter(
+          (mId: string) => typeof mId === 'string' && mId !== authUser.id
+        )
+      )
     );
 
     if (validMentionIds.length > 0) {
-      // Ensure all mentioned users are participants so the conversation appears in their unread list
-      await Promise.all(
-        validMentionIds.map((targetUserId: string) =>
-          prisma.chatParticipant.upsert({
-            where: {
-              conversationId_userId: { conversationId, userId: targetUserId },
-            },
-            create: {
-              conversationId,
-              userId: targetUserId,
-              lastReadAt: new Date(0), // Set to beginning of epoch so all new messages are marked unread
-            },
-            update: {},
-          })
-        )
-      );
+      const existingParticipantIds = new Set(conversation.participants.map((p) => p.userId));
+      const missingMentionIds = validMentionIds.filter((id) => !existingParticipantIds.has(id));
+
+      // Ensure all newly mentioned users are participants so the conversation appears in their unread list
+      if (missingMentionIds.length > 0) {
+        await Promise.all(
+          missingMentionIds.map((targetUserId: string) =>
+            prisma.chatParticipant.upsert({
+              where: {
+                conversationId_userId: { conversationId, userId: targetUserId },
+              },
+              create: {
+                conversationId,
+                userId: targetUserId,
+                lastReadSeq: Math.max(0, nextSeq - 1),
+                lastReadAt: new Date(0),
+              },
+              update: {},
+            })
+          )
+        );
+      }
 
       await Promise.all(
         validMentionIds.map(async (targetUserId: string) => {
@@ -1008,10 +1086,12 @@ chatRouter.patch('/messages/:id', asyncHandler(async (req: Request, res: Respons
     return res.status(403).json({ error: 'Only author can edit this message' });
   }
 
+  const trimmedContent = content.trim();
+
   const updated = await prisma.chatMessage.update({
     where: { id: messageId },
     data: {
-      content: content.trim(),
+      content: trimmedContent,
       isEdited: true,
       editedAt: new Date(),
     },
@@ -1030,11 +1110,23 @@ chatRouter.patch('/messages/:id', asyncHandler(async (req: Request, res: Respons
     },
   });
 
-  const participantIds = message.conversation.participants.map((p) => p.userId);
-  chatSSEHub.sendToUsers(participantIds, {
-    type: 'MESSAGE_UPDATED',
+  if (message.seq && message.seq === message.conversation.messageSeq) {
+    await prisma.chatConversation.update({
+      where: { id: message.conversationId },
+      data: { lastMessageText: trimmedContent.slice(0, 160) },
+    });
+  }
+
+  const eventPayload = {
+    type: 'MESSAGE_UPDATED' as const,
     payload: { conversationId: message.conversationId, message: updated },
-  });
+  };
+  if (message.conversation.type === 'CONTEXTUAL') {
+    chatSSEHub.broadcastAll(eventPayload);
+  } else {
+    const participantIds = message.conversation.participants.map((p) => p.userId);
+    chatSSEHub.sendToUsers(participantIds, eventPayload);
+  }
 
   res.json(updated);
 }));
@@ -1099,16 +1191,28 @@ chatRouter.delete('/messages/:id', asyncHandler(async (req: Request, res: Respon
     finalMessage = { id: messageId, isDeleted: true, hardDeleted: true };
   }
 
-  const participantIds = message.conversation.participants.map((p) => p.userId);
-  chatSSEHub.sendToUsers(participantIds, {
-    type: 'MESSAGE_DELETED',
+  if (message.seq && message.seq === message.conversation.messageSeq) {
+    await prisma.chatConversation.update({
+      where: { id: message.conversationId },
+      data: { lastMessageText: 'This message was deleted' },
+    });
+  }
+
+  const deleteEventPayload = {
+    type: 'MESSAGE_DELETED' as const,
     payload: {
       conversationId: message.conversationId,
       messageId,
       hardDeleted: replyCount === 0,
       updatedMessage: replyCount > 0 ? finalMessage : null,
     },
-  });
+  };
+  if (message.conversation.type === 'CONTEXTUAL') {
+    chatSSEHub.broadcastAll(deleteEventPayload);
+  } else {
+    const participantIds = message.conversation.participants.map((p) => p.userId);
+    chatSSEHub.sendToUsers(participantIds, deleteEventPayload);
+  }
 
   res.json({ success: true, hardDeleted: replyCount === 0 });
 }));
@@ -1196,34 +1300,4 @@ chatRouter.post('/conversations/:id/unread', asyncHandler(async (req: Request, r
   });
 
   res.json({ success: true, lastReadSeq: targetSeq, unreadCount: 1 });
-}));
-
-/**
- * GET /api/chat/admin/conversations
- * Admin inspection endpoint.
- */
-chatRouter.get('/admin/conversations', asyncHandler(async (req: Request, res: Response) => {
-  const authUser = req.authUser!;
-  const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
-
-  if (!isAdmin) {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
-  const conversations = await prisma.chatConversation.findMany({
-    include: {
-      participants: {
-        include: {
-          user: { select: { id: true, name: true, email: true, role: true } },
-        },
-      },
-      _count: {
-        select: { messages: true },
-      },
-    },
-    orderBy: { updatedAt: 'desc' },
-    take: 50,
-  });
-
-  res.json(conversations);
 }));
