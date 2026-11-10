@@ -35,6 +35,8 @@ export const API_ROUTES = {
   HISTORY: '/api/history',
   IMPORT: '/api/import',
   CHAT: '/api/chat',
+  CONTRACTS: '/api/contracts',
+  CONTRACT_TEMPLATES: '/api/contract-templates',
 } as const;
 
 /**
@@ -51,6 +53,8 @@ export const PRISMA_MODEL_TO_API_ROUTE: Record<string, string> = {
   ProvidedService: API_ROUTES.PROVIDED_SERVICES,
   Reminder: API_ROUTES.REMINDERS,
   Permit: API_ROUTES.PERMITS,
+  Contract: API_ROUTES.CONTRACTS,
+  ContractTemplate: API_ROUTES.CONTRACT_TEMPLATES,
   User: API_ROUTES.USERS,
   Role: API_ROUTES.ROLES,
   WasteCatalog: API_ROUTES.WASTE_CATALOG,

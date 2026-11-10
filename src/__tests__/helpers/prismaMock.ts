@@ -29,6 +29,8 @@ export function createPrismaMock() {
     'chatConversation',
     'chatParticipant',
     'chatMessage',
+    'contract',
+    'contractTemplate',
   ];
 
   const mock: Record<string, any> = {

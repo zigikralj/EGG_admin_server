@@ -28,6 +28,7 @@ model Project {
   notifications    Notification[]
   invoices         Invoice[]
   providedServices ProvidedService[]
+  contracts        Contract[]
   note             ProjectNote?
 
   @@index([deadline])
@@ -55,6 +56,7 @@ model Client {
   providedServices ProvidedService[]
   extraData        ClientExtraData?
   permits          Permit[]
+  contracts        Contract[]
 
   @@index([name])
   @@index([city])
@@ -83,6 +85,7 @@ model User {
   activityLogs          ActivityLog[]
   activityMonthlyStats  ActivityLogMonthlyStats[]
   updatedProjectNotes   ProjectNote[]
+  contracts             Contract[]
   chatParticipants      ChatParticipant[]
   chatMessages          ChatMessage[]
 
@@ -133,13 +136,17 @@ model Reminder {
   dueDate       String?
   permitId      String?
   permitNumber  String?
+  contractId    String?
+  contractNumber String?
+  isAutoContractReminder Boolean @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  responsibleUser User?    @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
-  permit          Permit?  @relation(fields: [permitId], references: [id], onDelete: SetNull)
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  client          Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  responsibleUser User?     @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
+  permit          Permit?   @relation(fields: [permitId], references: [id], onDelete: SetNull)
+  contract        Contract? @relation(fields: [contractId], references: [id], onDelete: Cascade)
 
   @@index([dueDate])
   @@index([status])
@@ -147,6 +154,7 @@ model Reminder {
   @@index([projectId])
   @@index([clientId])
   @@index([permitId])
+  @@index([contractId])
   @@index([updatedAt])
 }
 
@@ -544,6 +552,53 @@ model ChatMessage {
   @@index([conversationId, updatedAt])
   @@index([senderId])
 }
+
+model Contract {
+  id             String    @id @default(uuid())
+  contractNumber String    @unique
+  title          String
+  clientId       String
+  clientName     String
+  projectId      String?
+  projectName    String?
+  responsibleId  String?
+  responsible    String?
+  startDate      String?
+  endDate        String?
+  status         String    @default("Draft") // Draft, Active, Expired, Terminated
+  content        String?   @db.Text
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  client          Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  responsibleUser User?     @relation(fields: [responsibleId], references: [id], onDelete: SetNull)
+  reminders       Reminder[]
+
+  @@index([startDate])
+  @@index([endDate])
+  @@index([status])
+  @@index([clientId])
+  @@index([projectId])
+  @@index([contractNumber])
+  @@index([updatedAt])
+}
+
+model ContractTemplate {
+  id          String    @id @default(uuid())
+  name        String
+  category    String    @default("General") // Boilerplate, General, Payment, Termination, Scope, etc.
+  description String?
+  content     String    @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([category])
+  @@index([name])
+  @@index([updatedAt])
+}
+
 
 
 

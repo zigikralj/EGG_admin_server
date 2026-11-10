@@ -20,12 +20,14 @@ router.get('/', asyncHandler(async (req, res) => {
   const clientId = (req.query.clientId as string) || '';
   const projectId = (req.query.projectId as string) || '';
   const permitId = (req.query.permitId as string) || '';
+  const contractId = (req.query.contractId as string) || '';
   const responsible = (req.query.responsible as string) || '';
   const dateFrom = (req.query.dateFrom as string) || '';
   const dateTo = (req.query.dateTo as string) || '';
   const dateField = (req.query.dateField as string) || 'dueDate';
   const excludeProjectId = (req.query.excludeProjectId as string) || '';
   const excludePermitId = (req.query.excludePermitId as string) || '';
+  const excludeContractId = (req.query.excludeContractId as string) || '';
   const excludeIds = ((req.query.excludeIds as string) || '').split(',').map((s) => s.trim()).filter(Boolean);
   const prioritizeClientId = (req.query.prioritizeClientId as string) || '';
   const prioritizeClientName = ((req.query.prioritizeClientName as string) || '').trim().toLowerCase();
@@ -48,6 +50,9 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   if (excludePermitId) {
     conditions.push({ NOT: { permitId: excludePermitId } });
+  }
+  if (excludeContractId) {
+    conditions.push({ NOT: { contractId: excludeContractId } });
   }
   if (excludeIds.length > 0) {
     conditions.push({ id: { notIn: excludeIds } });
@@ -89,6 +94,9 @@ router.get('/', asyncHandler(async (req, res) => {
   if (permitId && permitId !== 'all') {
     conditions.push({ permitId });
   }
+  if (contractId && contractId !== 'all') {
+    conditions.push({ contractId });
+  }
   if (responsible && responsible !== 'all') {
     conditions.push({
       OR: [
@@ -116,6 +124,8 @@ router.get('/', asyncHandler(async (req, res) => {
         { responsible: { contains: search, mode: 'insensitive' as const } },
         { status: { contains: search, mode: 'insensitive' as const } },
         { notes: { contains: search, mode: 'insensitive' as const } },
+        { permitNumber: { contains: search, mode: 'insensitive' as const } },
+        { contractNumber: { contains: search, mode: 'insensitive' as const } },
       ],
     });
   }
@@ -131,6 +141,7 @@ router.get('/', asyncHandler(async (req, res) => {
     client: { select: { id: true, name: true } },
     responsibleUser: { select: { id: true, name: true, email: true, gender: true } },
     permit: { select: { id: true, permitNumber: true } },
+    contract: { select: { id: true, contractNumber: true, title: true } },
   };
 
   const reminderSummarySelect = {
@@ -140,6 +151,11 @@ router.get('/', asyncHandler(async (req, res) => {
     clientId: true,
     clientName: true,
     dueDate: true,
+    permitId: true,
+    permitNumber: true,
+    contractId: true,
+    contractNumber: true,
+    isAutoContractReminder: true,
   };
 
   const queryOptions = isSummary
@@ -235,7 +251,7 @@ router.post('/', asyncHandler(async (req, res) => {
     return;
   }
 
-  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber } = req.body;
+  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber, contractId, contractNumber, isAutoContractReminder } = req.body;
 
   const finalTitle = title || projectName;
   if (!finalTitle) {
@@ -261,6 +277,9 @@ router.post('/', asyncHandler(async (req, res) => {
       dueDate: dueDate || null,
       permitId: permitId || null,
       permitNumber: permitNumber || null,
+      contractId: contractId || null,
+      contractNumber: contractNumber || null,
+      isAutoContractReminder: Boolean(isAutoContractReminder),
     },
   });
 
@@ -270,7 +289,7 @@ router.post('/', asyncHandler(async (req, res) => {
 // PUT /api/reminders/:id
 router.put('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id as string;
-  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber } = req.body;
+  const { title, projectId, projectName, clientId, clientName, responsibleId, responsible, status, notes, dueDate, permitId, permitNumber, contractId, contractNumber, isAutoContractReminder } = req.body;
 
   const existing = await prisma.reminder.findUnique({ where: { id } });
   if (!existing) {
@@ -299,6 +318,9 @@ router.put('/:id', asyncHandler(async (req, res) => {
       dueDate: dueDate !== undefined ? (dueDate || null) : existing.dueDate,
       permitId: permitId !== undefined ? (permitId || null) : existing.permitId,
       permitNumber: permitNumber !== undefined ? (permitNumber || null) : existing.permitNumber,
+      contractId: contractId !== undefined ? (contractId || null) : existing.contractId,
+      contractNumber: contractNumber !== undefined ? (contractNumber || null) : existing.contractNumber,
+      isAutoContractReminder: isAutoContractReminder !== undefined ? Boolean(isAutoContractReminder) : existing.isAutoContractReminder,
     },
   });
 
