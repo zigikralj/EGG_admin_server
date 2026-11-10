@@ -10,6 +10,9 @@ export interface ChatSSEEvent {
     | 'UNREAD_STATUS'
     | 'CONVERSATION_UPDATED'
     | 'REMOVED_FROM_CONVERSATION'
+    | 'CONVERSATION_CLEARED'
+    | 'MUTE_UPDATED'
+    | 'DND_UPDATED'
     | 'NOTIFICATION';
   payload: any;
 }

@@ -22,10 +22,19 @@ export interface AnalyticsTotals {
   avgPagesPerSession: number;
 }
 
+export interface ChatUsageAnalytics {
+  directCount: number;
+  projectCount: number;
+  groupCount: number;
+  totalCount: number;
+  uniqueUsers: number;
+}
+
 export interface ActivityAnalytics {
   range: { from: string; to: string; granularity: 'day' | 'week' | 'month'; tz: string };
   totals: AnalyticsTotals;
   previousTotals: AnalyticsTotals | null;
+  chatUsage: ChatUsageAnalytics;
   timeline: Array<{
     bucket: string;
     activeUsers: number;
@@ -139,6 +148,7 @@ export async function getActivityAnalytics(
     dauRaw,
     wauRaw,
     mauRaw,
+    chatUsageRaw,
   ] = await Promise.all([
     // 1. Totals
     prisma.$queryRaw<Array<{
@@ -478,7 +488,37 @@ export async function getActivityAnalytics(
       ${userIds && userIds.length > 0 ? Prisma.sql`AND "userId" IN (${Prisma.join(userIds)})` : Prisma.empty}
       ${roles && roles.length > 0 ? Prisma.sql`AND "userId" IN (SELECT "id" FROM "User" WHERE "role"::text IN (${Prisma.join(roles)}))` : Prisma.empty}
     `,
+
+    // 19. Chat Usage breakdown (counts only, content-free)
+    prisma.$queryRaw<Array<{ chatType: string; count: number; uniqueUsers: number }>>`
+      SELECT "type" AS "chatType",
+             COUNT(*)::int AS count,
+             COUNT(DISTINCT "userId")::int AS "uniqueUsers"
+      FROM "ActivityLog"
+      WHERE ${whereSql} AND "type" IN ('CHAT_MESSAGE_DIRECT', 'CHAT_MESSAGE_PROJECT', 'CHAT_MESSAGE_GROUP', 'PROJECT_CHAT_MESSAGE')
+      GROUP BY "type"
+    `,
   ]);
+
+  let directCount = 0;
+  let projectCount = 0;
+  let groupCount = 0;
+  const chatUniqueUsersSet = new Set<string>();
+
+  for (const row of (chatUsageRaw || [])) {
+    const c = Number(row.count) || 0;
+    if (row.chatType === 'CHAT_MESSAGE_DIRECT') directCount += c;
+    else if (row.chatType === 'CHAT_MESSAGE_PROJECT' || row.chatType === 'PROJECT_CHAT_MESSAGE') projectCount += c;
+    else if (row.chatType === 'CHAT_MESSAGE_GROUP') groupCount += c;
+  }
+
+  const chatUsage: ChatUsageAnalytics = {
+    directCount,
+    projectCount,
+    groupCount,
+    totalCount: directCount + projectCount + groupCount,
+    uniqueUsers: (chatUsageRaw || []).reduce((max, r) => Math.max(max, Number(r.uniqueUsers) || 0), 0),
+  };
 
   // Process Totals
   const tRow = totalsRaw[0] || { activeUsers: 0, sessions: 0, pageViews: 0, actions: 0, trackedSeconds: 0 };
@@ -728,5 +768,6 @@ export async function getActivityAnalytics(
       mau,
     },
     totalRegisteredActiveUsers,
+    chatUsage,
   };
 }
