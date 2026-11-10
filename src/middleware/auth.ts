@@ -143,8 +143,7 @@ export async function requireAuth(
   }
   req.authUser = user;
   
-  const sessionId = req.headers['x-session-id'] as string | undefined;
-  const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  const requestId = crypto.randomUUID();
   req.requestId = requestId;
 
   const userId = user.id;
@@ -156,7 +155,6 @@ export async function requireAuth(
     {
       userId,
       userName,
-      sessionId,
       requestId,
       method,
       route,

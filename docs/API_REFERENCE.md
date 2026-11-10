@@ -114,9 +114,14 @@ Returns the current authenticated user (without password).
 **All routes require auth.** Write operations require **Admin/Manager** role.
 
 ### `GET /api/users`
-List all users.
+List users with server-side pagination, search, role/status filtering, or lightweight directory projection.
+- **Query parameters:**
+  - `?page=1&limit=25` — pagination parameters (`PaginatedResponse<User>`)
+  - `?search=` — filter by name, email, or phone
+  - `?role=` / `?status=` — filter by role name or approval status
+  - `?fields=summary` or `?fields=mention` — returns lightweight `{ id, name, role, avatarUrl }` entries for directory pickers, chat, and `@mention` autocompletes.
 
-**Response 200:** Array of user objects (without password).
+**Response 200:** `PaginatedResponse<User>` or array of user objects (without `password`).
 
 ---
 
@@ -152,7 +157,7 @@ Update user. **Admin/Manager for others, any user for self.**
 
 ---
 
-### `POST /api/users/:id/approve`
+### `PATCH /api/users/:id/approve` (or `POST`)
 Approve a pending user registration. **Admin/Manager only.**
 
 **Body:** `{ "role": "User" }` (optional, defaults to User)
@@ -161,7 +166,7 @@ Approve a pending user registration. **Admin/Manager only.**
 
 ---
 
-### `POST /api/users/:id/reject`
+### `PATCH /api/users/:id/reject` (or `POST`)
 Reject and delete a pending registration. **Admin/Manager only.**
 
 **Response 200:** `{ "message": "Registration rejected and account removed." }`
@@ -255,19 +260,49 @@ Delete a role. Requires `roles` delete permission or System Administrator.
 **All routes require auth.**
 
 ### `GET /api/projects`
-List all projects. Supports `?search=`, `?done=true|false`, `?clientId=`, and `?since=` query parameters.
-- When `?since=<ISO_TIMESTAMP>` is passed, returns a **Delta Response Envelope** `{ delta: true, items: [...], deletedIds: string[], syncedAt: string }` containing only projects modified since that timestamp plus tombstones of deleted projects.
+List projects with server-side pagination, sorting, filtering, or delta sync.
+- **Query parameters:**
+  - `?page=1&limit=25&sortBy=createdAt&sortOrder=desc` — pagination and sorting
+  - `?search=` — filter by name, client, or responsible person (case-insensitive)
+  - `?status=all|active|done|my|missing_invoice|stale|overdue` — quick filter status
+  - `?done=true|false`, `?type=`, `?clientId=`, `?clientName=`, `?responsible=`, `?dateFrom=`, `?dateTo=`, `?dateField=`
+  - `?fields=summary` — lightweight `{ id, name, clientId, clientName }` summary list
+  - `?since=<ISO_TIMESTAMP>` — returns a **Delta Response Envelope** `{ delta: true, items: [...], deletedIds: string[], syncedAt: string }`
 - Returns lightweight rows containing `notesPreview` (up to 300 plain text characters) instead of full rich-text HTML `notes`.
-- Supports pagination via `?page=` and `?limit=`.
 
-**Response 200 (standard):** Array of project objects (includes `client` relation).
-**Response 200 (delta):**
+**Response 200 (paginated):**
 ```json
 {
-  "delta": true,
   "items": [ ... ],
-  "deletedIds": [ "proj-uuid-1" ],
-  "syncedAt": "2026-10-23T01:00:00.000Z"
+  "total": 120,
+  "page": 1,
+  "limit": 25,
+  "totalPages": 5,
+  "hasMore": true
+}
+```
+
+---
+
+### `GET /api/projects/statistics`
+Compute SQL-aggregated Project Tracker statistics (`projectStatistics.service.ts`).
+- **Query parameters:**
+  - `?status=all|active|done` (default: `all`)
+  - `?language=sr-Latn|sr-Cyrl|en` (default: `sr-Latn`, used to localize 12-month labels)
+
+**Response 200:**
+```json
+{
+  "statusCounts": { "all": 145, "active": 38, "done": 107 },
+  "filterStatus": "all",
+  "userStats": [{ "userName": "Petar Petrović", "count": 24 }],
+  "categoryStats": [{ "grpCode": "grp-testing", "categoryName": "Ispitivanja", "count": 52 }],
+  "mountainStats": {
+    "totalCompletedIn12Months": 89,
+    "months": [{ "key": "2026-11", "label": "Nov '26" }],
+    "owners": [{ "owner": "Petar Petrović", "countsByMonth": { "2026-11": 8 }, "total": 31 }]
+  },
+  "topClients": [{ "clientKey": "uuid", "clientName": "Klijent DOO", "totalPaid": 450000, "count": 6 }]
 }
 ```
 
@@ -275,10 +310,10 @@ List all projects. Supports `?search=`, `?done=true|false`, `?clientId=`, and `?
 
 ### `GET /api/projects/updates`
 Retrieve aggregated activity stream of recent project updates across the organization.
-- **Query parameters:** `?limit=50`, `?offset=0`, `?projectId=` (filter for a specific project)
+- **Query parameters:** `?limit=50`, `?offset=0`, `?dateFrom=`, `?dateTo=`, `?responsibleId=`, `?search=`, `?projectId=`
 - Returns chronologically ordered update events derived from audit logs, project changes, note revisions, and task completions.
 
-**Response 200:** Array of update items with author, action, timestamp, target entity, and change summary.
+**Response 200:** `{ total, dateFrom, dateTo, limit, offset, updates: [...] }`
 
 ---
 
@@ -303,6 +338,15 @@ Get the current rich-text note content for a project from the `ProjectNote` tabl
   "updatedAt": "2026-10-23T01:00:00.000Z"
 }
 ```
+
+---
+
+### `PATCH /api/projects/:id/note` (and `PATCH /api/projects/:id/notes`)
+Update a project's rich-text note directly, recording a delta-compressed `ProjectNoteVersion` revision, updating `Project.notesPreview`, and triggering `@mention` notifications.
+
+**Body:** `{ "content": "<p>...</p>", "reason": "optional revision note" }` (or `{ "notes": "<p>...</p>" }`)
+
+**Response 200:** `{ "id": "uuid", "projectId": "uuid", "version": 5, "notesPreview": "...", "updatedAt": "..." }`
 
 ---
 
@@ -597,9 +641,63 @@ Delete category. Returns 204 No Content.
 **All routes require auth.** Write operations require **Admin/Manager** role.
 
 ### `GET /api/provided-services`
-List provided services. Supports: `?search=`, `?status=`, `?clientId=`, `?projectId=`, `?serviceId=`, `?invoiceId=`.
+List provided services with server-side pagination and filtering.
+- **Query parameters:**
+  - `?page=1&limit=25&sortBy=createdAt&sortOrder=desc`
+  - `?search=`, `?status=`, `?clientId=`, `?projectId=`, `?serviceId=`, `?invoiceId=`
+  - `?dateFrom=`, `?dateTo=`, `?dateField=scheduledDate|completionDate|createdAt`
+  - `?isWasteDisposalOnly=true` — scopes to the active Waste Disposal service configured in `SystemSetting` (`waste_disposal_service_id`)
+  - `?missingInvoice=true` — filters records without a linked `invoiceId`
+  - `?since=<ISO_TIMESTAMP>` — delta sync
 
-**Response 200:** Array with included `service`, `client`, `project`, `invoice` relations.
+**Response 200:** `PaginatedResponse<ProvidedService>` (with included `service`, `client`, `project`, `invoice` relations).
+
+---
+
+### `GET /api/provided-services/statistics/waste`
+Compute SQL-aggregated Waste Disposal statistics (`wasteStatistics.service.ts`) for the configured Waste Disposal service.
+- **Query parameters:**
+  - `?year=2026` (optional: defaults to latest available year)
+  - `?monthIndex=0..11` (optional: 0-indexed month)
+  - `?status=all|completed|canceled` (default: `all`)
+
+**Response 200:**
+```json
+{
+  "kpi": {
+    "totalCount": 240,
+    "completedCount": 210,
+    "inProgressCount": 15,
+    "plannedCount": 15,
+    "completionRate": "87.5%",
+    "paidRevenueRSD": 3450000,
+    "paidRevenueEUR": 0,
+    "paidInvoicesCount": 195
+  },
+  "availableYears": [2026, 2025],
+  "currentWasteYear": 2026,
+  "selectedYearMonths": [{ "monthIndex": 0, "monthKey": "2026-01", "label": "Januar" }],
+  "selectedMonthIndex": 10,
+  "selectedMonthKey": "2026-11",
+  "wasteStatsForSelectedYear": { "totalKg": 125400, "totalTons": 125.4, "totalEntries": 210, "activeClientsCount": 42 },
+  "wasteStatsForSelectedMonth": { "totalKg": 14200, "totalTons": 14.2, "totalEntries": 24, "activeClientsCount": 15, "clients": [...] },
+  "wasteComparisonSeries": [{ "year": 2026, "label": "2026", "data": [10500, 12000, ...] }],
+  "topClients": [{ "clientId": "uuid", "label": "Klijent DOO", "count": 18, "paidRevenueRSD": 420000, "totalWasteKg": 18500 }]
+}
+```
+
+---
+
+### `GET /api/provided-services/statistics/waste/clients`
+Paginated breakdown of clients by waste disposal volume and revenue.
+- **Query parameters:**
+  - `?page=1&limit=10`
+  - `?search=` — filter by client name or city
+  - `?year=2026`
+  - `?status=all|completed|canceled`
+  - `?sortBy=totalValue|totalWaste|count|clientName` & `?sortOrder=asc|desc`
+
+**Response 200:** `{ items: WasteDisposalClientRowDto[], total, page, limit, totalPages }`
 
 ---
 
@@ -622,8 +720,6 @@ Create a provided service record. **Admin/Manager only.**
   "location": "string (optional)",
   "scheduledDate": "YYYY-MM-DD (optional)",
   "completionDate": "YYYY-MM-DD (optional)",
-  "price": "number (default: 0)",
-  "currency": "string (default: RSD)",
   "notes": "string (optional)",
   "customData": "JSON (optional)"
 }
@@ -889,32 +985,142 @@ Set a preference value.
 
 ---
 
-## Stats (`/api/projects/stats`)
+## System Settings (`/api/system-settings`)
 
-### `GET /api/projects/stats`
-Dashboard statistics. **Optional auth**: If an authenticated user has `isRestrictedToOwn` limits for projects, the statistics returned will be restricted only to projects owned by that user or simulated role.
+**All routes require auth.** Write operations require **Administrator** role.
+
+### `GET /api/system-settings`
+Retrieve all global system settings as a key-value map. Automatically enriches `waste_disposal_service` with the full `Service` record when `waste_disposal_service_id` is configured.
 
 **Response 200:**
 ```json
 {
-  "active": 15,
-  "done": 42,
-  "stale": 3,
-  "monitor": 5,
-  "clientsCount": 28,
-  "usersCount": 8,
-  "servicesCount": 12,
-  "categoriesCount": 6,
-  "invoicesCount": 34,
-  "providedServicesCount": 67
+  "waste_disposal_service_id": "srv-uuid-123",
+  "waste_disposal_service": { "id": "srv-uuid-123", "code": "waste-disposal", "name": "...", "customDataModel": [...] },
+  "activity_logging_enabled": true,
+  "activity_log_retention_days": 90
 }
 ```
 
-Definitions:
-- **active**: Projects where `done = false`
-- **done**: Projects where `done = true`
-- **stale**: Active projects with `start` date >2 months ago
-- **monitor**: Pending reminders with `dueDate` ≤ 14 days from now
+### `GET /api/system-settings/:key`
+Get a specific system setting by key.
+
+**Response 200:** `{ "key": "waste_disposal_service_id", "value": "srv-uuid-123" }`
+
+### `PUT /api/system-settings/:key`
+Create or update a system setting. **Administrator only.**
+
+**Body:** `{ "value": any }`
+
+**Response 200:** `{ "key": "waste_disposal_service_id", "value": "srv-uuid-123" }`
+
+---
+
+## Real-Time Chat & Contextual Messaging (`/api/chat`)
+
+**All routes require auth.** Supports Direct (`DIRECT`), Group (`GROUP`), and Contextual Project (`CONTEXTUAL`, `contextType: "PROJECT"`) conversations, sequence-numbered messages, live SSE streaming, muting, and Do Not Disturb (DND).
+
+### `GET /api/chat/stream`
+Server-Sent Events (SSE) endpoint (`text/event-stream`). Accepts JWT via `Authorization: Bearer <token>` header or `?token=<jwt>` query parameter.
+- Immediately emits `CONNECTED` with `{ onlineUserIds: string[] }`.
+- Sends `: keepalive` heartbeats every 25 seconds.
+- Broadcasts `USER_PRESENCE` (`{ userId, status: "ONLINE" | "OFFLINE" }`) on connection/disconnection.
+- Pushes real-time events to participants: `MESSAGE_CREATED`, `MESSAGE_UPDATED`, `MESSAGE_DELETED`, `READ_RECEIPT`, `UNREAD_STATUS`, `CONVERSATION_UPDATED`, `REMOVED_FROM_CONVERSATION`, `CONVERSATION_CLEARED`, `MUTE_UPDATED`, `DND_UPDATED`, `NOTIFICATION`.
+
+### `GET /api/chat/unread-summary`
+Lightweight unread message summary and DND status for the authenticated user.
+
+**Response 200:**
+```json
+{
+  "totalUnread": 4,
+  "byConversation": { "conv-uuid-1": 2, "conv-uuid-2": 2 },
+  "byProject": { "proj-uuid-1": 2 },
+  "dndUntil": null
+}
+```
+
+### `GET /api/chat/conversations`
+List all active (non-archived) conversations for the current user, ordered by `lastMessageAt DESC`, including unread counts, mute status, and participant list.
+
+**Response 200:** `ChatConversationItem[]`
+
+### `POST /api/chat/conversations`
+Create or retrieve a `DIRECT` (1-on-1) or `GROUP` conversation.
+- For `DIRECT`, returns the existing conversation if one already exists between the two users (unarchiving if previously hidden).
+
+**Body:**
+```json
+{
+  "type": "DIRECT | GROUP",
+  "participantIds": ["user-uuid-1", "user-uuid-2"],
+  "title": "Optional group title"
+}
+```
+
+**Response 200 / 201:** `ChatConversationItem`
+
+### `GET /api/chat/conversations/context/:type/:id`
+Get or initialize a contextual conversation (e.g. `/api/chat/conversations/context/PROJECT/:projectId`). Automatically adds the project's responsible user as a participant.
+
+**Response 200:** `ChatConversationItem`
+
+### `GET /api/chat/conversations/:id`
+Get details of a single conversation by ID.
+
+### `PATCH /api/chat/conversations/:id`
+Rename a group or contextual conversation title. Broadcasts `CONVERSATION_UPDATED`.
+
+**Body:** `{ "title": "New Title" }`
+
+### `POST /api/chat/conversations/:id/participants`
+Add one or more users (`userIds: string[]` or `userId: string`) to a `GROUP` or `CONTEXTUAL` conversation. Broadcasts `CONVERSATION_UPDATED`.
+
+### `DELETE /api/chat/conversations/:id/participants/:targetUserId`
+Remove a participant from a conversation or leave the conversation (`targetUserId === currentUser.id`). Emits `REMOVED_FROM_CONVERSATION` to the removed user and `CONVERSATION_UPDATED` to remaining members.
+
+### `DELETE /api/chat/conversations/:id`
+Delete or clear/archive a conversation:
+- Administrators or group creators can permanently delete conversations (or archive/hide for themselves in `DIRECT` chats).
+
+### `POST /api/chat/conversations/:id/mute`
+Mute or unmute notifications for a specific conversation. Persisted in `UserPreference` (`chat_mute_map`) and synced across tabs via `MUTE_UPDATED`.
+
+**Body:** `{ "durationMinutes": 60, "forever": false, "unmute": false }`
+
+### `POST /api/chat/dnd`
+Configure global Do Not Disturb (DND) for chat notifications. Persisted in `UserPreference` (`chat_dnd_until`) and synced via `DND_UPDATED`.
+
+**Body:** `{ "durationMinutes": 120, "forever": false, "off": false }`
+
+### `GET /api/chat/conversations/:id/messages`
+Fetch messages for a conversation. Supports two modes:
+1. **Cursor Pagination (History):** `?beforeSeq=<seq>&limit=50` — returns messages in ascending `seq` order prior to `beforeSeq`.
+2. **Sequence Delta Sync:** `?afterSeq=<seq>&sinceUpdatedAt=<ISO_TIMESTAMP>` — returns `{ delta: true, newMessages: [...], updatedMessages: [...], currentSeq, syncedAt }` containing newly sent messages (`seq > afterSeq`) and recently edited/deleted messages (`updatedAt > sinceUpdatedAt`).
+
+### `POST /api/chat/conversations/:id/messages`
+Send a new message in a conversation.
+- Atomically increments `ChatConversation.messageSeq` and assigns sequential `seq` to the message.
+- Supports reply threading (`replyToId`) and `@mention` detection (creates `Notification` records and auto-adds mentioned users to project chats).
+- Broadcasts `MESSAGE_CREATED` over SSE to all participants.
+
+**Body:** `{ "content": "Hello @Petar", "replyToId": "optional-msg-uuid" }`
+
+**Response 201:** Created `ChatMessageItem`
+
+### `PATCH /api/chat/messages/:id`
+Edit an existing message (sender only). Sets `isEdited: true` and `editedAt`, and broadcasts `MESSAGE_UPDATED`.
+
+**Body:** `{ "content": "Updated text" }`
+
+### `DELETE /api/chat/messages/:id`
+Soft-delete a message (sender or Administrator). Marks `isDeleted: true`, clears `content`, updates conversation preview if needed, and broadcasts `MESSAGE_DELETED`.
+
+### `POST /api/chat/conversations/:id/read`
+Mark all messages in a conversation as read up to the latest `messageSeq` (`lastReadSeq = messageSeq`, `isManuallyUnread = false`). Broadcasts `READ_RECEIPT`.
+
+### `POST /api/chat/conversations/:id/unread`
+Explicitly mark a conversation as unread (`isManuallyUnread = true`). Broadcasts `UNREAD_STATUS`.
 
 ---
 
