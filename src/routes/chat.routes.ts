@@ -5,10 +5,141 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { chatSSEHub } from '../services/chat/sseHub';
 import { enqueueActivityLog } from '../helpers/activityLogger';
 import { hasPermission } from '../types';
+import { extractMentionedUserIds } from '../helpers/mentionHelper';
 
 export const chatRouter = Router();
 
 chatRouter.use(requireAuth);
+
+/**
+ * Retrieve user's chat mute map and DND timestamp from user preferences.
+ */
+async function getUserMuteAndDnd(userId: string) {
+  const prefs = await prisma.userPreference.findMany({
+    where: {
+      userId,
+      key: { in: ['chat_mute_map', 'chat_dnd_until'] },
+    },
+  });
+  let muteMap: Record<string, string> = {};
+  let dndUntil: string | null = null;
+  for (const p of prefs) {
+    if (p.key === 'chat_mute_map') {
+      try {
+        muteMap = JSON.parse(p.value);
+      } catch {}
+    } else if (p.key === 'chat_dnd_until') {
+      dndUntil = p.value;
+    }
+  }
+  return { muteMap, dndUntil };
+}
+
+function isMuted(conversationId: string, muteMap: Record<string, string>): { muted: boolean; mutedUntil?: string } {
+  const val = muteMap[conversationId];
+  if (!val) return { muted: false };
+  if (val === 'FOREVER') return { muted: true, mutedUntil: 'FOREVER' };
+  const d = new Date(val);
+  if (!isNaN(d.getTime()) && d.getTime() > Date.now()) {
+    return { muted: true, mutedUntil: val };
+  }
+  return { muted: false };
+}
+
+function isDndActive(dndUntil: string | null): boolean {
+  if (!dndUntil) return false;
+  if (dndUntil === 'FOREVER') return true;
+  const d = new Date(dndUntil);
+  return !isNaN(d.getTime()) && d.getTime() > Date.now();
+}
+
+/**
+ * Filter participants to only those eligible for project chats:
+ * 1. User is responsible for the project (responsibleId or responsible name)
+ * 2. User has sent a message in the conversation
+ * 3. User was tagged / mentioned in the project / conversation
+ * Any non-eligible PROJECT participant is excluded and cleaned up.
+ */
+async function filterEligibleProjectParticipants<
+  T extends {
+    id?: string;
+    conversationId: string;
+    conversation: { id: string; contextType?: string | null; contextId?: string | null };
+  }
+>(participants: T[], authUser: { id: string; name?: string | null }): Promise<T[]> {
+  const projectParticipants = participants.filter(
+    (p) => p.conversation.contextType === 'PROJECT' && p.conversation.contextId
+  );
+  if (projectParticipants.length === 0) return participants;
+
+  const projectIds = Array.from(new Set(projectParticipants.map((p) => p.conversation.contextId!)));
+  const projectConvIds = Array.from(new Set(projectParticipants.map((p) => p.conversationId)));
+
+  const [projects, userSentMessages, mentionNotifications, mentionMessages] = await Promise.all([
+    prisma.project.findMany({
+      where: { id: { in: projectIds } },
+      select: { id: true, responsible: true, responsibleId: true },
+    }),
+    prisma.chatMessage.findMany({
+      where: { conversationId: { in: projectConvIds }, senderId: authUser.id },
+      select: { conversationId: true },
+      distinct: ['conversationId'],
+    }),
+    prisma.notification.findMany({
+      where: { userId: authUser.id, type: 'MENTION', projectId: { in: projectIds } },
+      select: { projectId: true },
+      distinct: ['projectId'],
+    }),
+    prisma.chatMessage.findMany({
+      where: {
+        conversationId: { in: projectConvIds },
+        OR: [
+          { content: { contains: authUser.id } },
+          ...(authUser.name ? [{ content: { contains: `@${authUser.name}`, mode: 'insensitive' as const } }] : []),
+        ],
+      },
+      select: { conversationId: true },
+      distinct: ['conversationId'],
+    }),
+  ]);
+
+  const projectMap = new Map(projects.map((pr) => [pr.id, pr]));
+  const userSentSet = new Set(userSentMessages.map((m) => m.conversationId));
+  const mentionedProjectsSet = new Set(mentionNotifications.map((n) => n.projectId).filter(Boolean));
+  const mentionConvSet = new Set(mentionMessages.map((m) => m.conversationId));
+
+  const staleParticipantIds: string[] = [];
+  const eligible = participants.filter((p) => {
+    if (p.conversation.contextType !== 'PROJECT') return true;
+    const pr = p.conversation.contextId ? projectMap.get(p.conversation.contextId) : null;
+    const isResp = Boolean(
+      pr &&
+        (pr.responsibleId === authUser.id ||
+          (pr.responsible &&
+            authUser.name &&
+            pr.responsible.trim().toLowerCase() === authUser.name.trim().toLowerCase()))
+    );
+    const hasSent = userSentSet.has(p.conversationId);
+    const hasNotif = Boolean(pr && mentionedProjectsSet.has(pr.id));
+    const hasMention = mentionConvSet.has(p.conversationId);
+
+    const isEligible = isResp || hasSent || hasNotif || hasMention;
+    if (!isEligible && p.id) {
+      staleParticipantIds.push(p.id);
+    }
+    return isEligible;
+  });
+
+  if (staleParticipantIds.length > 0) {
+    prisma.chatParticipant
+      .deleteMany({
+        where: { id: { in: staleParticipantIds } },
+      })
+      .catch(() => {});
+  }
+
+  return eligible;
+}
 
 /**
  * GET /api/chat/stream
@@ -40,13 +171,16 @@ chatRouter.get('/stream', (req: Request, res: Response) => {
  */
 chatRouter.get('/unread-summary', asyncHandler(async (req: Request, res: Response) => {
   const userId = req.authUser!.id;
+  const { muteMap, dndUntil } = await getUserMuteAndDnd(userId);
+  const dndActive = isDndActive(dndUntil);
 
-  const participants = await prisma.chatParticipant.findMany({
+  const rawParticipants = await prisma.chatParticipant.findMany({
     where: {
       userId,
       isArchived: false,
     },
     select: {
+      id: true,
       conversationId: true,
       lastReadSeq: true,
       isManuallyUnread: true,
@@ -61,6 +195,8 @@ chatRouter.get('/unread-summary', asyncHandler(async (req: Request, res: Respons
     },
   });
 
+  const participants = await filterEligibleProjectParticipants(rawParticipants, req.authUser!);
+
   let totalUnread = 0;
   const byConversation: Record<string, number> = {};
   const byProject: Record<string, number> = {};
@@ -70,15 +206,18 @@ chatRouter.get('/unread-summary', asyncHandler(async (req: Request, res: Respons
     const count = p.isManuallyUnread ? Math.max(1, diff) : diff;
 
     if (count > 0) {
-      totalUnread += count;
       byConversation[p.conversationId] = count;
-      if (p.conversation.contextType === 'PROJECT' && p.conversation.contextId) {
-        byProject[p.conversation.contextId] = (byProject[p.conversation.contextId] || 0) + count;
+      const muted = isMuted(p.conversationId, muteMap).muted;
+      if (!muted && !dndActive) {
+        totalUnread += count;
+        if (p.conversation.contextType === 'PROJECT' && p.conversation.contextId) {
+          byProject[p.conversation.contextId] = (byProject[p.conversation.contextId] || 0) + count;
+        }
       }
     }
   }
 
-  res.json({ totalUnread, byConversation, byProject });
+  res.json({ totalUnread, byConversation, byProject, dndUntil: dndActive ? dndUntil : null });
 }));
 
 /**
@@ -90,8 +229,10 @@ chatRouter.get('/unread-summary', asyncHandler(async (req: Request, res: Respons
 chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response) => {
   const userId = req.authUser!.id;
   const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 50), 100);
+  const { muteMap, dndUntil } = await getUserMuteAndDnd(userId);
+  const dndActive = isDndActive(dndUntil);
 
-  const participants = await prisma.chatParticipant.findMany({
+  const rawParticipants = await prisma.chatParticipant.findMany({
     where: {
       userId,
       isArchived: false,
@@ -102,6 +243,8 @@ chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response
     },
     take: limit,
     select: {
+      id: true,
+      conversationId: true,
       lastReadSeq: true,
       lastReadAt: true,
       isManuallyUnread: true,
@@ -129,6 +272,8 @@ chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response
     orderBy: { conversation: { updatedAt: 'desc' } },
   });
 
+  const participants = await filterEligibleProjectParticipants(rawParticipants, req.authUser!);
+
   const formatted = participants.map((p) => {
     const conv = p.conversation;
     const messageSeq = conv.messageSeq || 0;
@@ -149,6 +294,7 @@ chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response
       : null;
 
     const participantIds = conv.participants.map((cp: any) => cp.userId || cp.user?.id || cp.id);
+    const { muted, mutedUntil } = isMuted(conv.id, muteMap);
 
     return {
       id: conv.id,
@@ -163,6 +309,8 @@ chatRouter.get('/conversations', asyncHandler(async (req: Request, res: Response
       unreadCount,
       participantIds,
       lastMessage,
+      muted,
+      mutedUntil: mutedUntil || null,
     };
   });
 
@@ -250,15 +398,25 @@ chatRouter.get('/conversations/context/:type/:id', asyncHandler(async (req: Requ
   const contextId = req.params.id as string;
 
   let title = `${contextType} Chat`;
+  let responsibleUserId: string | null = null;
+
   if (contextType === 'PROJECT') {
     const project = await prisma.project.findUnique({
       where: { id: contextId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, responsible: true, responsibleId: true },
     });
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
     title = project.name;
+    responsibleUserId = project.responsibleId || null;
+    if (!responsibleUserId && project.responsible) {
+      const respUser = await prisma.user.findFirst({
+        where: { name: { equals: project.responsible, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (respUser) responsibleUserId = respUser.id;
+    }
   }
 
   let conversation = await prisma.chatConversation.findUnique({
@@ -275,6 +433,8 @@ chatRouter.get('/conversations/context/:type/:id', asyncHandler(async (req: Requ
   });
 
   if (!conversation) {
+    // Only subscribe responsible user initially (or caller if caller is responsible)
+    const initialUserIds = responsibleUserId ? [responsibleUserId] : (userId === responsibleUserId ? [userId] : []);
     conversation = await prisma.chatConversation.create({
       data: {
         type: 'CONTEXTUAL',
@@ -282,7 +442,7 @@ chatRouter.get('/conversations/context/:type/:id', asyncHandler(async (req: Requ
         contextId,
         title,
         participants: {
-          create: [{ userId }],
+          create: initialUserIds.map((uid) => ({ userId: uid })),
         },
       },
       include: {
@@ -293,14 +453,14 @@ chatRouter.get('/conversations/context/:type/:id', asyncHandler(async (req: Requ
         },
       },
     });
-  } else {
-    // Ensure current user is in participants list so unread counts work
-    const isParticipant = conversation.participants.some((p) => p.userId === userId);
-    if (!isParticipant) {
+  } else if (responsibleUserId) {
+    // Ensure responsible user is in participants list if not already present
+    const hasResponsible = conversation.participants.some((p) => p.userId === responsibleUserId);
+    if (!hasResponsible) {
       const createdParticipant = await prisma.chatParticipant.create({
         data: {
           conversationId: conversation.id,
-          userId,
+          userId: responsibleUserId,
           lastReadSeq: conversation.messageSeq || 0,
         },
         include: {
@@ -667,8 +827,45 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
+  // Handle CONTEXTUAL (project) conversations: archive membership when leaving
+  if (conversation.type === 'CONTEXTUAL') {
+    const isLeaving = targetUserId === authUser.id;
+    const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
+
+    if (!isLeaving && !isAdmin) {
+      return res.status(403).json({ error: 'Only participants or admin can remove members' });
+    }
+
+    await prisma.chatParticipant.upsert({
+      where: {
+        conversationId_userId: { conversationId, userId: targetUserId },
+      },
+      create: {
+        conversationId,
+        userId: targetUserId,
+        isArchived: true,
+        isManuallyUnread: false,
+        lastReadSeq: conversation.messageSeq || 0,
+        lastReadAt: new Date(),
+      },
+      update: {
+        isArchived: true,
+        isManuallyUnread: false,
+        lastReadSeq: conversation.messageSeq || 0,
+        lastReadAt: new Date(),
+      },
+    });
+
+    chatSSEHub.sendToUser(targetUserId, {
+      type: 'REMOVED_FROM_CONVERSATION',
+      payload: { conversationId },
+    });
+
+    return res.json({ success: true, removedUserId: targetUserId, isLeaving });
+  }
+
   if (conversation.type !== 'GROUP') {
-    return res.status(400).json({ error: 'Only group conversations support removing participants' });
+    return res.status(400).json({ error: 'Only group and project conversations support removing participants' });
   }
 
   const isLeaving = targetUserId === authUser.id;
@@ -763,6 +960,167 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
   });
 
   res.json({ success: true, removedUserId: targetUserId, isLeaving });
+}));
+
+/**
+ * DELETE /api/chat/conversations/:id
+ * Clear / Delete an entire conversation.
+ * Restricted to Manager+ roles (Administrator, Manager, isSystemAdmin, or projects.delete).
+ */
+chatRouter.delete('/conversations/:id', asyncHandler(async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const conversationId = req.params.id as string;
+
+  const isManagerOrAdmin =
+    authUser.role === 'Administrator' ||
+    authUser.role === 'Manager' ||
+    Boolean(authUser.isSystemAdmin) ||
+    hasPermission(authUser, 'projects', 'delete');
+
+  if (!isManagerOrAdmin) {
+    return res.status(403).json({ error: 'Only Managers and Administrators can delete or clear chats' });
+  }
+
+  const conversation = await prisma.chatConversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation) {
+    return res.status(404).json({ error: 'Conversation not found' });
+  }
+
+  if (conversation.type === 'GROUP') {
+    // Delete conversation entirely (cascades messages & participants)
+    await prisma.chatConversation.delete({
+      where: { id: conversationId },
+    });
+
+    chatSSEHub.broadcastAll({
+      type: 'CONVERSATION_CLEARED',
+      payload: { conversationId, deleted: true },
+    });
+  } else {
+    // DIRECT or CONTEXTUAL: Clear all messages, reset sequence & last message, and reset watermark
+    await prisma.chatMessage.deleteMany({
+      where: { conversationId },
+    });
+
+    await prisma.chatConversation.update({
+      where: { id: conversationId },
+      data: {
+        messageSeq: 0,
+        lastMessageText: null,
+        lastMessageSenderId: null,
+        lastMessageSenderName: null,
+        lastMessageAt: null,
+        updatedAt: new Date(),
+      },
+    });
+
+    await prisma.chatParticipant.updateMany({
+      where: { conversationId },
+      data: {
+        lastReadSeq: 0,
+        lastReadAt: new Date(),
+        isManuallyUnread: false,
+      },
+    });
+
+    chatSSEHub.broadcastAll({
+      type: 'CONVERSATION_CLEARED',
+      payload: { conversationId, cleared: true },
+    });
+  }
+
+  res.json({ success: true, conversationId });
+}));
+
+/**
+ * POST /api/chat/conversations/:id/mute
+ * Mute a conversation for a duration (or forever) or unmute.
+ * Body: { durationMinutes?: number, forever?: boolean, unmute?: boolean }
+ */
+chatRouter.post('/conversations/:id/mute', asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.authUser!.id;
+  const conversationId = req.params.id as string;
+  const { durationMinutes, forever, unmute } = req.body;
+
+  const pref = await prisma.userPreference.findUnique({
+    where: { userId_key: { userId, key: 'chat_mute_map' } },
+  });
+
+  let muteMap: Record<string, string> = {};
+  if (pref?.value) {
+    try {
+      muteMap = JSON.parse(pref.value);
+    } catch {}
+  }
+
+  if (unmute) {
+    delete muteMap[conversationId];
+  } else if (forever) {
+    muteMap[conversationId] = 'FOREVER';
+  } else if (typeof durationMinutes === 'number' && durationMinutes > 0) {
+    const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
+    muteMap[conversationId] = expiresAt;
+  } else {
+    // Default 1 hour
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    muteMap[conversationId] = expiresAt;
+  }
+
+  await prisma.userPreference.upsert({
+    where: { userId_key: { userId, key: 'chat_mute_map' } },
+    create: { userId, key: 'chat_mute_map', value: JSON.stringify(muteMap) },
+    update: { value: JSON.stringify(muteMap) },
+  });
+
+  chatSSEHub.sendToUser(userId, {
+    type: 'MUTE_UPDATED',
+    payload: { conversationId, mutedUntil: muteMap[conversationId] || null },
+  });
+
+  res.json({ success: true, conversationId, mutedUntil: muteMap[conversationId] || null });
+}));
+
+/**
+ * POST /api/chat/dnd
+ * Set or turn off global Do Not Disturb.
+ * Body: { durationMinutes?: number, forever?: boolean, off?: boolean }
+ */
+chatRouter.post('/dnd', asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.authUser!.id;
+  const { durationMinutes, forever, off } = req.body;
+
+  let dndUntil: string | null = null;
+  if (off) {
+    dndUntil = null;
+  } else if (forever) {
+    dndUntil = 'FOREVER';
+  } else if (typeof durationMinutes === 'number' && durationMinutes > 0) {
+    dndUntil = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
+  } else {
+    dndUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  }
+
+  if (dndUntil === null) {
+    await prisma.userPreference.deleteMany({
+      where: { userId, key: 'chat_dnd_until' },
+    });
+  } else {
+    await prisma.userPreference.upsert({
+      where: { userId_key: { userId, key: 'chat_dnd_until' } },
+      create: { userId, key: 'chat_dnd_until', value: dndUntil },
+      update: { value: dndUntil },
+    });
+  }
+
+  chatSSEHub.sendToUser(userId, {
+    type: 'DND_UPDATED',
+    payload: { dndUntil },
+  });
+
+  res.json({ success: true, dndUntil });
 }));
 
 /**
@@ -908,17 +1266,58 @@ chatRouter.post('/conversations/:id/messages', asyncHandler(async (req: Request,
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
-  // Ensure sender is a participant
-  if (!conversation.participants.some((p) => p.userId === authUser.id)) {
-    await prisma.chatParticipant.create({
-      data: { conversationId, userId: authUser.id },
+  const snippet = content.trim().slice(0, 160);
+  const nextSeq = (conversation.messageSeq || 0) + 1;
+
+  // 1. Upsert sender as an active participant (unarchive if previously left)
+  await prisma.chatParticipant.upsert({
+    where: { conversationId_userId: { conversationId, userId: authUser.id } },
+    create: {
+      conversationId,
+      userId: authUser.id,
+      isArchived: false,
+      lastReadSeq: nextSeq,
+      lastReadAt: new Date(),
+    },
+    update: {
+      isArchived: false,
+      lastReadSeq: nextSeq,
+      lastReadAt: new Date(),
+      isManuallyUnread: false,
+    },
+  });
+
+  // 2. If it's a project conversation, ensure the responsible user is in participants list
+  if (conversation.contextType === 'PROJECT' && conversation.contextId) {
+    const project = await prisma.project.findUnique({
+      where: { id: conversation.contextId },
+      select: { id: true, responsible: true, responsibleId: true },
     });
+    let responsibleUserId = project?.responsibleId || null;
+    if (!responsibleUserId && project?.responsible) {
+      const respUser = await prisma.user.findFirst({
+        where: { name: { equals: project.responsible, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (respUser) responsibleUserId = respUser.id;
+    }
+    if (responsibleUserId && responsibleUserId !== authUser.id) {
+      // Create participant if missing, but do not override isArchived if they explicitly left
+      await prisma.chatParticipant.upsert({
+        where: { conversationId_userId: { conversationId, userId: responsibleUserId } },
+        create: {
+          conversationId,
+          userId: responsibleUserId,
+          isArchived: false,
+          lastReadSeq: Math.max(0, nextSeq - 1),
+          lastReadAt: new Date(0),
+        },
+        update: {},
+      });
+    }
   }
 
-  const snippet = content.trim().slice(0, 160);
-  const nextSeq = conversation.messageSeq + 1;
-
-  // Atomic batch: increment sequence, store message with seq, update conversation & participant lastReadSeq
+  // 3. Create message and update conversation watermark
   const [message, updatedConv] = await prisma.$transaction([
     prisma.chatMessage.create({
       data: {
@@ -954,106 +1353,121 @@ chatRouter.post('/conversations/:id/messages', asyncHandler(async (req: Request,
       },
       include: {
         participants: {
+          where: { isArchived: false },
           include: {
             user: { select: { id: true, name: true, avatarUrl: true, role: true } },
           },
         },
       },
     }),
-    prisma.chatParticipant.updateMany({
-      where: { conversationId, userId: authUser.id },
-      data: { lastReadSeq: nextSeq, lastReadAt: new Date(), isManuallyUnread: false },
-    }),
   ]);
 
-  // 1. Audit log if it's a contextual project chat
-  if (conversation.contextType === 'PROJECT' && conversation.contextId) {
-    enqueueActivityLog({
-      userId: authUser.id,
-      userName: authUser.name,
-      type: 'PROJECT_CHAT_MESSAGE',
-      path: `/projects/${conversation.contextId}`,
-      details: JSON.stringify({
-        messageId: message.id,
-        projectId: conversation.contextId,
-        snippet: content.substring(0, 80),
-      }),
-    });
+  // 4. Content-free audit log for usage analytics (no message content stored!)
+  let chatLogType = 'CHAT_MESSAGE_DIRECT';
+  let chatPath = '/chat/direct';
+  if (conversation.type === 'CONTEXTUAL' || conversation.contextType === 'PROJECT') {
+    chatLogType = 'CHAT_MESSAGE_PROJECT';
+    chatPath = conversation.contextId ? `/projects/${conversation.contextId}` : '/chat/project';
+  } else if (conversation.type === 'GROUP') {
+    chatLogType = 'CHAT_MESSAGE_GROUP';
+    chatPath = '/chat/group';
   }
 
-  // 2. Process @mentions -> create notifications and add mentioned users as participants to contextual conversation
-  if (Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0) {
-    const validMentionIds = Array.from(
-      new Set(
-        mentionedUserIds.filter(
-          (mId: string) => typeof mId === 'string' && mId !== authUser.id
-        )
+  enqueueActivityLog({
+    userId: authUser.id,
+    userName: authUser.name,
+    type: chatLogType,
+    path: chatPath,
+    details: JSON.stringify({
+      messageId: message.id,
+      conversationId,
+      chatType: conversation.type,
+      ...(conversation.contextId ? { projectId: conversation.contextId } : {}),
+    }),
+  });
+
+  // 5. Process @mentions (both explicit IDs and text mentions)
+  const extractedMentions = await extractMentionedUserIds(content);
+  const combinedMentionIds = Array.from(
+    new Set([...(Array.isArray(mentionedUserIds) ? mentionedUserIds : []), ...extractedMentions])
+  ).filter((mId): mId is string => typeof mId === 'string' && mId !== authUser.id);
+
+  if (combinedMentionIds.length > 0) {
+    // Re-subscribe tagged users even if previously archived
+    await Promise.all(
+      combinedMentionIds.map((targetUserId: string) =>
+        prisma.chatParticipant.upsert({
+          where: {
+            conversationId_userId: { conversationId, userId: targetUserId },
+          },
+          create: {
+            conversationId,
+            userId: targetUserId,
+            isArchived: false,
+            lastReadSeq: Math.max(0, nextSeq - 1),
+            lastReadAt: new Date(0),
+          },
+          update: {
+            isArchived: false,
+          },
+        })
       )
     );
 
-    if (validMentionIds.length > 0) {
-      const existingParticipantIds = new Set(conversation.participants.map((p) => p.userId));
-      const missingMentionIds = validMentionIds.filter((id) => !existingParticipantIds.has(id));
+    // Send notifications only if the recipient has NOT muted the conversation and NOT on DND
+    await Promise.all(
+      combinedMentionIds.map(async (targetUserId: string) => {
+        const { muteMap, dndUntil } = await getUserMuteAndDnd(targetUserId);
+        const muted = isMuted(conversationId, muteMap).muted;
+        const dnd = isDndActive(dndUntil);
+        if (muted || dnd) {
+          return;
+        }
 
-      // Ensure all newly mentioned users are participants so the conversation appears in their unread list
-      if (missingMentionIds.length > 0) {
-        await Promise.all(
-          missingMentionIds.map((targetUserId: string) =>
-            prisma.chatParticipant.upsert({
-              where: {
-                conversationId_userId: { conversationId, userId: targetUserId },
-              },
-              create: {
-                conversationId,
-                userId: targetUserId,
-                lastReadSeq: Math.max(0, nextSeq - 1),
-                lastReadAt: new Date(0),
-              },
-              update: {},
-            })
-          )
-        );
-      }
+        const notif = await prisma.notification.create({
+          data: {
+            userId: targetUserId,
+            type: 'MENTION',
+            title: `${authUser.name} mentioned you in chat`,
+            message: content.substring(0, 120),
+            projectId: conversation.contextType === 'PROJECT' ? conversation.contextId : null,
+            authorId: authUser.id,
+            authorName: authUser.name,
+            link:
+              conversation.contextType === 'PROJECT'
+                ? `/projects?highlight=${conversation.contextId}&tab=chat`
+                : undefined,
+          },
+        });
 
-      await Promise.all(
-        validMentionIds.map(async (targetUserId: string) => {
-          const notif = await prisma.notification.create({
-            data: {
-              userId: targetUserId,
-              type: 'MENTION',
-              title: `${authUser.name} mentioned you in chat`,
-              message: content.substring(0, 120),
-              projectId: conversation.contextType === 'PROJECT' ? conversation.contextId : null,
-              authorId: authUser.id,
-              authorName: authUser.name,
-              link:
-                conversation.contextType === 'PROJECT'
-                  ? `/projects?highlight=${conversation.contextId}&tab=chat`
-                  : undefined,
-            },
-          });
-
-          // Dispatch notification event over SSE
-          chatSSEHub.sendToUser(targetUserId, {
-            type: 'NOTIFICATION',
-            payload: notif,
-          });
-        })
-      );
-    }
+        // Dispatch notification event over SSE
+        chatSSEHub.sendToUser(targetUserId, {
+          type: 'NOTIFICATION',
+          payload: notif,
+        });
+      })
+    );
   }
 
-  // 3. Broadcast message to all conversation participants (or all online users for project chat)
+  // 6. Broadcast message to all conversation participants (or all online users for project chat)
+  const finalActiveParticipants = await prisma.chatParticipant.findMany({
+    where: { conversationId, isArchived: false },
+    select: { userId: true },
+  });
+  const broadcastConv = {
+    ...updatedConv,
+    participantIds: finalActiveParticipants.map((p) => p.userId),
+  };
+
   if (conversation.type === 'CONTEXTUAL') {
     chatSSEHub.broadcastAll({
       type: 'MESSAGE_CREATED',
-      payload: { conversationId, message, conversation: updatedConv },
+      payload: { conversationId, message, conversation: broadcastConv },
     });
   } else {
-    const recipientIds = updatedConv.participants.map((p) => p.userId);
-    chatSSEHub.sendToUsers(recipientIds, {
+    chatSSEHub.sendToUsers(broadcastConv.participantIds, {
       type: 'MESSAGE_CREATED',
-      payload: { conversationId, message, conversation: updatedConv },
+      payload: { conversationId, message, conversation: broadcastConv },
     });
   }
 
@@ -1227,29 +1641,44 @@ chatRouter.post('/conversations/:id/read', asyncHandler(async (req: Request, res
 
   const conversation = await prisma.chatConversation.findUnique({
     where: { id: conversationId },
-    select: { messageSeq: true },
+    select: { messageSeq: true, type: true },
   });
 
   const targetSeq = conversation?.messageSeq || 0;
   const now = new Date();
 
-  await prisma.chatParticipant.upsert({
-    where: {
-      conversationId_userId: { conversationId, userId },
-    },
-    create: {
-      conversationId,
-      userId,
-      lastReadSeq: targetSeq,
-      lastReadAt: now,
-      isManuallyUnread: false,
-    },
-    update: {
-      lastReadSeq: targetSeq,
-      lastReadAt: now,
-      isManuallyUnread: false,
-    },
-  });
+  if (conversation?.type === 'CONTEXTUAL') {
+    // Only update if participant already exists (do not subscribe passive viewers!)
+    await prisma.chatParticipant.updateMany({
+      where: {
+        conversationId,
+        userId,
+      },
+      data: {
+        lastReadSeq: targetSeq,
+        lastReadAt: now,
+        isManuallyUnread: false,
+      },
+    });
+  } else {
+    await prisma.chatParticipant.upsert({
+      where: {
+        conversationId_userId: { conversationId, userId },
+      },
+      create: {
+        conversationId,
+        userId,
+        lastReadSeq: targetSeq,
+        lastReadAt: now,
+        isManuallyUnread: false,
+      },
+      update: {
+        lastReadSeq: targetSeq,
+        lastReadAt: now,
+        isManuallyUnread: false,
+      },
+    });
+  }
 
   // Notify clients via SSE of read status update
   chatSSEHub.sendToUser(userId, {
@@ -1270,28 +1699,42 @@ chatRouter.post('/conversations/:id/unread', asyncHandler(async (req: Request, r
 
   const conversation = await prisma.chatConversation.findUnique({
     where: { id: conversationId },
-    select: { messageSeq: true },
+    select: { messageSeq: true, type: true },
   });
 
   const targetSeq = Math.max(0, (conversation?.messageSeq || 1) - 1);
   const now = new Date();
 
-  await prisma.chatParticipant.upsert({
-    where: {
-      conversationId_userId: { conversationId, userId },
-    },
-    create: {
-      conversationId,
-      userId,
-      lastReadSeq: targetSeq,
-      lastReadAt: now,
-      isManuallyUnread: true,
-    },
-    update: {
-      lastReadSeq: targetSeq,
-      isManuallyUnread: true,
-    },
-  });
+  if (conversation?.type === 'CONTEXTUAL') {
+    // Only update if participant already exists
+    await prisma.chatParticipant.updateMany({
+      where: {
+        conversationId,
+        userId,
+      },
+      data: {
+        lastReadSeq: targetSeq,
+        isManuallyUnread: true,
+      },
+    });
+  } else {
+    await prisma.chatParticipant.upsert({
+      where: {
+        conversationId_userId: { conversationId, userId },
+      },
+      create: {
+        conversationId,
+        userId,
+        lastReadSeq: targetSeq,
+        lastReadAt: now,
+        isManuallyUnread: true,
+      },
+      update: {
+        lastReadSeq: targetSeq,
+        isManuallyUnread: true,
+      },
+    });
+  }
 
   // Notify user via SSE
   chatSSEHub.sendToUser(userId, {
