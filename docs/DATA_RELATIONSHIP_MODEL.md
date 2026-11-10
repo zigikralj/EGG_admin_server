@@ -81,10 +81,13 @@ flowchart TD
         WasteCatalog["WasteCatalog<br/>(Serbian Waste Index)"]:::env
     end
 
-    subgraph Workflow ["Tasks & Notifications"]
+    subgraph Workflow ["Tasks, Chat & Notifications"]
         Reminder["Reminder<br/>(Multi-parent Tasks)"]:::workflow
         Notification["Notification<br/>(In-App Mentions)"]:::workflow
         ActivityLog["ActivityLog<br/>(Audit & Usage)"]:::workflow
+        ChatConversation["ChatConversation<br/>(Direct / Group / Project)"]:::workflow
+        ChatParticipant["ChatParticipant<br/>(Membership & Read State)"]:::workflow
+        ChatMessage["ChatMessage<br/>(Sequential Messages)"]:::workflow
     end
 
     subgraph Config ["Configuration"]
@@ -114,6 +117,10 @@ flowchart TD
 
     User -->|"receives"| Notification
     User -->|"generates"| ActivityLog
+    User -->|"participates in"| ChatParticipant
+    User -->|"sends"| ChatMessage
+    ChatConversation -->|"members"| ChatParticipant
+    ChatConversation -->|"messages"| ChatMessage
     Project -.->|"context for"| Notification
     Project -.->|"milestone for"| Reminder
     Client -.->|"follow-up on"| Reminder
@@ -133,6 +140,12 @@ erDiagram
     USER ||--o{ NOTIFICATION : "receives alerts (userId) [CASCADE]"
     USER ||--o{ ACTIVITY_LOG : "performs actions (userId) [CASCADE]"
     USER ||--o{ REMINDER : "responsible for (responsibleId) [SET NULL]"
+    USER ||--o{ CHAT_PARTICIPANT : "joins (userId) [CASCADE]"
+    USER ||--o{ CHAT_MESSAGE : "sends (senderId) [CASCADE]"
+
+    CHAT_CONVERSATION ||--o{ CHAT_PARTICIPANT : "participants (conversationId) [CASCADE]"
+    CHAT_CONVERSATION ||--o{ CHAT_MESSAGE : "messages (conversationId) [CASCADE]"
+    CHAT_MESSAGE ||--o{ CHAT_MESSAGE : "replies (replyToId) [SET NULL]"
 
     CLIENT ||--o{ PROJECT : "engages (clientId)"
     CLIENT ||--o{ REMINDER : "associated with (clientId) [SET NULL]"
@@ -149,6 +162,7 @@ erDiagram
     SERVICE ||--o{ PROVIDED_SERVICE : "catalog template (serviceId) [RESTRICT]"
     INVOICE ||--o{ INVOICE_ITEM : "line items (invoiceId) [CASCADE]"
     INVOICE ||--o{ PROVIDED_SERVICE : "bills for (invoiceId) [SET NULL]"
+    INVOICE ||--o{ INVOICE : "child invoices (parentInvoiceId) [SET NULL]"
 
     %% Environmental & Compliance
     PERMIT ||--o{ REMINDER : "renewal reminders (permitId) [SET NULL]"
@@ -200,6 +214,7 @@ erDiagram
         string deadline
         int progress
         boolean done
+        string notesPreview
     }
 
     REMINDER {
@@ -238,12 +253,13 @@ erDiagram
         string projectId FK
         string invoiceId FK
         string status
-        float price
     }
 
     INVOICE {
         string id PK
         string invoiceNumber UK
+        string invoiceType
+        string parentInvoiceId FK
         string clientId FK
         string projectId FK
         string status
@@ -301,7 +317,8 @@ erDiagram
     }
 
     SYSTEM_SETTING {
-        string key PK
+        string id PK
+        string key UK
         string value
     }
 
@@ -310,6 +327,35 @@ erDiagram
         string userId FK
         string type
         string details
+    }
+
+    CHAT_CONVERSATION {
+        string id PK
+        string type
+        string title
+        string contextType
+        string contextId
+        int messageSeq
+    }
+
+    CHAT_PARTICIPANT {
+        string id PK
+        string conversationId FK
+        string userId FK
+        int lastReadSeq
+        boolean isManuallyUnread
+        boolean isArchived
+    }
+
+    CHAT_MESSAGE {
+        string id PK
+        string conversationId FK
+        int seq
+        string senderId FK
+        string content
+        string replyToId FK
+        boolean isEdited
+        boolean isDeleted
     }
 ```
 
@@ -540,11 +586,12 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `deadline` | `String` | Optional | | Target completion date (`YYYY-MM-DD`) |
 | `progress` | `Int` | Required | `@default(0)` | Completion percentage (0–100) |
 | `done` | `Boolean` | Required | `@default(false)` | Completion status flag |
-| `notes` | `String` | Optional | | Project operational notes |
+| `notesPreview` | `String` | Optional | | Plain-text preview of project notes (up to 300 chars; full HTML stored in `ProjectNote`) |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
 
 **Indexes & Constraints:**
+- `@@index([deadline])`, `@@index([start])`, `@@index([createdAt])`, `@@index([updatedAt])`
 - `@@index([clientId])`
 - `@@index([responsibleId])`
 - `@@index([done])`
@@ -645,19 +692,18 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `serviceId` | `String` | Required | FK to `Service.id` | Template service reference |
 | `clientId` | `String` | Required | FK to `Client.id` | Client receiving the service |
 | `projectId` | `String` | Optional | FK to `Project.id` | Associated project |
-| `invoiceId` | `String` | Optional | FK to `Invoice.id` | Billed invoice |
-| `status` | `String` | Required | `@default("Planned")` | `Planned`, `Completed`, `Cancelled` |
+| `invoiceId` | `String` | Optional | FK to `Invoice.id` | Billed invoice (pricing lives on `Invoice`) |
+| `status` | `String` | Required | `@default("Planned")` | `Planned`, `In Progress`, `Completed`, `Cancelled` |
 | `location` | `String` | Optional | | Execution site location |
 | `scheduledDate`| `String` | Optional | | Scheduled execution date (`YYYY-MM-DD`) |
 | `completionDate`| `String`| Optional | | Actual completion date (`YYYY-MM-DD`) |
-| `price` | `Float` | Optional | `@default(0)` | Price charged |
-| `currency` | `String` | Optional | `@default("RSD")` | Currency code (`RSD`, `EUR`) |
 | `notes` | `String` | Optional | | Field execution notes |
 | `customData` | `Json` | Optional | | Field values matching `Service.customDataModel` |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
 
 **Indexes & Constraints:**
+- `@@index([scheduledDate])`, `@@index([completionDate])`, `@@index([updatedAt])`
 - `@@index([serviceId])`
 - `@@index([clientId])`
 - `@@index([projectId])`
@@ -677,6 +723,8 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 |---|---|---|---|---|
 | `id` | `String` | Required | `@id @default(uuid())` | Primary key |
 | `invoiceNumber`| `String` | Required | `@unique` | Official invoice serial number |
+| `invoiceType` | `String` | Optional | `@default("Standard")` | `Standard`, `Advance`, `Final`, `Partial` |
+| `parentInvoiceId` | `String` | Optional | FK to `Invoice.id` | Optional parent invoice for linked child/final invoices |
 | `dateCreated` | `String` | Optional | | Issue date (`YYYY-MM-DD`) |
 | `dueDate` | `String` | Optional | | Payment due date (`YYYY-MM-DD`) |
 | `paymentDate` | `String` | Optional | | Date paid (`YYYY-MM-DD`) |
@@ -684,19 +732,19 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `clientName` | `String` | Optional | | Denormalized client display name |
 | `projectId` | `String` | Optional | FK to `Project.id` | Billed project |
 | `projectName` | `String` | Optional | | Denormalized project display name |
-| `status` | `String` | Required | `@default("Draft")` | `Draft`, `Sent`, `Paid`, `Overdue` |
+| `status` | `String` | Required | `@default("Draft")` | `Draft`, `Sent`, `Paid`, `Overdue`, `Cancelled` |
 | `notes` | `String` | Optional | | Invoice notes |
 | `totalAmount` | `Float` | Optional | `@default(0)` | Sum total amount |
-| `currency` | `String` | Optional | `@default("RSD")` | Currency code |
+| `currency` | `String` | Optional | `@default("RSD")` | Currency code (`RSD`, `€`/`EUR`) |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
 
 **Indexes & Constraints:**
+- `@@index([dueDate])`, `@@index([dateCreated])`, `@@index([invoiceNumber])`, `@@index([parentInvoiceId])`, `@@index([updatedAt])`
 - `@@index([clientId])`
 - `@@index([projectId])`
 - `@@index([status])`
-- `onDelete: SetNull` to `Client`
-- `onDelete: SetNull` to `Project`
+- `onDelete: SetNull` to `Client`, `Project`, and `parentInvoice` (`Invoice`)
 
 ---
 
@@ -825,7 +873,8 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 
 | Field | Type | Modifiers | Constraints | Description |
 |---|---|---|---|---|
-| `key` | `String` | Required | `@id` | Primary key configuration key |
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `key` | `String` | Required | `@unique` | Unique configuration key (e.g. `waste_disposal_service_id`, `activity_logging_enabled`) |
 | `value` | `String` | Required | | Setting value |
 | `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
@@ -966,8 +1015,81 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 
 **Indexes & Constraints:**
 - `@@unique([noteId, version])` — Unique version per note
+- `@@index([noteId, kind, version])` — Fast keyframe lookup
 - `@@index([noteId, createdAt])` — Timeline queries
 - `onDelete: Cascade` to `ProjectNote`
+
+---
+
+### 4.24. `ChatConversation`
+*Direct, group, and contextual (e.g. project-scoped) chat conversations.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `type` | `ChatType` | Required | `@default(DIRECT)` | `DIRECT`, `GROUP`, or `CONTEXTUAL` |
+| `title` | `String` | Optional | | Custom conversation title (group or contextual chats) |
+| `contextType` | `String` | Optional | | Context entity type (e.g. `"PROJECT"`) |
+| `contextId` | `String` | Optional | | Context entity UUID (e.g. `projectId`) |
+| `messageSeq` | `Int` | Required | `@default(0)` | Monotonically increasing sequence counter for messages |
+| `lastMessageText` | `String` | Optional | `@db.VarChar(160)` | Denormalized preview of the latest message |
+| `lastMessageSenderId` | `String` | Optional | | Sender UUID of the latest message |
+| `lastMessageSenderName` | `String` | Optional | | Denormalized sender name of the latest message |
+| `lastMessageAt` | `DateTime` | Optional | | Timestamp of the latest message |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
+
+**Indexes & Constraints:**
+- `@@unique([contextType, contextId])` — Ensures a single contextual chat per entity (e.g. per project)
+- `@@index([contextType, contextId])`
+- `@@index([lastMessageAt(sort: Desc)])` — Conversation list sorting
+- `@@index([updatedAt])`
+
+---
+
+### 4.25. `ChatParticipant`
+*User membership, read sequence watermark, and archive/unread state per conversation.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `conversationId` | `String` | Required | FK to `ChatConversation.id` | Target conversation |
+| `userId` | `String` | Required | FK to `User.id` | Participating user |
+| `lastReadSeq` | `Int` | Required | `@default(0)` | Highest message sequence number read by the user |
+| `lastReadAt` | `DateTime` | Required | `@default(now())` | Timestamp when the user last read the conversation |
+| `isManuallyUnread` | `Boolean` | Required | `@default(false)` | Flag when user explicitly marks conversation as unread |
+| `isArchived` | `Boolean` | Required | `@default(false)` | Flag when conversation is hidden/cleared for user |
+
+**Indexes & Constraints:**
+- `@@unique([conversationId, userId])` — One participant record per user per conversation
+- `@@index([userId])` — Fast lookup of user's active conversations
+- `onDelete: Cascade` to `ChatConversation` and `User`
+
+---
+
+### 4.26. `ChatMessage`
+*Sequential chat messages supporting reply threading, edits, and soft-delete tombstones.*
+
+| Field | Type | Modifiers | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `String` | Required | `@id @default(uuid())` | Primary key |
+| `conversationId` | `String` | Required | FK to `ChatConversation.id` | Parent conversation |
+| `seq` | `Int` | Required | `@default(0)` | Sequential message number within the conversation |
+| `senderId` | `String` | Required | FK to `User.id` | Author user reference |
+| `content` | `String` | Required | `@db.Text` | Message text content (cleared on soft-delete) |
+| `replyToId` | `String` | Optional | FK to `ChatMessage.id` | Optional quoted parent message |
+| `isEdited` | `Boolean` | Required | `@default(false)` | Flag indicating message was edited |
+| `editedAt` | `DateTime` | Optional | | Timestamp of last edit |
+| `isDeleted` | `Boolean` | Required | `@default(false)` | Soft-delete tombstone flag for delta sync |
+| `createdAt` | `DateTime` | Required | `@default(now())` | Creation timestamp |
+| `updatedAt` | `DateTime` | Required | `@default(now()) @updatedAt` | Last modification timestamp (used for delta sync of edits/deletes) |
+
+**Indexes & Constraints:**
+- `@@unique([conversationId, seq])` — Deterministic sequence ordering and cursor pagination (`beforeSeq`, `afterSeq`)
+- `@@index([conversationId, updatedAt])` — Incremental delta sync of edited/deleted messages (`sinceUpdatedAt`)
+- `@@index([senderId])`
+- `onDelete: Cascade` to `ChatConversation` and `User`
+- `onDelete: SetNull` to `replyTo` (`ChatMessage`)
 
 ---
 
@@ -983,12 +1105,14 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `UserPreference` | `userId` | `User` | N:1 | **`Cascade`** |
 | `ClientExtraData` | `clientId` | `Client` | 1:1 | **`Cascade`** |
 | `ClientExtraData` | `permitId` | `Permit` | N:1 | **`SetNull`** |
+| `Permit` | `clientId` | `Client` | N:1 | **`SetNull`** |
 | `Reminder` | `projectId` | `Project` | N:1 | **`SetNull`** |
 | `Reminder` | `clientId` | `Client` | N:1 | **`SetNull`** |
 | `Reminder` | `responsibleId` | `User` | N:1 | **`SetNull`** |
 | `Reminder` | `permitId` | `Permit` | N:1 | **`SetNull`** |
 | `Invoice` | `clientId` | `Client` | N:1 | **`SetNull`** |
 | `Invoice` | `projectId` | `Project` | N:1 | **`SetNull`** |
+| `Invoice` | `parentInvoiceId` | `Invoice` | N:1 | **`SetNull`** |
 | `InvoiceItem` | `invoiceId` | `Invoice` | N:1 | **`Cascade`** |
 | `ProvidedService` | `serviceId` | `Service` | N:1 | **`Restrict`** |
 | `ProvidedService` | `clientId` | `Client` | N:1 | **`Cascade`** |
@@ -1001,6 +1125,11 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `ActivityLog` | `userId` | `User` | N:1 | **`Cascade`** |
 | `ActivityLogMonthlyStats` | `userId` | `User` | N:1 | **`Cascade`** |
 | `EntityVersion` | `changeSetId` | `ChangeSet` | N:1 | **`Cascade`** |
+| `ChatParticipant` | `conversationId` | `ChatConversation` | N:1 | **`Cascade`** |
+| `ChatParticipant` | `userId` | `User` | N:1 | **`Cascade`** |
+| `ChatMessage` | `conversationId` | `ChatConversation` | N:1 | **`Cascade`** |
+| `ChatMessage` | `senderId` | `User` | N:1 | **`Cascade`** |
+| `ChatMessage` | `replyToId` | `ChatMessage` | N:1 | **`SetNull`** |
 
 ---
 
@@ -1011,12 +1140,15 @@ Indexes are optimized for foreign key lookups, frequent status filtering, and so
 | Model | Index Target | Type | Purpose |
 |---|---|---|---|
 | `User` | `email` | UNIQUE | Login credential lookup |
+| `User` | `[role]`, `[status]`, `[name]`, `[updatedAt]` | INDEX | User directory filtering and sorting |
 | `UserPreference` | `[userId, key]` | UNIQUE | One setting per key per user |
 | `UserPreference` | `[userId]` | INDEX | Fast load of user preferences bundle |
 | `Project` | `[clientId]` | INDEX | Filter projects by client |
 | `Project` | `[responsibleId]` | INDEX | Filter projects by assigned user |
 | `Project` | `[done]` | INDEX | Active vs completed project tabs |
 | `Project` | `[type]` | INDEX | Filter by project category |
+| `Project` | `[deadline]`, `[start]`, `[createdAt]`, `[updatedAt]` | INDEX | Chronological sorting and date range filters |
+| `Client` | `[name]`, `[city]`, `[createdAt]`, `[updatedAt]` | INDEX | Client search, sorting, and delta sync |
 | `ClientExtraData` | `clientId` | UNIQUE | Enforce 1:1 client extension |
 | `ClientExtraData` | `[permitId]` | INDEX | Lookup clients holding a given permit |
 | `Service` | `code` | UNIQUE | Service catalog identifier |
@@ -1024,30 +1156,35 @@ Indexes are optimized for foreign key lookups, frequent status filtering, and so
 | `ProvidedService` | `[clientId]` | INDEX | Client service history |
 | `ProvidedService` | `[projectId]` | INDEX | Project service scope |
 | `ProvidedService` | `[invoiceId]` | INDEX | Billed services lookup |
-| `ProvidedService` | `[status]` | INDEX | Scheduled vs Completed execution queue |
+| `ProvidedService` | `[status]`, `[scheduledDate]`, `[completionDate]`, `[updatedAt]` | INDEX | Execution queue, waste disposal date filters, and delta sync |
 | `Invoice` | `invoiceNumber` | UNIQUE | Invoice identifier uniqueness |
 | `Invoice` | `[clientId]` | INDEX | Client billing history |
 | `Invoice` | `[projectId]` | INDEX | Project billing balance |
-| `Invoice` | `[status]` | INDEX | Filter `Draft` / `Sent` / `Paid` / `Overdue` |
+| `Invoice` | `[parentInvoiceId]` | INDEX | Parent/child invoice hierarchy lookup |
+| `Invoice` | `[status]`, `[dueDate]`, `[dateCreated]`, `[updatedAt]` | INDEX | Filter `Draft` / `Sent` / `Paid` / `Overdue` & approaching invoices |
 | `InvoiceItem` | `[invoiceId]` | INDEX | Fetch items for invoice view |
-| `Reminder` | `[projectId]` | INDEX | Project reminders widget |
-| `Reminder` | `[clientId]` | INDEX | Client follow-up widget |
-| `Reminder` | `[responsibleId]` | INDEX | "My Reminders" dashboard filter |
-| `Reminder` | `[permitId]` | INDEX | Permit expiration alerts |
-| `Reminder` | `[status]` | INDEX | Active vs resolved reminder lists |
-| `Notification` | `[userId]` | INDEX | User inbox query |
-| `Notification` | `[read]` | INDEX | Unread badge count query |
-| `Notification` | `[createdAt]` | INDEX | Chronological feed sorting |
-| `Notification` | `[projectId]` | INDEX | Project activity log |
-| `Permit` | `[permitNumber]` | INDEX | Permit search and autocomplete |
+| `Reminder` | `[projectId]`, `[clientId]`, `[responsibleId]`, `[permitId]` | INDEX | Entity-linked reminder widgets |
+| `Reminder` | `[status]`, `[dueDate]`, `[updatedAt]` | INDEX | Active vs resolved reminder lists & overdue alerts |
+| `Notification` | `[userId]`, `[read]`, `[createdAt]`, `[projectId]` | INDEX | User inbox & unread badge count queries |
+| `Permit` | `[permitNumber]`, `[clientId]`, `[startDate]`, `[endDate]`, `[updatedAt]` | INDEX | Permit search, expiration status, and client lookup |
 | `WasteCatalog` | `code` | UNIQUE | Official catalog code uniqueness |
 | `WasteCatalog` | `[frequent]` | INDEX | Fast autocomplete for top waste codes |
 | `PermitWaste` | `[permitId, wasteCatalogId]` | UNIQUE | Prevent duplicate code attachment |
-| `PermitWaste` | `[permitId]` | INDEX | List waste codes on permit |
-| `PermitWaste` | `[wasteCatalogId]` | INDEX | Find all permits authorizing waste code |
+| `PermitWaste` | `[permitId]`, `[wasteCatalogId]` | INDEX | Permit↔WasteCatalog lookups |
 | `Category` | `code` | UNIQUE | Category code identifier |
 | `SystemSetting` | `key` | UNIQUE | Setting lookup |
-| `ActivityLog` | `[userId, timestamp]` | INDEX | User activity filter and chronological timeline |
-| `ActivityLog` | `[timestamp]` | INDEX | Chronological sorting and date range queries |
-| `ActivityLog` | `[sessionId]` | INDEX | Session tracking and cleanup |
-| `ActivityLog` | `[type, timestamp]` | INDEX | Composite index for activity analytics aggregations |
+| `ActivityLog` | `[userId, timestamp]`, `[timestamp]`, `[sessionId]`, `[type, timestamp]` | INDEX | User activity timeline, session cleanup, and analytics aggregations |
+| `ActivityLogMonthlyStats` | `[userId, yearMonth]` | UNIQUE | Monthly rollup uniqueness per user |
+| `ActivityLogMonthlyStats` | `[yearMonth]` | INDEX | Cross-user monthly analytics |
+| `ChangeSet` | `[createdAt]`, `[userId, createdAt]` | INDEX | Audit changeset timeline |
+| `EntityVersion` | `[entityType, entityId, version]` | UNIQUE | Entity version uniqueness |
+| `EntityVersion` | `[entityType, entityId, createdAt]`, `[parentType, parentId, createdAt]`, `[changeSetId]` | INDEX | Version reconstruction and child history |
+| `ProjectNote` | `projectId` | UNIQUE | 1:1 project note lookup |
+| `ProjectNoteVersion` | `[noteId, version]` | UNIQUE | Sequential note version uniqueness |
+| `ProjectNoteVersion` | `[noteId, kind, version]`, `[noteId, createdAt]` | INDEX | Keyframe lookup & note timeline |
+| `ChatConversation` | `[contextType, contextId]` | UNIQUE | Single contextual chat per entity |
+| `ChatConversation` | `[lastMessageAt(sort: Desc)]`, `[updatedAt]` | INDEX | Conversation list ordering |
+| `ChatParticipant` | `[conversationId, userId]` | UNIQUE | Participant membership uniqueness |
+| `ChatParticipant` | `[userId]` | INDEX | User conversation membership lookup |
+| `ChatMessage` | `[conversationId, seq]` | UNIQUE | Message sequence ordering & cursor pagination |
+| `ChatMessage` | `[conversationId, updatedAt]`, `[senderId]` | INDEX | Message delta sync and sender lookup |
