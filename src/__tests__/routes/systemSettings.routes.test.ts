@@ -91,7 +91,7 @@ describe('SystemSettings Routes (GET, PUT)', () => {
       expect(res.body.value).toBe('srv-new-waste');
     });
 
-    it('denies non-Administrator from modifying settings (403)', async () => {
+    it('denies non-Administrator without systemSettings edit permission from modifying settings (403)', async () => {
       const regularUser = createTestUser({ role: 'User', permissions: { all: false } });
       mockPrisma.user.findUnique.mockResolvedValue(regularUser);
 
@@ -101,6 +101,27 @@ describe('SystemSettings Routes (GET, PUT)', () => {
         .send({ value: 'srv-denied' });
 
       expect(res.status).toBe(403);
+    });
+
+    it('allows non-Administrator with systemSettings edit permission to update settings', async () => {
+      const operator = createTestUser({
+        role: 'Ops',
+        roleLevel: 40,
+        permissions: { systemSettings: ['view', 'edit'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue(operator);
+      mockPrisma.systemSetting.upsert.mockResolvedValueOnce({
+        key: 'waste_disposal_service_id',
+        value: 'srv-ops-waste',
+      });
+
+      const res = await request(app)
+        .put('/api/system-settings/waste_disposal_service_id')
+        .set('Authorization', createAuthHeader(operator))
+        .send({ value: 'srv-ops-waste' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.value).toBe('srv-ops-waste');
     });
   });
 });

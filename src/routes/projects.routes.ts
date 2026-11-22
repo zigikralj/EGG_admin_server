@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma, basePrisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { hasPermission, isRestrictedToOwn } from '../types';
+import { hasPermission, isRestrictedToOwn, isUserSystemAdmin } from '../types';
 import { handleProjectNotesMentions } from '../helpers/mentionHelper';
 import {
   saveNoteRevision,
@@ -31,7 +31,7 @@ function isProjectOwnerOrCan(
   project: { responsible?: string | null; responsibleId?: string | null },
   action: "view" | "edit" | "delete"
 ): boolean {
-  if (user.role === "Administrator" || user.roleEntity?.isSystemAdmin) return true;
+  if (isUserSystemAdmin(user)) return true;
   const isOwner = Boolean(
     (project.responsible && project.responsible.trim().toLowerCase() === (user.name || "").trim().toLowerCase()) ||
     (project.responsibleId && project.responsibleId === user.id)

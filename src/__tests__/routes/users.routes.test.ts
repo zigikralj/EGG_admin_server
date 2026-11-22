@@ -1,12 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { mockPrisma } from '../helpers/prismaMock';
 import { createTestUser, createAuthHeader } from '../helpers/testAuth';
 import { UserRole } from '../../types';
+import { clearReferenceCache } from '../../helpers/referenceCache';
+import { invalidateUserAuthCache } from '../../middleware/auth';
 
 describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)', () => {
   const app = createApp();
+
+  beforeEach(() => {
+    clearReferenceCache();
+    invalidateUserAuthCache();
+    mockPrisma.user.findUnique.mockReset();
+    mockPrisma.user.update.mockReset();
+    mockPrisma.user.delete.mockReset();
+    mockPrisma.user.findFirst.mockReset();
+    mockPrisma.user.create.mockReset();
+    mockPrisma.role.findMany.mockReset();
+  });
 
   describe('GET /api/users', () => {
     it('returns paginated users list and strips password', async () => {
@@ -32,7 +45,7 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
     it('creates a new user by Administrator', async () => {
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValue(admin);
-      mockPrisma.user.findFirst.mockResolvedValueOnce(null); // No existing email
+      mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       mockPrisma.user.create.mockResolvedValueOnce({
         id: 'u-created',
         name: 'New Colleague',
@@ -53,45 +66,117 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
       expect(res.body.email).toBe('colleague@ekos.rs');
     });
 
-    it('enforces Manager < Administrator invariant: Manager cannot create Administrator', async () => {
-      const manager = createTestUser({ role: UserRole.MANAGER });
-      // When requireAuth resolves manager:
-      mockPrisma.user.findUnique.mockResolvedValueOnce(manager);
+    it('enforces strict role level hierarchy on POST: non-admin cannot assign Administrator or peer/higher roles', async () => {
+      const supervisor = createTestUser({
+        role: 'Supervisor',
+        roleLevel: 50,
+        permissions: { users: ['create'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue(supervisor);
 
-      const res = await request(app)
+      // Cannot assign Administrator role
+      const resAdmin = await request(app)
         .post('/api/users')
-        .set('Authorization', createAuthHeader(manager))
+        .set('Authorization', createAuthHeader(supervisor))
         .send({
           name: 'Sneaky Admin',
           email: 'sneaky@ekos.rs',
           role: UserRole.ADMINISTRATOR,
         });
+      expect(resAdmin.status).toBe(403);
+      expect(resAdmin.body.error).toContain('Only System Administrators can assign the Administrator role');
 
-      expect(res.status).toBe(403);
-      expect(res.body.error).toContain('Only System Administrators can assign the Administrator role');
+      // Cannot assign peer role (level 50)
+      mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.role.findMany.mockResolvedValueOnce([
+        { name: 'Supervisor', level: 50, isSystemAdmin: false },
+        { name: 'PeerLead', level: 50, isSystemAdmin: false },
+        { name: 'Junior', level: 20, isSystemAdmin: false },
+      ]);
+      const resPeer = await request(app)
+        .post('/api/users')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({
+          name: 'Peer User',
+          email: 'peer@ekos.rs',
+          role: 'PeerLead',
+        });
+      expect(resPeer.status).toBe(403);
+      expect(resPeer.body.error).toContain('strictly below your own level');
+
+      // Can assign strictly lower role (level 20)
+      mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.user.create.mockResolvedValueOnce({
+        id: 'u-junior',
+        name: 'Junior User',
+        email: 'junior@ekos.rs',
+        role: 'Junior',
+      });
+      const resLower = await request(app)
+        .post('/api/users')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({
+          name: 'Junior User',
+          email: 'junior@ekos.rs',
+          role: 'Junior',
+        });
+      expect(resLower.status).toBe(201);
     });
   });
 
   describe('PUT /api/users/:id', () => {
-    it('enforces Manager < Administrator: Manager cannot modify Administrator', async () => {
-      const manager = createTestUser({ role: UserRole.MANAGER });
-      // First call for requireAuth (resolves manager)
-      mockPrisma.user.findUnique.mockResolvedValueOnce(manager);
-      // Second call for existingUser lookup (resolves target admin)
-      mockPrisma.user.findUnique.mockResolvedValueOnce(createTestUser({ id: 'target-admin', role: UserRole.ADMINISTRATOR }));
+    it('enforces strict level hierarchy: non-admin cannot modify admin or peer users, nor elevate role', async () => {
+      const supervisor = createTestUser({
+        id: 'sup-1',
+        role: 'Supervisor',
+        roleLevel: 50,
+        permissions: { users: ['edit'] },
+      });
+      const targetAdmin = createTestUser({ id: 'target-admin', role: UserRole.ADMINISTRATOR });
+      const targetPeer = createTestUser({ id: 'target-peer', role: 'PeerLead', roleLevel: 50 });
+      const targetLow = createTestUser({ id: 'target-low', role: 'Junior', roleLevel: 20 });
 
-      const res = await request(app)
+      const userMap: Record<string, any> = {
+        'sup-1': supervisor,
+        'target-admin': targetAdmin,
+        'target-peer': targetPeer,
+        'target-low': targetLow,
+      };
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }: any) => userMap[where.id] ?? null);
+
+      // Target Administrator -> 403
+      const resAdmin = await request(app)
         .put('/api/users/target-admin')
-        .set('Authorization', createAuthHeader(manager))
+        .set('Authorization', createAuthHeader(supervisor))
         .send({ name: 'Modified Admin' });
+      expect(resAdmin.status).toBe(403);
+      expect(resAdmin.body.error).toContain('Only System Administrators can modify Administrator accounts');
 
-      expect(res.status).toBe(403);
-      expect(res.body.error).toContain('Only System Administrators can modify Administrator accounts');
+      // Target peer (level 50) -> 403
+      const resPeer = await request(app)
+        .put('/api/users/target-peer')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({ name: 'Modified Peer' });
+      expect(resPeer.status).toBe(403);
+      expect(resPeer.body.error).toContain('strictly below your own role level');
+
+      // Target lower user (level 20) -> 200
+      mockPrisma.user.update.mockResolvedValueOnce({
+        id: 'target-low',
+        name: 'Updated Junior',
+        role: 'Junior',
+        roleEntity: { level: 20, isSystemAdmin: false, permissions: {} },
+      });
+      const resLow = await request(app)
+        .put('/api/users/target-low')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({ name: 'Updated Junior' });
+      expect(resLow.status).toBe(200);
     });
   });
 
   describe('POST /api/users/:id/approve and /reject', () => {
-    it('approves a pending user', async () => {
+    it('approves a pending user for Administrator', async () => {
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValue(admin);
       mockPrisma.user.update.mockResolvedValueOnce({
@@ -110,14 +195,44 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('Approved');
     });
+
+    it('blocks non-admin from approving peer role or rejecting peer user', async () => {
+      const supervisor = createTestUser({
+        id: 'sup-2',
+        role: 'Supervisor',
+        roleLevel: 50,
+        permissions: { users: ['edit'] },
+      });
+      const peerPending = createTestUser({ id: 'peer-pending', role: 'Supervisor', roleLevel: 50 });
+
+      const userMap: Record<string, any> = {
+        'sup-2': supervisor,
+        'peer-pending': peerPending,
+      };
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }: any) => userMap[where.id] ?? null);
+
+      mockPrisma.role.findMany.mockResolvedValueOnce([
+        { name: 'Supervisor', level: 50, isSystemAdmin: false },
+        { name: 'Junior', level: 20, isSystemAdmin: false },
+      ]);
+
+      const resApprovePeer = await request(app)
+        .post('/api/users/pending-1/approve')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({ role: 'Supervisor' });
+      expect(resApprovePeer.status).toBe(403);
+
+      const resRejectPeer = await request(app)
+        .post('/api/users/peer-pending/reject')
+        .set('Authorization', createAuthHeader(supervisor));
+      expect(resRejectPeer.status).toBe(403);
+    });
   });
 
   describe('POST /api/users/:id/force-logout', () => {
     it('records timestamp in userForceLogoutMap', async () => {
       const admin = createTestUser();
-      // First call for requireAuth
       mockPrisma.user.findUnique.mockResolvedValueOnce(admin);
-      // Second call for targetUser lookup
       mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'target-fl', name: 'Target User', role: 'User' });
 
       const res = await request(app)
@@ -127,14 +242,31 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('forced to log out');
     });
+
+    it('blocks non-admin from force-logging out peer or higher user', async () => {
+      const supervisor = createTestUser({
+        id: 'sup-1',
+        role: 'Supervisor',
+        roleLevel: 50,
+        permissions: { users: ['edit'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValueOnce(supervisor);
+      mockPrisma.user.findUnique.mockResolvedValueOnce(
+        createTestUser({ id: 'peer-fl', role: 'PeerLead', roleLevel: 50 })
+      );
+
+      const res = await request(app)
+        .post('/api/users/peer-fl/force-logout')
+        .set('Authorization', createAuthHeader(supervisor));
+
+      expect(res.status).toBe(403);
+    });
   });
 
   describe('DELETE /api/users/:id', () => {
     it('prevents self-deletion', async () => {
       const admin = createTestUser({ id: 'admin-self' });
-      // First call for requireAuth
       mockPrisma.user.findUnique.mockResolvedValueOnce(admin);
-      // Second call for existingUser lookup
       mockPrisma.user.findUnique.mockResolvedValueOnce(admin);
 
       const res = await request(app)
@@ -143,6 +275,25 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('delete your own account');
+    });
+
+    it('blocks non-admin from deleting user at or above own level', async () => {
+      const supervisor = createTestUser({
+        id: 'sup-1',
+        role: 'Supervisor',
+        roleLevel: 50,
+        permissions: { users: ['delete'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValueOnce(supervisor);
+      mockPrisma.user.findUnique.mockResolvedValueOnce(
+        createTestUser({ id: 'target-peer', role: 'PeerLead', roleLevel: 50 })
+      );
+
+      const res = await request(app)
+        .delete('/api/users/target-peer')
+        .set('Authorization', createAuthHeader(supervisor));
+
+      expect(res.status).toBe(403);
     });
   });
 });

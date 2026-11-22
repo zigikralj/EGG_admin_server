@@ -5,6 +5,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 // Route imports
 import rolesRoutes from './routes/roles.routes';
+import permissionsRoutes from './routes/permissions.routes';
 import authRoutes from './routes/auth.routes';
 import usersRoutes from './routes/users.routes';
 import activityLogRoutes from './routes/activityLog.routes';
@@ -77,6 +78,7 @@ export function createApp() {
 
   // Mount routes
   app.use(API_ROUTES.ROLES, rolesRoutes);
+  app.use(API_ROUTES.PERMISSIONS, permissionsRoutes);
   app.use(API_ROUTES.AUTH.BASE, authRoutes);
   app.use(API_ROUTES.USERS, usersRoutes);
   app.use(API_ROUTES.ACTIVITY_LOGS.BASE, activityLogRoutes);

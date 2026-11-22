@@ -488,8 +488,8 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
   });
 
   describe('DELETE /api/chat/conversations/:id (Clear or Delete Chat)', () => {
-    it('rejects non-manager users with 403', async () => {
-      const regularUser = createTestUser({ id: 'u1', role: 'User', isSystemAdmin: false });
+    it('rejects users without chat delete permission with 403', async () => {
+      const regularUser = createTestUser({ id: 'u1', role: 'User', permissions: { projects: ['view'] } });
       mockPrisma.user.findUnique.mockResolvedValue(regularUser);
 
       const res = await request(app)
@@ -497,12 +497,17 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         .set('Authorization', createAuthHeader(regularUser));
 
       expect(res.status).toBe(403);
-      expect(res.body.error).toMatch(/Managers and Administrators/i);
+      expect(res.body.error).toContain('Missing chat delete permission');
     });
 
-    it('allows Manager or Administrator to clear a conversation and resets watermarks', async () => {
-      const managerUser = createTestUser({ id: 'u-mgr', role: 'Manager', isSystemAdmin: false });
-      mockPrisma.user.findUnique.mockResolvedValue(managerUser);
+    it('allows non-admin with chat.delete permission to clear a conversation and resets watermarks', async () => {
+      const chatCleaner = createTestUser({
+        id: 'u-mgr',
+        role: 'Moderator',
+        roleLevel: 25,
+        permissions: { chat: ['delete'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue(chatCleaner);
 
       mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
@@ -521,7 +526,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
 
       const res = await request(app)
         .delete('/api/chat/conversations/conv-123')
-        .set('Authorization', createAuthHeader(managerUser));
+        .set('Authorization', createAuthHeader(chatCleaner));
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -534,6 +539,42 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
           data: expect.objectContaining({ lastReadSeq: 0 }),
         })
       );
+    });
+
+    it('allows chat.moderate permission holder to remove another participant from a group without hardcoded role names', async () => {
+      const moderator = createTestUser({
+        id: 'u-mod',
+        role: 'CommunityHelper',
+        roleLevel: 15,
+        permissions: { chat: ['moderate'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue(moderator);
+
+      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-grp',
+        type: 'GROUP',
+        participants: [{ userId: 'u2', user: { id: 'u2', name: 'Bob' } }],
+      });
+      mockPrisma.chatParticipant.findUnique.mockResolvedValueOnce({
+        id: 'cp-u2',
+        conversationId: 'conv-grp',
+        userId: 'u2',
+        user: { id: 'u2', name: 'Bob' },
+      });
+      mockPrisma.chatParticipant.delete.mockResolvedValueOnce({ id: 'cp-u2' });
+      mockPrisma.chatConversation.update.mockResolvedValueOnce({ id: 'conv-grp', messageSeq: 4 });
+      mockPrisma.chatMessage.create.mockResolvedValueOnce({
+        id: 'msg-sys',
+        seq: 4,
+        content: 'removed Bob from the group',
+      });
+
+      const res = await request(app)
+        .delete('/api/chat/conversations/conv-grp/participants/u2')
+        .set('Authorization', createAuthHeader(moderator));
+
+      expect(res.status).toBe(200);
+      expect(res.body.removedUserId).toBe('u2');
     });
   });
 

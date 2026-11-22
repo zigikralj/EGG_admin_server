@@ -502,9 +502,9 @@ chatRouter.get('/conversations/:id', asyncHandler(async (req: Request, res: Resp
   }
 
   const isParticipant = conversation.participants.some((p) => p.userId === userId);
-  const isAdmin = hasPermission(req.authUser!, 'projects', 'edit') || req.authUser!.isSystemAdmin;
+  const canModerate = hasPermission(req.authUser!, 'messaging', 'moderate');
 
-  if (conversation.type !== 'CONTEXTUAL' && !isParticipant && !isAdmin) {
+  if (conversation.type !== 'CONTEXTUAL' && !isParticipant && !canModerate) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
@@ -559,9 +559,9 @@ chatRouter.patch('/conversations/:id', asyncHandler(async (req: Request, res: Re
   }
 
   const isParticipant = conversation.participants.some((p) => p.userId === authUser.id);
-  const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
+  const canModerate = hasPermission(authUser, 'messaging', 'moderate');
 
-  if (!isParticipant && !isAdmin) {
+  if (!isParticipant && !canModerate) {
     return res.status(403).json({ error: 'Only participants can rename this conversation' });
   }
 
@@ -684,9 +684,9 @@ chatRouter.post('/conversations/:id/participants', asyncHandler(async (req: Requ
   }
 
   const isParticipant = conversation.participants.some((p) => p.userId === authUser.id);
-  const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
+  const canModerate = hasPermission(authUser, 'messaging', 'moderate');
 
-  if (!isParticipant && !isAdmin) {
+  if (!isParticipant && !canModerate) {
     return res.status(403).json({ error: 'Only participants can add members' });
   }
 
@@ -830,9 +830,9 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
   // Handle CONTEXTUAL (project) conversations: archive membership when leaving
   if (conversation.type === 'CONTEXTUAL') {
     const isLeaving = targetUserId === authUser.id;
-    const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
+    const canModerate = hasPermission(authUser, 'chat', 'moderate');
 
-    if (!isLeaving && !isAdmin) {
+    if (!isLeaving && !canModerate) {
       return res.status(403).json({ error: 'Only participants or admin can remove members' });
     }
 
@@ -870,9 +870,9 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
 
   const isLeaving = targetUserId === authUser.id;
   const isParticipant = conversation.participants.some((p) => p.userId === authUser.id);
-  const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
+  const canModerate = hasPermission(authUser, 'messaging', 'moderate');
 
-  if (!isLeaving && !isParticipant && !isAdmin) {
+  if (!isLeaving && !isParticipant && !canModerate) {
     return res.status(403).json({ error: 'Only participants or admin can remove members' });
   }
 
@@ -965,20 +965,14 @@ chatRouter.delete('/conversations/:id/participants/:targetUserId', asyncHandler(
 /**
  * DELETE /api/chat/conversations/:id
  * Clear / Delete an entire conversation.
- * Restricted to Manager+ roles (Administrator, Manager, isSystemAdmin, or projects.delete).
+ * Restricted to roles with `chat.delete` permission.
  */
 chatRouter.delete('/conversations/:id', asyncHandler(async (req: Request, res: Response) => {
   const authUser = req.authUser!;
   const conversationId = req.params.id as string;
 
-  const isManagerOrAdmin =
-    authUser.role === 'Administrator' ||
-    authUser.role === 'Manager' ||
-    Boolean(authUser.isSystemAdmin) ||
-    hasPermission(authUser, 'projects', 'delete');
-
-  if (!isManagerOrAdmin) {
-    return res.status(403).json({ error: 'Only Managers and Administrators can delete or clear chats' });
+  if (!hasPermission(authUser, 'messaging', 'delete')) {
+    return res.status(403).json({ error: 'Permission denied. Missing chat delete permission.' });
   }
 
   const conversation = await prisma.chatConversation.findUnique({
@@ -1149,10 +1143,10 @@ chatRouter.get('/conversations/:id/messages', asyncHandler(async (req: Request, 
   }
 
   const isMember = conversation.participants.some((p) => p.userId === userId);
-  const isAdmin = hasPermission(req.authUser!, 'projects', 'edit') || req.authUser!.isSystemAdmin;
+  const canModerate = hasPermission(req.authUser!, 'messaging', 'moderate');
 
-  // Contextual chats can be viewed by all users who have access; private chats only members or admin
-  if (conversation.type !== 'CONTEXTUAL' && !isMember && !isAdmin) {
+  // Contextual chats can be viewed by all users who have access; private chats only members or moderators
+  if (conversation.type !== 'CONTEXTUAL' && !isMember && !canModerate) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
@@ -1566,9 +1560,9 @@ chatRouter.delete('/messages/:id', asyncHandler(async (req: Request, res: Respon
   }
 
   const isAuthor = message.senderId === authUser.id;
-  const isAdmin = hasPermission(authUser, 'projects', 'edit') || authUser.isSystemAdmin;
+  const canModerate = hasPermission(authUser, 'messaging', 'moderate');
 
-  if (!isAuthor && !isAdmin) {
+  if (!isAuthor && !canModerate) {
     return res.status(403).json({ error: 'Permission denied to delete this message' });
   }
 

@@ -351,6 +351,7 @@ model PermitWaste {
 model Role {
   name          String   @id
   description   String?
+  level         Int      @default(10)
   isSystemAdmin Boolean  @default(false)
   permissions   Json     @default("{}")
   createdAt     DateTime @default(now())

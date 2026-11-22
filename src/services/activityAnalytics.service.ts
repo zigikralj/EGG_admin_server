@@ -112,7 +112,7 @@ function buildWhereClause(
 
   if (excludeAdminPages) {
     conditions.push(
-      Prisma.sql`NOT ("type" = 'PAGE_VIEW' AND ("path" LIKE '/data-management/activity-logs%' OR "path" LIKE '/api/activity-logs%'))`
+      Prisma.sql`NOT ("type" = 'PAGE_VIEW' AND ("path" LIKE '/system/activity-logs%' OR "path" LIKE '/data-management/activity-logs%' OR "path" LIKE '/api/activity-logs%'))`
     );
   }
 

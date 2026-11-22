@@ -5,6 +5,7 @@ import { requireAuth, userForceLogoutMap, invalidateUserAuthCache } from '../mid
 import { generateTempPassword, hashPassword, verifyPassword } from '../authUtils';
 import { validatePassword } from '../middleware/validate';
 import { UserRole, hasPermission, isUserSystemAdmin, formatUserWithPermissions } from '../types';
+import { isRoleLessThan, isRoleNameSystemAdmin } from '../helpers/roleLevels';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { USER_STATUSES, ERROR_CODES } from '../constants';
 
@@ -179,15 +180,21 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
   }
 
   const targetId = req.params.id as string;
-  const targetUser = await prisma.user.findUnique({ where: { id: targetId } });
+  const targetUser = await prisma.user.findUnique({ where: { id: targetId }, include: { roleEntity: true } });
   if (!targetUser) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
 
-  if (!isUserSystemAdmin(authUser) && targetUser.role === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Only System Administrators can force log out Administrator accounts.' });
-    return;
+  if (!isUserSystemAdmin(authUser)) {
+    if (isUserSystemAdmin(targetUser)) {
+      res.status(403).json({ error: 'Permission denied. Only System Administrators can force log out Administrator accounts.' });
+      return;
+    }
+    if (!(await isRoleLessThan(targetUser, authUser))) {
+      res.status(403).json({ error: 'Permission denied. You can only force log out users strictly below your own role level.' });
+      return;
+    }
   }
 
   userForceLogoutMap.set(targetId, Date.now());
@@ -229,10 +236,16 @@ router.post('/', asyncHandler(async (req, res) => {
 
   const targetRole = role || UserRole.USER;
 
-  // Non-system-admin cannot create an Administrator account
-  if (!isUserSystemAdmin(authUser) && targetRole === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
-    return;
+  // Non-system-admin cannot create an Administrator account or assign a role at/above their own level
+  if (!isUserSystemAdmin(authUser)) {
+    if (await isRoleNameSystemAdmin(targetRole)) {
+      res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
+      return;
+    }
+    if (!(await isRoleLessThan(targetRole, authUser))) {
+      res.status(403).json({ error: 'Permission denied. You can only assign roles strictly below your own level.' });
+      return;
+    }
   }
 
   let finalPassword = password;
@@ -289,7 +302,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
 
   const { name, email, role, phone, avatarUrl, password, currentPassword, isApproved, status, gender } = req.body;
 
-  const existingUser = await prisma.user.findUnique({ where: { id } });
+  const existingUser = await prisma.user.findUnique({ where: { id }, include: { roleEntity: true } });
   if (!existingUser) {
     res.status(404).json({ error: 'User not found' });
     return;
@@ -300,15 +313,27 @@ router.put('/:id', asyncHandler(async (req, res) => {
     finalRole = role || existingUser.role;
   }
 
-  // Non-system-admin cannot edit an Administrator account or upgrade someone to Administrator
+  // Non-system-admin cannot edit users at/above their own level or assign a role at/above their own level
   if (!isUserSystemAdmin(authUser)) {
-    if (existingUser.role === UserRole.ADMINISTRATOR) {
-      res.status(403).json({ error: 'Permission denied. Only System Administrators can modify Administrator accounts.' });
-      return;
+    if (!isSelf) {
+      if (isUserSystemAdmin(existingUser)) {
+        res.status(403).json({ error: 'Permission denied. Only System Administrators can modify Administrator accounts.' });
+        return;
+      }
+      if (!(await isRoleLessThan(existingUser, authUser))) {
+        res.status(403).json({ error: 'Permission denied. You can only modify users strictly below your own role level.' });
+        return;
+      }
     }
-    if (finalRole === UserRole.ADMINISTRATOR) {
-      res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
-      return;
+    if (finalRole !== existingUser.role) {
+      if (await isRoleNameSystemAdmin(finalRole)) {
+        res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
+        return;
+      }
+      if (!(await isRoleLessThan(finalRole, authUser))) {
+        res.status(403).json({ error: 'Permission denied. You can only assign roles strictly below your own level.' });
+        return;
+      }
     }
   }
 
@@ -395,9 +420,15 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   const { role } = req.body || {};
   const targetRole = role || UserRole.USER;
 
-  if (!isUserSystemAdmin(authUser) && targetRole === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
-    return;
+  if (!isUserSystemAdmin(authUser)) {
+    if (await isRoleNameSystemAdmin(targetRole)) {
+      res.status(403).json({ error: 'Permission denied. Only System Administrators can assign the Administrator role.' });
+      return;
+    }
+    if (!(await isRoleLessThan(targetRole, authUser))) {
+      res.status(403).json({ error: 'Permission denied. You can only assign roles strictly below your own level.' });
+      return;
+    }
   }
 
   const updatedUser = await prisma.user.update({
@@ -423,13 +454,13 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
-  const existingUser = await prisma.user.findUnique({ where: { id } });
+  const existingUser = await prisma.user.findUnique({ where: { id }, include: { roleEntity: true } });
   if (!existingUser) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
 
-  if (!isUserSystemAdmin(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
+  if (!isUserSystemAdmin(authUser) && (isUserSystemAdmin(existingUser) || !(await isRoleLessThan(existingUser, authUser)))) {
     res.status(403).json({ error: 'Permission denied.' });
     return;
   }
@@ -452,16 +483,22 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     res.status(400).json({ error: 'You cannot delete your own account.' });
     return;
   }
-  const existingUser = await prisma.user.findUnique({ where: { id } });
+  const existingUser = await prisma.user.findUnique({ where: { id }, include: { roleEntity: true } });
   if (!existingUser) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
 
-  // Non-system-admin cannot delete an Administrator account
-  if (!isUserSystemAdmin(authUser) && existingUser.role === UserRole.ADMINISTRATOR) {
-    res.status(403).json({ error: 'Permission denied. Only System Administrators can delete Administrator accounts.' });
-    return;
+  // Non-system-admin cannot delete users at/above their own role level
+  if (!isUserSystemAdmin(authUser)) {
+    if (isUserSystemAdmin(existingUser)) {
+      res.status(403).json({ error: 'Permission denied. Only System Administrators can delete Administrator accounts.' });
+      return;
+    }
+    if (!(await isRoleLessThan(existingUser, authUser))) {
+      res.status(403).json({ error: 'Permission denied. You can only delete users strictly below your own role level.' });
+      return;
+    }
   }
 
   await prisma.user.delete({ where: { id } });

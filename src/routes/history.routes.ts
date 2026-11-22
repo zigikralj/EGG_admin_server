@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { hasPermission, isUserSystemAdmin } from '../types';
+import { hasPermission, isUserSystemAdmin, getUserRoleLevel } from '../types';
 import {
   getEntityTimeline,
   rebuildEntityVersion,
@@ -175,6 +175,7 @@ router.post(
       userId: req.authUser!.id,
       userName: req.authUser!.name || 'Unknown',
       isSystemAdmin: isUserSystemAdmin(req.authUser),
+      roleLevel: getUserRoleLevel(req.authUser),
     });
 
     res.json(result);

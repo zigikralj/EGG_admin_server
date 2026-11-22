@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/errorHandler";
 import { prisma } from "../db";
-import { isUserSystemAdmin } from "../types";
+import { hasPermission } from "../types";
 import {
   enqueueActivityLog,
   flushActivityLogs,
@@ -39,8 +39,6 @@ const LIST_SELECT = {
   timestamp: true,
 } as const;
 
-const isUserAdmin = isUserSystemAdmin;
-
 // GET /api/activity-logs/status — check whether logging is active and retention period
 router.get("/status", asyncHandler(async (_req, res) => {
   res.json({
@@ -49,10 +47,10 @@ router.get("/status", asyncHandler(async (_req, res) => {
   });
 }));
 
-// PATCH /api/activity-logs/status — update settings (Administrator only)
+// PATCH /api/activity-logs/status — update settings
 router.patch("/status", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Only Administrators can modify activity log settings." });
+  if (!hasPermission(req.authUser, "activityLogs", "configure")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs configure permission." });
     return;
   }
 
@@ -100,11 +98,11 @@ router.patch("/status", asyncHandler(async (req, res) => {
   });
 }));
 
-// GET /api/activity-logs — Administrator only
+// GET /api/activity-logs
 // Query: userId, sessionId, from (ISO date), before (ISO date), beforeId (UUID), limit (default 50, ≤250), includeDetails ('true' to include the details column)
 router.get("/", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "view")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs view permission." });
     return;
   }
 
@@ -148,10 +146,10 @@ router.get("/", asyncHandler(async (req, res) => {
   res.json(logs);
 }));
 
-// GET /api/activity-logs/analytics — Activity analytics (Administrator only)
+// GET /api/activity-logs/analytics — Activity analytics
 router.get("/analytics", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity analytics are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityAnalytics", "view")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityAnalytics view permission." });
     return;
   }
 
@@ -241,11 +239,11 @@ router.get("/analytics", asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
-// GET /api/activity-logs/summary — Administrator only
+// GET /api/activity-logs/summary
 // Query: from (ISO date)
 router.get("/summary", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "view")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs view permission." });
     return;
   }
 
@@ -400,11 +398,11 @@ router.get("/summary", asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
-// GET /api/activity-logs/monthly-stats — Administrator only
+// GET /api/activity-logs/monthly-stats
 // Query: userId?, fromYearMonth?, toYearMonth?
 router.get("/monthly-stats", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "view")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs view permission." });
     return;
   }
 
@@ -447,10 +445,10 @@ router.get("/monthly-stats", asyncHandler(async (req, res) => {
   res.json(formatted);
 }));
 
-// GET /api/activity-logs/:id — single log including details (Administrator only)
+// GET /api/activity-logs/:id — single log including details
 router.get("/:id", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "view")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs view permission." });
     return;
   }
 
@@ -498,10 +496,10 @@ router.post("/", asyncHandler(async (req, res) => {
   res.status(202).json({ accepted: entries.length });
 }));
 
-// DELETE /api/activity-logs/clear-all — Administrator only
+// DELETE /api/activity-logs/clear-all
 router.delete("/clear-all", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "delete")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs delete permission." });
     return;
   }
 
@@ -511,10 +509,10 @@ router.delete("/clear-all", asyncHandler(async (req, res) => {
   res.json({ message: "All activity logs deleted.", count: result.count });
 }));
 
-// POST /api/activity-logs/bulk-delete — Administrator only
+// POST /api/activity-logs/bulk-delete
 router.post("/bulk-delete", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "delete")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs delete permission." });
     return;
   }
 
@@ -534,10 +532,10 @@ router.post("/bulk-delete", asyncHandler(async (req, res) => {
   res.json({ message: "Activity logs deleted.", count: result.count });
 }));
 
-// DELETE /api/activity-logs/session/:sessionId — Administrator only
+// DELETE /api/activity-logs/session/:sessionId
 router.delete("/session/:sessionId", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "delete")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs delete permission." });
     return;
   }
 
@@ -550,10 +548,10 @@ router.delete("/session/:sessionId", asyncHandler(async (req, res) => {
   res.json({ message: "Activity logs for session deleted.", count: result.count });
 }));
 
-// DELETE /api/activity-logs/:id — Administrator only
+// DELETE /api/activity-logs/:id
 router.delete("/:id", asyncHandler(async (req, res) => {
-  if (!isUserAdmin(req.authUser)) {
-    res.status(403).json({ error: "FORBIDDEN", message: "Activity logs are restricted to Administrators." });
+  if (!hasPermission(req.authUser, "activityLogs", "delete")) {
+    res.status(403).json({ error: "FORBIDDEN", message: "Permission denied. Missing activityLogs delete permission." });
     return;
   }
 

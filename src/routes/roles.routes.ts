@@ -2,26 +2,17 @@ import { Router } from 'express';
 import { requireAuth, invalidateUserAuthCache } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { prisma } from '../db';
-import { hasPermission, isUserSystemAdmin } from '../types';
-import { getReferenceCache, setReferenceCache, invalidateReferenceCache } from '../helpers/referenceCache';
+import { hasPermission, isRestrictedToOwn, isUserSystemAdmin, UserRole } from '../types';
+import { invalidateReferenceCache } from '../helpers/referenceCache';
+import { getRolesFromDb, isRoleLessThan, ROLES_CACHE_KEY } from '../helpers/roleLevels';
+import { sanitizeRolePermissions, findUnauthorizedGrants } from '../constants/permissionCatalog';
 
 const router = Router();
-const ROLES_CACHE_KEY = 'reference:roles';
 
 router.use(requireAuth);
 
 router.get('/', asyncHandler(async (_req, res) => {
-  const cached = getReferenceCache(ROLES_CACHE_KEY);
-  if (cached) {
-    res.json(cached);
-    return;
-  }
-
-  const roles = await prisma.role.findMany({
-    orderBy: { createdAt: 'asc' },
-  });
-
-  setReferenceCache(ROLES_CACHE_KEY, roles);
+  const roles = await getRolesFromDb();
   res.json(roles);
 }));
 
@@ -34,10 +25,16 @@ router.post('/', asyncHandler(async (req, res) => {
     return;
   }
 
-  const { name, description, isSystemAdmin, permissions } = req.body;
+  const { name, description, level, isSystemAdmin, permissions } = req.body;
 
   if (!name || typeof name !== 'string') {
     res.status(400).json({ error: 'Role name is required.' });
+    return;
+  }
+
+  const sanitized = sanitizeRolePermissions(permissions);
+  if (!sanitized.ok) {
+    res.status(400).json({ error: sanitized.error });
     return;
   }
 
@@ -53,6 +50,23 @@ router.post('/', asyncHandler(async (req, res) => {
     }
   }
 
+  const parsedLevel =
+    level !== undefined && !Number.isNaN(Number(level))
+      ? Math.max(1, Math.min(100, Math.round(Number(level))))
+      : 10;
+
+  if (!isSysAdmin) {
+    if (!(await isRoleLessThan(parsedLevel, authUser))) {
+      res.status(403).json({ error: 'Cannot create a role with level equal to or above your own.' });
+      return;
+    }
+    const violations = findUnauthorizedGrants(authUser, sanitized.permissions, hasPermission, isRestrictedToOwn);
+    if (violations.length > 0) {
+      res.status(403).json({ error: 'Cannot grant permissions you do not possess.', violations });
+      return;
+    }
+  }
+
   const existing = await prisma.role.findUnique({ where: { name } });
   if (existing) {
     res.status(400).json({ error: 'Role with this name already exists.' });
@@ -63,8 +77,9 @@ router.post('/', asyncHandler(async (req, res) => {
     data: {
       name,
       description,
+      ...(level !== undefined && !Number.isNaN(Number(level)) ? { level: parsedLevel } : {}),
       isSystemAdmin: !!isSystemAdmin,
-      permissions: permissions || {},
+      permissions: sanitized.permissions,
     },
   });
 
@@ -83,7 +98,7 @@ router.put('/:name', asyncHandler(async (req, res) => {
   }
 
   const name = req.params.name as string;
-  const { description, isSystemAdmin, permissions } = req.body;
+  const { description, level, isSystemAdmin, permissions } = req.body;
 
   const roleToUpdate = await prisma.role.findUnique({ where: { name } });
   if (!roleToUpdate) {
@@ -91,9 +106,16 @@ router.put('/:name', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (name === 'Administrator' && isSystemAdmin === false) {
+  if (name === UserRole.ADMINISTRATOR && isSystemAdmin === false) {
     res.status(400).json({ error: 'Cannot remove system admin privileges from the default Administrator role.' });
     return;
+  }
+
+  if (!isSysAdmin) {
+    if (roleToUpdate.isSystemAdmin || !(await isRoleLessThan(roleToUpdate, authUser))) {
+      res.status(403).json({ error: 'Cannot modify a role with level equal to or above your own.' });
+      return;
+    }
   }
 
   if (isSystemAdmin && !roleToUpdate.isSystemAdmin) {
@@ -108,12 +130,41 @@ router.put('/:name', asyncHandler(async (req, res) => {
     }
   }
 
+  const nextIsSystemAdmin = isSystemAdmin !== undefined ? Boolean(isSystemAdmin) : roleToUpdate.isSystemAdmin;
+  const nextLevel =
+    level !== undefined && !Number.isNaN(Number(level))
+      ? Math.max(1, Math.min(100, Math.round(Number(level))))
+      : roleToUpdate.level;
+
+  if (!isSysAdmin && !(await isRoleLessThan(nextLevel, authUser))) {
+    res.status(403).json({ error: 'Cannot set role level equal to or above your own.' });
+    return;
+  }
+
+  let nextPermissions: Record<string, any> | undefined;
+  if (permissions !== undefined) {
+    const sanitized = sanitizeRolePermissions(permissions);
+    if (!sanitized.ok) {
+      res.status(400).json({ error: sanitized.error });
+      return;
+    }
+    if (!isSysAdmin) {
+      const violations = findUnauthorizedGrants(authUser, sanitized.permissions, hasPermission, isRestrictedToOwn);
+      if (violations.length > 0) {
+        res.status(403).json({ error: 'Cannot grant permissions you do not possess.', violations });
+        return;
+      }
+    }
+    nextPermissions = sanitized.permissions;
+  }
+
   const updatedRole = await prisma.role.update({
     where: { name },
     data: {
       description: description !== undefined ? description : roleToUpdate.description,
-      isSystemAdmin: isSystemAdmin !== undefined ? Boolean(isSystemAdmin) : roleToUpdate.isSystemAdmin,
-      permissions: permissions !== undefined ? permissions : roleToUpdate.permissions,
+      level: nextLevel,
+      isSystemAdmin: nextIsSystemAdmin,
+      ...(nextPermissions !== undefined ? { permissions: nextPermissions } : {}),
     },
   });
 
@@ -124,6 +175,7 @@ router.put('/:name', asyncHandler(async (req, res) => {
 
 router.delete('/:name', asyncHandler(async (req, res) => {
   const authUser = req.authUser;
+  const isSysAdmin = isUserSystemAdmin(authUser);
 
   if (!hasPermission(authUser, 'roles', 'delete')) {
     res.status(403).json({ error: 'Permission denied.' });
@@ -132,18 +184,23 @@ router.delete('/:name', asyncHandler(async (req, res) => {
 
   const name = req.params.name as string;
 
-  if (name === 'Administrator') {
+  if (name === UserRole.ADMINISTRATOR) {
     res.status(400).json({ error: 'Cannot delete the default Administrator role.' });
     return;
   }
 
-  const roleToDelete = await prisma.role.findUnique({ 
+  const roleToDelete = await prisma.role.findUnique({
     where: { name },
-    include: { _count: { select: { users: true } } }
+    include: { _count: { select: { users: true } } },
   });
 
   if (!roleToDelete) {
     res.status(404).json({ error: 'Role not found.' });
+    return;
+  }
+
+  if (!isSysAdmin && (roleToDelete.isSystemAdmin || !(await isRoleLessThan(roleToDelete, authUser)))) {
+    res.status(403).json({ error: 'Cannot delete a role with level equal to or above your own.' });
     return;
   }
 

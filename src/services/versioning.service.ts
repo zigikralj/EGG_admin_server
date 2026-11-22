@@ -1,4 +1,6 @@
 import { basePrisma, auditedTransaction } from '../db';
+import { isUserSystemAdmin } from '../types';
+import { isRoleLessThan, isRoleNameSystemAdmin } from '../helpers/roleLevels';
 
 const ENTITY_TYPE_MAP: Record<string, string> = {
   project: 'Project',
@@ -248,7 +250,7 @@ export async function restoreVersion(
   entityType: string,
   entityId: string,
   targetVersion: number,
-  userContext: { userId: string; userName?: string; isSystemAdmin?: boolean }
+  userContext: { userId: string; userName?: string; isSystemAdmin?: boolean; roleLevel?: number }
 ) {
   const normType = normalizeEntityType(entityType);
   if (!normType) throw new Error(`Unsupported entity type: ${entityType}`);
@@ -272,12 +274,16 @@ export async function restoreVersion(
   }
 
   if (normType === 'User' && !userContext.isSystemAdmin) {
-    if (cleanAttributes.role === 'Administrator') {
-      throw new Error('Permission denied. Only System Administrators can restore Administrator user accounts.');
+    const actorSubject = { isSystemAdmin: userContext.isSystemAdmin, roleLevel: userContext.roleLevel ?? 0 };
+    if (cleanAttributes.role && ((await isRoleNameSystemAdmin(cleanAttributes.role)) || !(await isRoleLessThan(cleanAttributes.role, actorSubject)))) {
+      throw new Error('Permission denied. You can only restore user accounts with roles strictly below your own level.');
     }
-    const existingTargetUser = await basePrisma.user.findUnique({ where: { id: entityId }, select: { role: true } });
-    if (existingTargetUser?.role === 'Administrator') {
-      throw new Error('Permission denied. Only System Administrators can modify Administrator user accounts.');
+    const existingTargetUser = await basePrisma.user.findUnique({
+      where: { id: entityId },
+      select: { role: true, roleEntity: { select: { level: true, isSystemAdmin: true } } },
+    });
+    if (existingTargetUser && (isUserSystemAdmin(existingTargetUser) || !(await isRoleLessThan(existingTargetUser, actorSubject)))) {
+      throw new Error('Permission denied. You can only modify user accounts strictly below your own role level.');
     }
   }
 
