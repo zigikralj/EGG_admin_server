@@ -101,9 +101,9 @@ const AUDIT_SKIP_MODELS = new Set([
   'EntityVersion',
   'ProjectNote',
   'ProjectNoteVersion',
-  'ChatConversation',
-  'ChatParticipant',
-  'ChatMessage',
+  'Conversation',
+  'ConversationParticipant',
+  'Message',
 ]);
 const AUDIT_OPERATIONS = new Set(['create', 'update', 'delete']);
 /** Fields that must never be written to the activity log. */

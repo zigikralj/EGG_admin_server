@@ -80,13 +80,6 @@ export function hasPermission(user: any, resource: string, action: string): bool
     if (Array.isArray(perms[resource]) && perms[resource].includes(action)) {
       return true;
     }
-    if ((resource === 'messaging' || resource === 'messages') && Array.isArray(perms.chat)) {
-      return perms.chat.includes(action);
-    }
-    if (resource === 'chat') {
-      if (Array.isArray(perms.messaging)) return perms.messaging.includes(action);
-      if (Array.isArray(perms.messages)) return perms.messages.includes(action);
-    }
   }
   return false;
 }

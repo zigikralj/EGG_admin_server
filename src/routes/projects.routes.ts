@@ -829,14 +829,14 @@ router.put('/:id', asyncHandler(async (req, res) => {
     },
   });
 
-  // Sync contextual project chat participants if responsible user changed
+  // Sync contextual project messaging participants if responsible user changed
   if (finalResponsibleId && finalResponsibleId !== existing.responsibleId) {
-    const conv = await prisma.chatConversation.findUnique({
+    const conv = await prisma.conversation.findUnique({
       where: { contextType_contextId: { contextType: 'PROJECT', contextId: updated.id } },
       select: { id: true, messageSeq: true },
     });
     if (conv) {
-      await prisma.chatParticipant.upsert({
+      await prisma.conversationParticipant.upsert({
         where: { conversationId_userId: { conversationId: conv.id, userId: finalResponsibleId } },
         create: {
           conversationId: conv.id,

@@ -4,10 +4,10 @@ import { createApp } from '../../app';
 import { mockPrisma } from '../helpers/prismaMock';
 import { createTestUser, createAuthHeader } from '../helpers/testAuth';
 
-describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
+describe('Messaging Routes (GET, POST, PATCH, DELETE)', () => {
   const app = createApp();
 
-  describe('GET /api/chat/unread-summary', () => {
+  describe('GET /api/messaging/unread-summary', () => {
     it('returns unread summary partitioned by conversation and project', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
@@ -17,7 +17,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         { id: 'proj-123', responsibleId: 'u1', responsible: 'Alice' },
       ]);
 
-      mockPrisma.chatParticipant.findMany.mockResolvedValueOnce([
+      mockPrisma.conversationParticipant.findMany.mockResolvedValueOnce([
         {
           conversationId: 'conv-1',
           lastReadSeq: 2,
@@ -54,7 +54,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       ]);
 
       const res = await request(app)
-        .get('/api/chat/unread-summary')
+        .get('/api/messaging/unread-summary')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
@@ -72,7 +72,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('GET /api/chat/conversations', () => {
+  describe('GET /api/messaging/conversations', () => {
     it('returns conversations with unread counts for current user', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
@@ -94,7 +94,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         ],
       };
 
-      mockPrisma.chatParticipant.findMany.mockResolvedValueOnce([
+      mockPrisma.conversationParticipant.findMany.mockResolvedValueOnce([
         {
           id: 'cp1',
           conversationId: 'conv-1',
@@ -105,10 +105,10 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         },
       ]);
 
-      mockPrisma.chatMessage.count.mockResolvedValueOnce(0);
+      mockPrisma.message.count.mockResolvedValueOnce(0);
 
       const res = await request(app)
-        .get('/api/chat/conversations')
+        .get('/api/messaging/conversations')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
@@ -119,12 +119,12 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('POST /api/chat/conversations/:id/messages', () => {
+  describe('POST /api/messaging/conversations/:id/messages', () => {
     it('creates message and returns 201', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-1',
         type: 'DIRECT',
         contextType: null,
@@ -145,8 +145,8 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         replyTo: null,
         readReceipts: [],
       };
-      mockPrisma.chatMessage.create.mockResolvedValueOnce(createdMsg);
-      mockPrisma.chatConversation.update.mockResolvedValueOnce({
+      mockPrisma.message.create.mockResolvedValueOnce(createdMsg);
+      mockPrisma.conversation.update.mockResolvedValueOnce({
         id: 'conv-1',
         participants: [
           { userId: 'u1', user: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' } },
@@ -155,37 +155,37 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       });
 
       const res = await request(app)
-        .post('/api/chat/conversations/conv-1/messages')
+        .post('/api/messaging/conversations/conv-1/messages')
         .set('Authorization', createAuthHeader(user))
         .send({ content: 'Hi there' });
 
       expect(res.status).toBe(201);
       expect(res.body.content).toBe('Hi there');
-      expect(mockPrisma.chatMessage.create).toHaveBeenCalled();
+      expect(mockPrisma.message.create).toHaveBeenCalled();
     });
   });
 
-  describe('DELETE /api/chat/messages/:id (Hybrid Delete)', () => {
+  describe('DELETE /api/messaging/messages/:id (Hybrid Delete)', () => {
     it('hard deletes when message has no replies', async () => {
       const user = createTestUser({ id: 'u1' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatMessage.findUnique.mockResolvedValueOnce({
+      mockPrisma.message.findUnique.mockResolvedValueOnce({
         id: 'msg-no-replies',
         senderId: 'u1',
         conversationId: 'conv-1',
         conversation: { participants: [{ userId: 'u1' }] },
         replies: [],
       });
-      mockPrisma.chatMessage.delete.mockResolvedValueOnce({ id: 'msg-no-replies' });
+      mockPrisma.message.delete.mockResolvedValueOnce({ id: 'msg-no-replies' });
 
       const res = await request(app)
-        .delete('/api/chat/messages/msg-no-replies')
+        .delete('/api/messaging/messages/msg-no-replies')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
       expect(res.body.hardDeleted).toBe(true);
-      expect(mockPrisma.chatMessage.delete).toHaveBeenCalledWith({
+      expect(mockPrisma.message.delete).toHaveBeenCalledWith({
         where: { id: 'msg-no-replies' },
       });
     });
@@ -194,26 +194,26 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       const user = createTestUser({ id: 'u1' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatMessage.findUnique.mockResolvedValueOnce({
+      mockPrisma.message.findUnique.mockResolvedValueOnce({
         id: 'msg-with-replies',
         senderId: 'u1',
         conversationId: 'conv-1',
         conversation: { participants: [{ userId: 'u1' }] },
         replies: [{ id: 'reply-1' }],
       });
-      mockPrisma.chatMessage.update.mockResolvedValueOnce({
+      mockPrisma.message.update.mockResolvedValueOnce({
         id: 'msg-with-replies',
         isDeleted: true,
         content: '',
       });
 
       const res = await request(app)
-        .delete('/api/chat/messages/msg-with-replies')
+        .delete('/api/messaging/messages/msg-with-replies')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
       expect(res.body.hardDeleted).toBe(false);
-      expect(mockPrisma.chatMessage.update).toHaveBeenCalledWith(
+      expect(mockPrisma.message.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'msg-with-replies' },
           data: expect.objectContaining({ isDeleted: true, content: '' }),
@@ -222,12 +222,12 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('GET /api/chat/conversations/:id', () => {
+  describe('GET /api/messaging/conversations/:id', () => {
     it('returns conversation details for participants', async () => {
       const user = createTestUser({ id: 'u1' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'Project Alpha Team',
@@ -254,7 +254,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       });
 
       const res = await request(app)
-        .get('/api/chat/conversations/conv-123')
+        .get('/api/messaging/conversations/conv-123')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
@@ -268,7 +268,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       const user = createTestUser({ id: 'u-intruder', role: 'User', isSystemAdmin: false });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'Private Group',
@@ -286,19 +286,19 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       });
 
       const res = await request(app)
-        .get('/api/chat/conversations/conv-123')
+        .get('/api/messaging/conversations/conv-123')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(403);
     });
   });
 
-  describe('PATCH /api/chat/conversations/:id (Rename Group)', () => {
+  describe('PATCH /api/messaging/conversations/:id (Rename Group)', () => {
     it('renames group and broadcasts system message', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'Old Name',
@@ -307,7 +307,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         ],
       });
 
-      mockPrisma.chatConversation.update.mockResolvedValueOnce({
+      mockPrisma.conversation.update.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'New Renovated Name',
@@ -317,7 +317,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         ],
       });
 
-      mockPrisma.chatMessage.create.mockResolvedValueOnce({
+      mockPrisma.message.create.mockResolvedValueOnce({
         id: 'sys-msg-1',
         conversationId: 'conv-123',
         senderId: 'u1',
@@ -326,13 +326,13 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       });
 
       const res = await request(app)
-        .patch('/api/chat/conversations/conv-123')
+        .patch('/api/messaging/conversations/conv-123')
         .set('Authorization', createAuthHeader(user))
         .send({ title: 'New Renovated Name' });
 
       expect(res.status).toBe(200);
       expect(res.body.title).toBe('New Renovated Name');
-      expect(mockPrisma.chatMessage.create).toHaveBeenCalledWith(
+      expect(mockPrisma.message.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             conversationId: 'conv-123',
@@ -343,12 +343,12 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('POST /api/chat/conversations/:id/participants (Add Member)', () => {
+  describe('POST /api/messaging/conversations/:id/participants (Add Member)', () => {
     it('adds participants to group and broadcasts announcement', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'Alpha Team',
@@ -361,13 +361,13 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         { id: 'u2', name: 'Bob', avatarUrl: null, role: 'Manager', email: 'bob@test.com' },
       ]);
 
-      mockPrisma.chatParticipant.upsert.mockResolvedValueOnce({
+      mockPrisma.conversationParticipant.upsert.mockResolvedValueOnce({
         id: 'cp-2',
         conversationId: 'conv-123',
         userId: 'u2',
       });
 
-      mockPrisma.chatConversation.update.mockResolvedValueOnce({
+      mockPrisma.conversation.update.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'Alpha Team',
@@ -377,7 +377,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         ],
       });
 
-      mockPrisma.chatMessage.create.mockResolvedValueOnce({
+      mockPrisma.message.create.mockResolvedValueOnce({
         id: 'sys-msg-2',
         conversationId: 'conv-123',
         senderId: 'u1',
@@ -385,14 +385,14 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       });
 
       const res = await request(app)
-        .post('/api/chat/conversations/conv-123/participants')
+        .post('/api/messaging/conversations/conv-123/participants')
         .set('Authorization', createAuthHeader(user))
         .send({ userIds: ['u2'] });
 
       expect(res.status).toBe(201);
       expect(res.body.addedUsers.length).toBe(1);
       expect(res.body.addedUsers[0].name).toBe('Bob');
-      expect(mockPrisma.chatMessage.create).toHaveBeenCalledWith(
+      expect(mockPrisma.message.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             conversationId: 'conv-123',
@@ -403,12 +403,12 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('DELETE /api/chat/conversations/:id/participants/:targetUserId (Remove or Leave)', () => {
+  describe('DELETE /api/messaging/conversations/:id/participants/:targetUserId (Remove or Leave)', () => {
     it('removes member or lets member leave and creates announcement', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'GROUP',
         title: 'Alpha Team',
@@ -418,11 +418,11 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         ],
       });
 
-      mockPrisma.chatParticipant.delete.mockResolvedValueOnce({
+      mockPrisma.conversationParticipant.delete.mockResolvedValueOnce({
         id: 'cp-2',
       });
 
-      mockPrisma.chatMessage.create.mockResolvedValueOnce({
+      mockPrisma.message.create.mockResolvedValueOnce({
         id: 'sys-msg-3',
         conversationId: 'conv-123',
         senderId: 'u1',
@@ -430,13 +430,13 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       });
 
       const res = await request(app)
-        .delete('/api/chat/conversations/conv-123/participants/u2')
+        .delete('/api/messaging/conversations/conv-123/participants/u2')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.removedUserId).toBe('u2');
-      expect(mockPrisma.chatMessage.create).toHaveBeenCalledWith(
+      expect(mockPrisma.message.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             conversationId: 'conv-123',
@@ -446,34 +446,34 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       );
     });
 
-    it('archives participant when leaving a CONTEXTUAL project chat', async () => {
+    it('archives participant when leaving a CONTEXTUAL project conversation', async () => {
       const user = createTestUser({ id: 'u1', name: 'Alice' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-proj',
         type: 'CONTEXTUAL',
         contextType: 'PROJECT',
         contextId: 'proj-1',
-        title: 'Project Alpha Chat',
+        title: 'Project Alpha Messages',
         participants: [
           { userId: 'u1', user: { id: 'u1', name: 'Alice' } },
         ],
       });
 
-      mockPrisma.chatParticipant.upsert.mockResolvedValueOnce({
+      mockPrisma.conversationParticipant.upsert.mockResolvedValueOnce({
         conversationId: 'conv-proj',
         userId: 'u1',
         isArchived: true,
       });
 
       const res = await request(app)
-        .delete('/api/chat/conversations/conv-proj/participants/u1')
+        .delete('/api/messaging/conversations/conv-proj/participants/u1')
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(mockPrisma.chatParticipant.upsert).toHaveBeenCalledWith(
+      expect(mockPrisma.conversationParticipant.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             conversationId_userId: {
@@ -487,29 +487,29 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('DELETE /api/chat/conversations/:id (Clear or Delete Chat)', () => {
-    it('rejects users without chat delete permission with 403', async () => {
+  describe('DELETE /api/messaging/conversations/:id (Clear or Delete Conversation)', () => {
+    it('rejects users without messaging delete permission with 403', async () => {
       const regularUser = createTestUser({ id: 'u1', role: 'User', permissions: { projects: ['view'] } });
       mockPrisma.user.findUnique.mockResolvedValue(regularUser);
 
       const res = await request(app)
-        .delete('/api/chat/conversations/conv-123')
+        .delete('/api/messaging/conversations/conv-123')
         .set('Authorization', createAuthHeader(regularUser));
 
       expect(res.status).toBe(403);
-      expect(res.body.error).toContain('Missing chat delete permission');
+      expect(res.body.error).toContain('Missing messaging delete permission');
     });
 
-    it('allows non-admin with chat.delete permission to clear a conversation and resets watermarks', async () => {
-      const chatCleaner = createTestUser({
+    it('allows non-admin with messaging.delete permission to clear a conversation and resets watermarks', async () => {
+      const messageCleaner = createTestUser({
         id: 'u-mgr',
         role: 'Moderator',
         roleLevel: 25,
-        permissions: { chat: ['delete'] },
+        permissions: { messaging: ['delete'] },
       });
-      mockPrisma.user.findUnique.mockResolvedValue(chatCleaner);
+      mockPrisma.user.findUnique.mockResolvedValue(messageCleaner);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-123',
         type: 'CONTEXTUAL',
         contextType: 'PROJECT',
@@ -517,23 +517,23 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
         participants: [{ userId: 'u-mgr' }],
       });
 
-      mockPrisma.chatMessage.deleteMany.mockResolvedValueOnce({ count: 15 });
-      mockPrisma.chatParticipant.updateMany.mockResolvedValueOnce({ count: 2 });
-      mockPrisma.chatConversation.update.mockResolvedValueOnce({
+      mockPrisma.message.deleteMany.mockResolvedValueOnce({ count: 15 });
+      mockPrisma.conversationParticipant.updateMany.mockResolvedValueOnce({ count: 2 });
+      mockPrisma.conversation.update.mockResolvedValueOnce({
         id: 'conv-123',
         messageSeq: 0,
       });
 
       const res = await request(app)
-        .delete('/api/chat/conversations/conv-123')
-        .set('Authorization', createAuthHeader(chatCleaner));
+        .delete('/api/messaging/conversations/conv-123')
+        .set('Authorization', createAuthHeader(messageCleaner));
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(mockPrisma.chatMessage.deleteMany).toHaveBeenCalledWith({
+      expect(mockPrisma.message.deleteMany).toHaveBeenCalledWith({
         where: { conversationId: 'conv-123' },
       });
-      expect(mockPrisma.chatParticipant.updateMany).toHaveBeenCalledWith(
+      expect(mockPrisma.conversationParticipant.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { conversationId: 'conv-123' },
           data: expect.objectContaining({ lastReadSeq: 0 }),
@@ -541,36 +541,36 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       );
     });
 
-    it('allows chat.moderate permission holder to remove another participant from a group without hardcoded role names', async () => {
+    it('allows messaging.moderate permission holder to remove another participant from a group without hardcoded role names', async () => {
       const moderator = createTestUser({
         id: 'u-mod',
         role: 'CommunityHelper',
         roleLevel: 15,
-        permissions: { chat: ['moderate'] },
+        permissions: { messaging: ['moderate'] },
       });
       mockPrisma.user.findUnique.mockResolvedValue(moderator);
 
-      mockPrisma.chatConversation.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
         id: 'conv-grp',
         type: 'GROUP',
         participants: [{ userId: 'u2', user: { id: 'u2', name: 'Bob' } }],
       });
-      mockPrisma.chatParticipant.findUnique.mockResolvedValueOnce({
+      mockPrisma.conversationParticipant.findUnique.mockResolvedValueOnce({
         id: 'cp-u2',
         conversationId: 'conv-grp',
         userId: 'u2',
         user: { id: 'u2', name: 'Bob' },
       });
-      mockPrisma.chatParticipant.delete.mockResolvedValueOnce({ id: 'cp-u2' });
-      mockPrisma.chatConversation.update.mockResolvedValueOnce({ id: 'conv-grp', messageSeq: 4 });
-      mockPrisma.chatMessage.create.mockResolvedValueOnce({
+      mockPrisma.conversationParticipant.delete.mockResolvedValueOnce({ id: 'cp-u2' });
+      mockPrisma.conversation.update.mockResolvedValueOnce({ id: 'conv-grp', messageSeq: 4 });
+      mockPrisma.message.create.mockResolvedValueOnce({
         id: 'msg-sys',
         seq: 4,
         content: 'removed Bob from the group',
       });
 
       const res = await request(app)
-        .delete('/api/chat/conversations/conv-grp/participants/u2')
+        .delete('/api/messaging/conversations/conv-grp/participants/u2')
         .set('Authorization', createAuthHeader(moderator));
 
       expect(res.status).toBe(200);
@@ -578,7 +578,7 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
     });
   });
 
-  describe('POST /api/chat/conversations/:id/mute and POST /api/chat/dnd', () => {
+  describe('POST /api/messaging/conversations/:id/mute and POST /api/messaging/dnd', () => {
     it('sets mute preference for conversation', async () => {
       const user = createTestUser({ id: 'u1' });
       mockPrisma.user.findUnique.mockResolvedValue(user);
@@ -586,11 +586,11 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
       mockPrisma.userPreference.findUnique.mockResolvedValueOnce(null);
       mockPrisma.userPreference.upsert.mockResolvedValueOnce({
         userId: 'u1',
-        chatMuteMap: JSON.stringify({ 'conv-1': '2030-01-01T00:00:00.000Z' }),
+        messagingMuteMap: JSON.stringify({ 'conv-1': '2030-01-01T00:00:00.000Z' }),
       });
 
       const res = await request(app)
-        .post('/api/chat/conversations/conv-1/mute')
+        .post('/api/messaging/conversations/conv-1/mute')
         .set('Authorization', createAuthHeader(user))
         .send({ durationMinutes: 60 });
 
@@ -606,11 +606,11 @@ describe('Chat Routes (GET, POST, PATCH, DELETE)', () => {
 
       mockPrisma.userPreference.upsert.mockResolvedValueOnce({
         userId: 'u1',
-        chatDndUntil: '2030-01-01T00:00:00.000Z',
+        messagingDndUntil: '2030-01-01T00:00:00.000Z',
       });
 
       const res = await request(app)
-        .post('/api/chat/dnd')
+        .post('/api/messaging/dnd')
         .set('Authorization', createAuthHeader(user))
         .send({ durationMinutes: 120 });
 

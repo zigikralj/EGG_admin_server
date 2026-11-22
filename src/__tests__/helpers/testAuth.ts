@@ -34,7 +34,7 @@ export function createTestUser(options: TestUserOptions = {}) {
     tracker_invoices: ['view', 'create', 'edit', 'delete'],
     wasteDisposal: ['view', 'create', 'edit', 'delete'],
     statistics: ['view'],
-    chat: ['delete', 'moderate'],
+    messaging: ['delete', 'moderate'],
     projects: ['view', 'create', 'edit', 'delete'],
     clients: ['view', 'create', 'edit', 'delete'],
     invoices: ['view', 'create', 'edit', 'delete'],

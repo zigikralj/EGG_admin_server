@@ -65,7 +65,6 @@ for (const app of PERMISSION_CATALOG) {
     RESOURCE_MAP.set(res.id, res);
   }
 }
-RESOURCE_MAP.set('chat', { id: 'messaging', actions: ['delete', 'moderate'] });
 
 export function sanitizeRolePermissions(
   raw: unknown

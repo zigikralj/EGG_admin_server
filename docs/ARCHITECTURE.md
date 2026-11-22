@@ -32,13 +32,13 @@ The Ekos Project Tracker API Server is a REST API backend for managing environme
 The server provides:
 - **User management** with dynamic role-based access control (RBAC) and granular permission matrices
 - **Project lifecycle management** with server-side pagination, delta-compressed rich-text notes (`ProjectNote`), and revision history
-- **Real-time messaging & contextual project chat** powered by Server-Sent Events (SSE), sequence-based delta sync, @mentions, replies, muting, and Do Not Disturb (DND)
+- **Real-time messaging & contextual project discussions** powered by Server-Sent Events (SSE), sequence-based delta sync, @mentions, replies, muting, and Do Not Disturb (DND)
 - **Client management** with environmental permit associations
 - **Invoice management** with line items, multi-currency support, and parent/child invoice hierarchies
 - **Permit management** linked to Serbian waste catalog entries
 - **Waste catalog** (Serbian regulatory waste index numbers with delta sync and reference caching)
 - **Reminder/task management** linked to projects, clients, and permits
-- **Real-time notifications** for @mentions in project notes and chat messages
+- **Real-time notifications** for @mentions in project notes and messages
 - **Server-side SQL statistics engines** for Project Tracker KPIs, Waste Disposal tonnages/revenues, and Activity Analytics
 - **Entity versioning & audit trail** (`ChangeSet`, `EntityVersion`, `ActivityLog`, `ActivityLogMonthlyStats`)
 - **System settings & company info** management
@@ -56,7 +56,7 @@ The server provides:
 | **Database** | PostgreSQL | — |
 | **DB Adapter** | `@prisma/adapter-pg` (native `pg` pool) | 7.10 |
 | **Auth** | JWT (`jsonwebtoken`) + bcrypt (`bcryptjs`) | — |
-| **Real-Time** | Server-Sent Events (SSE) via `ChatSSEHub` | Native HTTP |
+| **Real-Time** | Server-Sent Events (SSE) via `MessagingSSEHub` | Native HTTP |
 | **Diff & Sanitization** | `diff-match-patch`, `sanitize-html` | 1.0 / 2.18 |
 | **Performance** | `compression` (Gzip/Deflate), in-memory TTL caching | — |
 | **Security** | `helmet`, `express-rate-limit`, `cors` | — |
@@ -118,7 +118,7 @@ server/
 │   │   ├── errorHandler.ts         # Global error handler + asyncHandler
 │   │   └── validate.ts             # Input sanitization & password validation
 │   ├── services/
-│   │   ├── chat/
+│   │   ├── messaging/
 │   │   │   └── sseHub.ts           # Real-time SSE connection hub & presence broadcaster
 │   │   ├── projectStatistics.service.ts # SQL aggregation engine for Project Tracker stats
 │   │   ├── wasteStatistics.service.ts   # SQL aggregation engine for Waste Disposal stats
@@ -149,7 +149,7 @@ server/
 │       ├── permits.routes.ts       # /api/permits — paginated CRUD linked to waste catalog, delta sync
 │       ├── wasteCatalog.routes.ts  # /api/waste-catalog — CRUD + auto-seed + pagination + delta sync + delete
 │       ├── history.routes.ts       # /api/history — version timelines, diffs, restoration
-│       ├── chat.routes.ts          # /api/chat — SSE stream, conversations, messages, delta sync, mute, DND
+│       ├── messaging.routes.ts     # /api/messaging — SSE stream, conversations, messages, delta sync, mute, DND
 │       ├── notifications.routes.ts # /api/notifications — list, mark-read, clear
 │       ├── systemSettings.routes.ts# /api/system-settings — global settings & waste disposal service config
 │       ├── companyInfo.routes.ts   # /api/company-info — singleton get/put (cached)
@@ -188,7 +188,7 @@ The app factory performs, in order:
 5. Health check endpoint (`GET /health`)
 6. Root endpoint (`GET /`)
 7. Auth-specific rate limiter (20 req / 15 min for login/register)
-8. All 18 API route groups (including roles, system settings, history, activity logs, and real-time chat)
+8. All 18 API route groups (including roles, system settings, history, activity logs, and real-time messaging)
 9. 404 catch-all
 10. Global error handler
 
@@ -200,7 +200,7 @@ The app factory performs, in order:
 
 - Uses the **Prisma driver adapter pattern**: a native `pg` `Pool` is created and passed to Prisma via `@prisma/adapter-pg`.
 - Connection pool: max 10 connections, 30s idle timeout, 2s connection timeout.
-- **`basePrisma`**: Raw Prisma client used for read-heavy aggregations, background flushes, and chat operations.
+- **`basePrisma`**: Raw Prisma client used for read-heavy aggregations, background flushes, and messaging operations.
 - **`prisma` (Audited Extension)**: Wraps `basePrisma.$extends` to intercept `create`, `update`, and `delete` operations on core domain models:
   - Uses `AsyncLocalStorage` (`requestContext` in `src/context.ts`) to propagate `userId`, `userName`, `sessionId`, `requestId`, `method`, and `route`.
   - Runs mutations inside `auditedTransaction()`, setting PostgreSQL session variables (`set_config('audit.user_id', ...)`) consumed by DB-level `ChangeSet` / `EntityVersion` triggers.
@@ -311,7 +311,7 @@ All routes follow a consistent pattern:
 | `/api/permits` | `permits.routes.ts` | All routes require auth |
 | `/api/waste-catalog` | `wasteCatalog.routes.ts` | All routes require auth |
 | `/api/history` | `history.routes.ts` | All routes require auth (history permissions) |
-| `/api/chat` | `chat.routes.ts` | All routes require auth |
+| `/api/messaging` | `messaging.routes.ts` | All routes require auth |
 
 ---
 
@@ -331,12 +331,12 @@ erDiagram
     User ||--o{ ActivityLog : "performs"
     User ||--o{ ActivityLogMonthlyStats : "aggregates"
     User ||--o{ ProjectNote : "updates"
-    User ||--o{ ChatParticipant : "participates in"
-    User ||--o{ ChatMessage : "sends"
+    User ||--o{ ConversationParticipant : "participates in"
+    User ||--o{ Message : "sends"
 
-    ChatConversation ||--o{ ChatParticipant : "has"
-    ChatConversation ||--o{ ChatMessage : "contains"
-    ChatMessage ||--o{ ChatMessage : "replies to"
+    Conversation ||--o{ ConversationParticipant : "has"
+    Conversation ||--o{ Message : "contains"
+    Message ||--o{ Message : "replies to"
 
     Project ||--|| ProjectNote : "has note"
     ProjectNote ||--o{ ProjectNoteVersion : "revisions"
@@ -370,7 +370,7 @@ erDiagram
     ChangeSet ||--o{ EntityVersion : "contains"
 ```
 
-### Model Summary (27 Models + `ChatType` Enum)
+### Model Summary (27 Models + `ConversationType` Enum)
 
 | Model | Purpose | Key Fields |
 |---|---|---|
@@ -398,15 +398,15 @@ erDiagram
 | **SystemSetting** | Global application settings | id (PK), key (unique), value |
 | **ChangeSet** | Transaction audit change group | userId, userName, route, method, source, reason |
 | **EntityVersion** | Entity delta and snapshot version | changeSetId, entityType, entityId, version, op ('I','U','D','B'), kind ('S','D'), data (JSON), changedFields |
-| **ChatConversation** | Direct, group & contextual chats | type (`DIRECT`\|`GROUP`\|`CONTEXTUAL`), title, contextType, contextId, messageSeq, lastMessageText, lastMessageAt |
-| **ChatParticipant** | User membership & read state in chat | conversationId, userId, lastReadSeq, lastReadAt, isManuallyUnread, isArchived |
-| **ChatMessage** | Sequential chat messages | conversationId, seq, senderId, content, replyToId, isEdited, editedAt, isDeleted |
+| **Conversation** | Direct, group & contextual conversations | type (`DIRECT`\|`GROUP`\|`CONTEXTUAL`), title, contextType, contextId, messageSeq, lastMessageText, lastMessageAt |
+| **ConversationParticipant** | User membership & read state | conversationId, userId, lastReadSeq, lastReadAt, isManuallyUnread, isArchived |
+| **Message** | Sequential conversation messages | conversationId, seq, senderId, content, replyToId, isEdited, editedAt, isDeleted |
 
 ---
 
 ## Helper Utilities & Core Services
 
-### `src/services/chat/sseHub.ts` (`ChatSSEHub`)
+### `src/services/messaging/sseHub.ts` (`MessagingSSEHub`)
 - **`addClient(userId, res)` / `removeClient(userId, res)`**: Manages active SSE streams per user across multiple browser tabs and broadcasts `USER_PRESENCE` (`ONLINE` / `OFFLINE`) transitions.
 - **`sendToUser()` / `sendToUsers()` / `broadcastAll()`**: Dispatches real-time SSE events (`MESSAGE_CREATED`, `MESSAGE_UPDATED`, `MESSAGE_DELETED`, `READ_RECEIPT`, `UNREAD_STATUS`, `CONVERSATION_UPDATED`, `REMOVED_FROM_CONVERSATION`, `CONVERSATION_CLEARED`, `MUTE_UPDATED`, `DND_UPDATED`, `NOTIFICATION`).
 - **Heartbeat Keepalive**: Pings all active SSE connections every 25 seconds (`: keepalive`) to prevent proxy/firewall timeouts and evicts dead sockets.
@@ -445,7 +445,7 @@ erDiagram
 - **`parseSince()`**: Parses and validates the `since` query parameter with a 30-day safety retention cutoff.
 - **`fetchDeletedIds()`**: Fast lookup of deleted entity IDs via `EntityVersion` tombstones (`op: 'D'`).
 - **`buildDeltaResponse()`**: Wraps items and deleted tombstones in a standardized Delta Envelope.
-- **`purgeOldEntityVersions()`**: Safely purges superseded `EntityVersion` records, orphan `ChangeSet` rows, and old soft-deleted `ChatMessage` tombstones in 5,000-row chunks.
+- **`purgeOldEntityVersions()`**: Safely purges superseded `EntityVersion` records, orphan `ChangeSet` rows, and old soft-deleted `Message` tombstones in 5,000-row chunks.
 
 ### `src/helpers/referenceCache.ts`
 - **`getReferenceCache()` / `setReferenceCache()`**: In-memory caching for low-churn reference catalogs with 10-minute TTL and prefix invalidation.

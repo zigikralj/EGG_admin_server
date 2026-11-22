@@ -55,7 +55,7 @@ describe('permissionCatalog helpers', () => {
         apps: ['project-tracker', 'unknown-app', 'project-tracker', 'system'],
         projects: ['view', 'view', 'invalidAction', 'edit'],
         projects_onlyOwn: true,
-        chat: ['delete', 'view', 'moderate'],
+        messaging: ['delete', 'view', 'moderate'],
         roles: ['view', 'create'],
         roles_onlyOwn: true, // roles does not support onlyOwn -> stripped
         unknownResource: ['view'],
@@ -67,7 +67,7 @@ describe('permissionCatalog helpers', () => {
           apps: ['project-tracker', 'system'],
           projects: ['view', 'edit'],
           projects_onlyOwn: true,
-          chat: ['delete', 'moderate'],
+          messaging: ['delete', 'moderate'],
           roles: ['view', 'create'],
         },
       });
