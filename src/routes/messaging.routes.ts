@@ -265,6 +265,9 @@ messagingRouter.get('/conversations', asyncHandler(async (req: Request, res: Res
             select: {
               userId: true,
             },
+            orderBy: {
+              userId: 'asc',
+            },
           },
         },
       },
@@ -336,7 +339,7 @@ messagingRouter.post('/conversations', asyncHandler(async (req: Request, res: Re
     }
     const otherUserId = allParticipantIds.find((id) => id !== userId)!;
 
-    // Check if 1-1 conversation already exists
+    // Check if 1-1 conversation already exists (must contain only these 2 participants)
     const existing = await prisma.conversation.findFirst({
       where: {
         type: 'DIRECT',
@@ -344,6 +347,7 @@ messagingRouter.post('/conversations', asyncHandler(async (req: Request, res: Re
         AND: [
           { participants: { some: { userId } } },
           { participants: { some: { userId: otherUserId } } },
+          { participants: { every: { userId: { in: [userId, otherUserId] } } } },
         ],
       },
       include: {
@@ -556,6 +560,10 @@ messagingRouter.patch('/conversations/:id', asyncHandler(async (req: Request, re
 
   if (!conversation) {
     return res.status(404).json({ error: 'Conversation not found' });
+  }
+
+  if (conversation.type !== 'GROUP') {
+    return res.status(400).json({ error: 'Only group conversations can be renamed' });
   }
 
   const isParticipant = conversation.participants.some((p) => p.userId === authUser.id);
@@ -1260,26 +1268,43 @@ messagingRouter.post('/conversations/:id/messages', asyncHandler(async (req: Req
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
+  const existingParticipantIds = new Set(conversation.participants.map((p) => p.userId));
+  if (conversation.type !== 'CONTEXTUAL' && !existingParticipantIds.has(authUser.id)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
   const snippet = content.trim().slice(0, 160);
   const nextSeq = (conversation.messageSeq || 0) + 1;
 
-  // 1. Upsert sender as an active participant (unarchive if previously left)
-  await prisma.conversationParticipant.upsert({
-    where: { conversationId_userId: { conversationId, userId: authUser.id } },
-    create: {
-      conversationId,
-      userId: authUser.id,
-      isArchived: false,
-      lastReadSeq: nextSeq,
-      lastReadAt: new Date(),
-    },
-    update: {
-      isArchived: false,
-      lastReadSeq: nextSeq,
-      lastReadAt: new Date(),
-      isManuallyUnread: false,
-    },
-  });
+  // 1. Ensure sender's participant watermark is updated (only CONTEXTUAL auto-subscribes new senders)
+  if (conversation.type === 'CONTEXTUAL') {
+    await prisma.conversationParticipant.upsert({
+      where: { conversationId_userId: { conversationId, userId: authUser.id } },
+      create: {
+        conversationId,
+        userId: authUser.id,
+        isArchived: false,
+        lastReadSeq: nextSeq,
+        lastReadAt: new Date(),
+      },
+      update: {
+        isArchived: false,
+        lastReadSeq: nextSeq,
+        lastReadAt: new Date(),
+        isManuallyUnread: false,
+      },
+    });
+  } else {
+    await prisma.conversationParticipant.updateMany({
+      where: { conversationId, userId: authUser.id },
+      data: {
+        isArchived: false,
+        lastReadSeq: nextSeq,
+        lastReadAt: new Date(),
+        isManuallyUnread: false,
+      },
+    });
+  }
 
   // 2. If it's a project conversation, ensure the responsible user is in participants list
   if (conversation.contextType === 'PROJECT' && conversation.contextId) {
@@ -1380,67 +1405,77 @@ messagingRouter.post('/conversations/:id/messages', asyncHandler(async (req: Req
     }),
   });
 
-  // 5. Process @mentions (both explicit IDs and text mentions)
-  const extractedMentions = await extractMentionedUserIds(content);
-  const combinedMentionIds = Array.from(
-    new Set([...(Array.isArray(mentionedUserIds) ? mentionedUserIds : []), ...extractedMentions])
-  ).filter((mId): mId is string => typeof mId === 'string' && mId !== authUser.id);
+  // 5. Process @mentions (disabled for DIRECT; GROUP notifies existing members only; CONTEXTUAL auto-subscribes)
+  if (conversation.type !== 'DIRECT') {
+    const extractedMentions = await extractMentionedUserIds(content);
+    const combinedMentionIds = Array.from(
+      new Set([...(Array.isArray(mentionedUserIds) ? mentionedUserIds : []), ...extractedMentions])
+    ).filter((mId): mId is string => {
+      if (typeof mId !== 'string' || mId === authUser.id) return false;
+      if (conversation.type === 'GROUP') {
+        return existingParticipantIds.has(mId);
+      }
+      return true;
+    });
 
-  if (combinedMentionIds.length > 0) {
-    // Re-subscribe tagged users even if previously archived
-    await Promise.all(
-      combinedMentionIds.map((targetUserId: string) =>
-        prisma.conversationParticipant.upsert({
-          where: {
-            conversationId_userId: { conversationId, userId: targetUserId },
-          },
-          create: {
-            conversationId,
-            userId: targetUserId,
-            isArchived: false,
-            lastReadSeq: Math.max(0, nextSeq - 1),
-            lastReadAt: new Date(0),
-          },
-          update: {
-            isArchived: false,
-          },
+    if (combinedMentionIds.length > 0) {
+      if (conversation.type === 'CONTEXTUAL') {
+        // Re-subscribe tagged users even if previously archived (project discussions only)
+        await Promise.all(
+          combinedMentionIds.map((targetUserId: string) =>
+            prisma.conversationParticipant.upsert({
+              where: {
+                conversationId_userId: { conversationId, userId: targetUserId },
+              },
+              create: {
+                conversationId,
+                userId: targetUserId,
+                isArchived: false,
+                lastReadSeq: Math.max(0, nextSeq - 1),
+                lastReadAt: new Date(0),
+              },
+              update: {
+                isArchived: false,
+              },
+            })
+          )
+        );
+      }
+
+      // Send notifications only if the recipient has NOT muted the conversation and NOT on DND
+      await Promise.all(
+        combinedMentionIds.map(async (targetUserId: string) => {
+          const { muteMap, dndUntil } = await getUserMuteAndDnd(targetUserId);
+          const muted = isMuted(conversationId, muteMap).muted;
+          const dnd = isDndActive(dndUntil);
+          if (muted || dnd) {
+            return;
+          }
+
+          const notif = await prisma.notification.create({
+            data: {
+              userId: targetUserId,
+              type: 'MENTION',
+              title: `${authUser.name} mentioned you in messages`,
+              message: content.substring(0, 120),
+              projectId: conversation.contextType === 'PROJECT' ? conversation.contextId : null,
+              authorId: authUser.id,
+              authorName: authUser.name,
+              link:
+                conversation.contextType === 'PROJECT'
+                  ? `/projects?highlight=${conversation.contextId}&tab=messages`
+                  : undefined,
+            },
+          });
+
+          // Dispatch notification event over SSE
+          messagingSSEHub.sendToUser(targetUserId, {
+            type: 'NOTIFICATION',
+            payload: notif,
+          });
         })
-      )
-    );
-
-    // Send notifications only if the recipient has NOT muted the conversation and NOT on DND
-    await Promise.all(
-      combinedMentionIds.map(async (targetUserId: string) => {
-        const { muteMap, dndUntil } = await getUserMuteAndDnd(targetUserId);
-        const muted = isMuted(conversationId, muteMap).muted;
-        const dnd = isDndActive(dndUntil);
-        if (muted || dnd) {
-          return;
-        }
-
-        const notif = await prisma.notification.create({
-          data: {
-            userId: targetUserId,
-            type: 'MENTION',
-            title: `${authUser.name} mentioned you in messages`,
-            message: content.substring(0, 120),
-            projectId: conversation.contextType === 'PROJECT' ? conversation.contextId : null,
-            authorId: authUser.id,
-            authorName: authUser.name,
-            link:
-              conversation.contextType === 'PROJECT'
-                ? `/projects?highlight=${conversation.contextId}&tab=messages`
-                : undefined,
-          },
-        });
-
-        // Dispatch notification event over SSE
-        messagingSSEHub.sendToUser(targetUserId, {
-          type: 'NOTIFICATION',
-          payload: notif,
-        });
-      })
-    );
+      );
+    }
   }
 
   // 6. Broadcast message to all conversation participants (or all online users for project conversations)
@@ -1638,41 +1673,25 @@ messagingRouter.post('/conversations/:id/read', asyncHandler(async (req: Request
     select: { messageSeq: true, type: true },
   });
 
-  const targetSeq = conversation?.messageSeq || 0;
+  if (!conversation) {
+    return res.status(404).json({ error: 'Conversation not found' });
+  }
+
+  const targetSeq = conversation.messageSeq || 0;
   const now = new Date();
 
-  if (conversation?.type === 'CONTEXTUAL') {
-    // Only update if participant already exists (do not subscribe passive viewers!)
-    await prisma.conversationParticipant.updateMany({
-      where: {
-        conversationId,
-        userId,
-      },
-      data: {
-        lastReadSeq: targetSeq,
-        lastReadAt: now,
-        isManuallyUnread: false,
-      },
-    });
-  } else {
-    await prisma.conversationParticipant.upsert({
-      where: {
-        conversationId_userId: { conversationId, userId },
-      },
-      create: {
-        conversationId,
-        userId,
-        lastReadSeq: targetSeq,
-        lastReadAt: now,
-        isManuallyUnread: false,
-      },
-      update: {
-        lastReadSeq: targetSeq,
-        lastReadAt: now,
-        isManuallyUnread: false,
-      },
-    });
-  }
+  // Only update existing participant rows (never subscribe non-participants)
+  await prisma.conversationParticipant.updateMany({
+    where: {
+      conversationId,
+      userId,
+    },
+    data: {
+      lastReadSeq: targetSeq,
+      lastReadAt: now,
+      isManuallyUnread: false,
+    },
+  });
 
   // Notify clients via SSE of read status update
   messagingSSEHub.sendToUser(userId, {
@@ -1696,39 +1715,23 @@ messagingRouter.post('/conversations/:id/unread', asyncHandler(async (req: Reque
     select: { messageSeq: true, type: true },
   });
 
-  const targetSeq = Math.max(0, (conversation?.messageSeq || 1) - 1);
-  const now = new Date();
-
-  if (conversation?.type === 'CONTEXTUAL') {
-    // Only update if participant already exists
-    await prisma.conversationParticipant.updateMany({
-      where: {
-        conversationId,
-        userId,
-      },
-      data: {
-        lastReadSeq: targetSeq,
-        isManuallyUnread: true,
-      },
-    });
-  } else {
-    await prisma.conversationParticipant.upsert({
-      where: {
-        conversationId_userId: { conversationId, userId },
-      },
-      create: {
-        conversationId,
-        userId,
-        lastReadSeq: targetSeq,
-        lastReadAt: now,
-        isManuallyUnread: true,
-      },
-      update: {
-        lastReadSeq: targetSeq,
-        isManuallyUnread: true,
-      },
-    });
+  if (!conversation) {
+    return res.status(404).json({ error: 'Conversation not found' });
   }
+
+  const targetSeq = Math.max(0, (conversation.messageSeq || 1) - 1);
+
+  // Only update existing participant rows (never subscribe non-participants)
+  await prisma.conversationParticipant.updateMany({
+    where: {
+      conversationId,
+      userId,
+    },
+    data: {
+      lastReadSeq: targetSeq,
+      isManuallyUnread: true,
+    },
+  });
 
   // Notify user via SSE
   messagingSSEHub.sendToUser(userId, {

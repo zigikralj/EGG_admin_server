@@ -620,4 +620,332 @@ describe('Messaging Routes (GET, POST, PATCH, DELETE)', () => {
       expect(mockPrisma.userPreference.upsert).toHaveBeenCalled();
     });
   });
+
+  describe('@mention scoping and DIRECT/GROUP participant integrity', () => {
+    it('ignores @mentions and does not upsert participants or send notifications in DIRECT conversations', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-direct',
+        type: 'DIRECT',
+        messageSeq: 5,
+        contextType: null,
+        contextId: null,
+        participants: [{ userId: 'u1' }, { userId: 'u2' }],
+      });
+
+      const createdMsg = {
+        id: 'msg-direct-1',
+        conversationId: 'conv-direct',
+        seq: 6,
+        senderId: 'u1',
+        content: 'Hello @Charlie',
+        replyToId: null,
+        createdAt: new Date(),
+        isEdited: false,
+        isDeleted: false,
+        sender: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' },
+        replyTo: null,
+      };
+      mockPrisma.message.create.mockResolvedValueOnce(createdMsg);
+      mockPrisma.conversation.update.mockResolvedValueOnce({
+        id: 'conv-direct',
+        type: 'DIRECT',
+        participants: [
+          { userId: 'u1', user: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' } },
+          { userId: 'u2', user: { id: 'u2', name: 'Bob', avatarUrl: null, role: 'User' } },
+        ],
+      });
+      mockPrisma.conversationParticipant.findMany.mockResolvedValueOnce([
+        { userId: 'u1' },
+        { userId: 'u2' },
+      ]);
+
+      const res = await request(app)
+        .post('/api/messaging/conversations/conv-direct/messages')
+        .set('Authorization', createAuthHeader(user))
+        .send({ content: 'Hello @Charlie', mentionedUserIds: ['u3'] });
+
+      expect(res.status).toBe(201);
+      expect(mockPrisma.conversationParticipant.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { conversationId: 'conv-direct', userId: 'u1' },
+        })
+      );
+      expect(mockPrisma.conversationParticipant.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+      expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('notifies only existing group members and never auto-adds non-members on @mention in GROUP conversations', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-group',
+        type: 'GROUP',
+        messageSeq: 2,
+        contextType: null,
+        contextId: null,
+        participants: [{ userId: 'u1' }, { userId: 'u2' }],
+      });
+
+      const createdMsg = {
+        id: 'msg-group-1',
+        conversationId: 'conv-group',
+        seq: 3,
+        senderId: 'u1',
+        content: 'Hey @Bob and @Charlie',
+        replyToId: null,
+        createdAt: new Date(),
+        isEdited: false,
+        isDeleted: false,
+        sender: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' },
+        replyTo: null,
+      };
+      mockPrisma.message.create.mockResolvedValueOnce(createdMsg);
+      mockPrisma.conversation.update.mockResolvedValueOnce({
+        id: 'conv-group',
+        type: 'GROUP',
+        participants: [
+          { userId: 'u1', user: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' } },
+          { userId: 'u2', user: { id: 'u2', name: 'Bob', avatarUrl: null, role: 'User' } },
+        ],
+      });
+      mockPrisma.user.findMany.mockResolvedValueOnce([
+        { id: 'u2', name: 'Bob', email: 'bob@test.com' },
+        { id: 'u3', name: 'Charlie', email: 'charlie@test.com' },
+      ]);
+      mockPrisma.userPreference.findMany.mockResolvedValueOnce([]);
+      mockPrisma.notification.create.mockResolvedValueOnce({ id: 'notif-u2' });
+      mockPrisma.conversationParticipant.findMany.mockResolvedValueOnce([
+        { userId: 'u1' },
+        { userId: 'u2' },
+      ]);
+
+      const res = await request(app)
+        .post('/api/messaging/conversations/conv-group/messages')
+        .set('Authorization', createAuthHeader(user))
+        .send({ content: 'Hey @Bob and @Charlie', mentionedUserIds: ['u2', 'u3'] });
+
+      expect(res.status).toBe(201);
+      expect(mockPrisma.conversationParticipant.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'u2',
+            type: 'MENTION',
+          }),
+        })
+      );
+    });
+
+    it('auto-subscribes and notifies @mentioned users in CONTEXTUAL project conversations', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-proj',
+        type: 'CONTEXTUAL',
+        messageSeq: 1,
+        contextType: 'PROJECT',
+        contextId: 'proj-1',
+        participants: [{ userId: 'u1' }],
+      });
+      mockPrisma.project.findUnique.mockResolvedValueOnce({
+        id: 'proj-1',
+        responsibleId: 'u1',
+        responsible: 'Alice',
+      });
+
+      const createdMsg = {
+        id: 'msg-proj-1',
+        conversationId: 'conv-proj',
+        seq: 2,
+        senderId: 'u1',
+        content: 'Please check @Charlie',
+        replyToId: null,
+        createdAt: new Date(),
+        isEdited: false,
+        isDeleted: false,
+        sender: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' },
+        replyTo: null,
+      };
+      mockPrisma.message.create.mockResolvedValueOnce(createdMsg);
+      mockPrisma.conversation.update.mockResolvedValueOnce({
+        id: 'conv-proj',
+        type: 'CONTEXTUAL',
+        participants: [
+          { userId: 'u1', user: { id: 'u1', name: 'Alice', avatarUrl: null, role: 'User' } },
+        ],
+      });
+      mockPrisma.user.findMany.mockResolvedValueOnce([
+        { id: 'u3', name: 'Charlie', email: 'charlie@test.com' },
+      ]);
+      mockPrisma.userPreference.findMany.mockResolvedValueOnce([]);
+      mockPrisma.notification.create.mockResolvedValueOnce({ id: 'notif-u3' });
+      mockPrisma.conversationParticipant.findMany.mockResolvedValueOnce([
+        { userId: 'u1' },
+        { userId: 'u3' },
+      ]);
+
+      const res = await request(app)
+        .post('/api/messaging/conversations/conv-proj/messages')
+        .set('Authorization', createAuthHeader(user))
+        .send({ content: 'Please check @Charlie', mentionedUserIds: ['u3'] });
+
+      expect(res.status).toBe(201);
+      expect(mockPrisma.conversationParticipant.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { conversationId_userId: { conversationId: 'conv-proj', userId: 'u3' } },
+        })
+      );
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'u3',
+            type: 'MENTION',
+            projectId: 'proj-1',
+          }),
+        })
+      );
+    });
+
+    it('rejects non-participants posting to DIRECT or GROUP conversations with 403', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-direct',
+        type: 'DIRECT',
+        participants: [{ userId: 'u2' }, { userId: 'u3' }],
+      });
+
+      const directRes = await request(app)
+        .post('/api/messaging/conversations/conv-direct/messages')
+        .set('Authorization', createAuthHeader(user))
+        .send({ content: 'Intrusion attempt' });
+
+      expect(directRes.status).toBe(403);
+      expect(mockPrisma.conversationParticipant.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.message.create).not.toHaveBeenCalled();
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-group',
+        type: 'GROUP',
+        participants: [{ userId: 'u2' }, { userId: 'u3' }],
+      });
+
+      const groupRes = await request(app)
+        .post('/api/messaging/conversations/conv-group/messages')
+        .set('Authorization', createAuthHeader(user))
+        .send({ content: 'Intrusion attempt' });
+
+      expect(groupRes.status).toBe(403);
+      expect(mockPrisma.conversationParticipant.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.message.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when conversation is missing and uses updateMany (never upsert) for /read and /unread', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce(null);
+      const missingRead = await request(app)
+        .post('/api/messaging/conversations/missing/read')
+        .set('Authorization', createAuthHeader(user));
+      expect(missingRead.status).toBe(404);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce(null);
+      const missingUnread = await request(app)
+        .post('/api/messaging/conversations/missing/unread')
+        .set('Authorization', createAuthHeader(user));
+      expect(missingUnread.status).toBe(404);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-direct',
+        type: 'DIRECT',
+        messageSeq: 10,
+      });
+      const readRes = await request(app)
+        .post('/api/messaging/conversations/conv-direct/read')
+        .set('Authorization', createAuthHeader(user));
+      expect(readRes.status).toBe(200);
+      expect(mockPrisma.conversationParticipant.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { conversationId: 'conv-direct', userId: 'u1' },
+        })
+      );
+      expect(mockPrisma.conversationParticipant.upsert).not.toHaveBeenCalled();
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-group',
+        type: 'GROUP',
+        messageSeq: 10,
+      });
+      const unreadRes = await request(app)
+        .post('/api/messaging/conversations/conv-group/unread')
+        .set('Authorization', createAuthHeader(user));
+      expect(unreadRes.status).toBe(200);
+      expect(mockPrisma.conversationParticipant.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { conversationId: 'conv-group', userId: 'u1' },
+        })
+      );
+      expect(mockPrisma.conversationParticipant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('restricts existing DIRECT lookup in POST /conversations to only those 2 participants', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findFirst.mockResolvedValueOnce({
+        id: 'conv-clean-direct',
+        type: 'DIRECT',
+        participants: [{ userId: 'u1' }, { userId: 'u2' }],
+      });
+
+      const res = await request(app)
+        .post('/api/messaging/conversations')
+        .set('Authorization', createAuthHeader(user))
+        .send({ type: 'DIRECT', participantIds: ['u2'] });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.conversation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            type: 'DIRECT',
+            contextType: null,
+            AND: expect.arrayContaining([
+              { participants: { some: { userId: 'u1' } } },
+              { participants: { some: { userId: 'u2' } } },
+              { participants: { every: { userId: { in: ['u1', 'u2'] } } } },
+            ]),
+          }),
+        })
+      );
+    });
+
+    it('rejects renaming non-GROUP conversations in PATCH /conversations/:id with 400', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      mockPrisma.conversation.findUnique.mockResolvedValueOnce({
+        id: 'conv-direct',
+        type: 'DIRECT',
+        title: null,
+        participants: [{ userId: 'u1' }, { userId: 'u2' }],
+      });
+
+      const res = await request(app)
+        .patch('/api/messaging/conversations/conv-direct')
+        .set('Authorization', createAuthHeader(user))
+        .send({ title: 'Should Not Work' });
+
+      expect(res.status).toBe(400);
+      expect(mockPrisma.conversation.update).not.toHaveBeenCalled();
+    });
+  });
 });
