@@ -5,6 +5,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 // Route imports
 import rolesRoutes from './routes/roles.routes';
+import permissionsRoutes from './routes/permissions.routes';
 import authRoutes from './routes/auth.routes';
 import usersRoutes from './routes/users.routes';
 import activityLogRoutes from './routes/activityLog.routes';
@@ -22,7 +23,7 @@ import notificationsRoutes from './routes/notifications.routes';
 import permitsRoutes from './routes/permits.routes';
 import wasteCatalogRoutes from './routes/wasteCatalog.routes';
 import historyRoutes from './routes/history.routes';
-import { chatRouter } from './routes/chat.routes';
+import { messagingRouter } from './routes/messaging.routes';
 
 // Import rate limiters (currently defined in index.ts or authUtils, let's assume we need to import or recreate them)
 import rateLimit from 'express-rate-limit';
@@ -77,6 +78,7 @@ export function createApp() {
 
   // Mount routes
   app.use(API_ROUTES.ROLES, rolesRoutes);
+  app.use(API_ROUTES.PERMISSIONS, permissionsRoutes);
   app.use(API_ROUTES.AUTH.BASE, authRoutes);
   app.use(API_ROUTES.USERS, usersRoutes);
   app.use(API_ROUTES.ACTIVITY_LOGS.BASE, activityLogRoutes);
@@ -94,7 +96,7 @@ export function createApp() {
   app.use(API_ROUTES.PERMITS, permitsRoutes);
   app.use(API_ROUTES.WASTE_CATALOG, wasteCatalogRoutes);
   app.use(API_ROUTES.HISTORY, historyRoutes);
-  app.use(API_ROUTES.CHAT, chatRouter);
+  app.use(API_ROUTES.MESSAGING, messagingRouter);
 
   // Handle undefined routes
   app.use((req, res) => {

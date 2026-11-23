@@ -81,13 +81,13 @@ flowchart TD
         WasteCatalog["WasteCatalog<br/>(Serbian Waste Index)"]:::env
     end
 
-    subgraph Workflow ["Tasks, Chat & Notifications"]
+    subgraph Workflow ["Tasks, Messaging & Notifications"]
         Reminder["Reminder<br/>(Multi-parent Tasks)"]:::workflow
         Notification["Notification<br/>(In-App Mentions)"]:::workflow
         ActivityLog["ActivityLog<br/>(Audit & Usage)"]:::workflow
-        ChatConversation["ChatConversation<br/>(Direct / Group / Project)"]:::workflow
-        ChatParticipant["ChatParticipant<br/>(Membership & Read State)"]:::workflow
-        ChatMessage["ChatMessage<br/>(Sequential Messages)"]:::workflow
+        Conversation["Conversation<br/>(Direct / Group / Project)"]:::workflow
+        ConversationParticipant["ConversationParticipant<br/>(Membership & Read State)"]:::workflow
+        Message["Message<br/>(Sequential Messages)"]:::workflow
     end
 
     subgraph Config ["Configuration"]
@@ -117,10 +117,10 @@ flowchart TD
 
     User -->|"receives"| Notification
     User -->|"generates"| ActivityLog
-    User -->|"participates in"| ChatParticipant
-    User -->|"sends"| ChatMessage
-    ChatConversation -->|"members"| ChatParticipant
-    ChatConversation -->|"messages"| ChatMessage
+    User -->|"participates in"| ConversationParticipant
+    User -->|"sends"| Message
+    Conversation -->|"members"| ConversationParticipant
+    Conversation -->|"messages"| Message
     Project -.->|"context for"| Notification
     Project -.->|"milestone for"| Reminder
     Client -.->|"follow-up on"| Reminder
@@ -140,12 +140,12 @@ erDiagram
     USER ||--o{ NOTIFICATION : "receives alerts (userId) [CASCADE]"
     USER ||--o{ ACTIVITY_LOG : "performs actions (userId) [CASCADE]"
     USER ||--o{ REMINDER : "responsible for (responsibleId) [SET NULL]"
-    USER ||--o{ CHAT_PARTICIPANT : "joins (userId) [CASCADE]"
-    USER ||--o{ CHAT_MESSAGE : "sends (senderId) [CASCADE]"
+    USER ||--o{ CONVERSATION_PARTICIPANT : "joins (userId) [CASCADE]"
+    USER ||--o{ MESSAGE : "sends (senderId) [CASCADE]"
 
-    CHAT_CONVERSATION ||--o{ CHAT_PARTICIPANT : "participants (conversationId) [CASCADE]"
-    CHAT_CONVERSATION ||--o{ CHAT_MESSAGE : "messages (conversationId) [CASCADE]"
-    CHAT_MESSAGE ||--o{ CHAT_MESSAGE : "replies (replyToId) [SET NULL]"
+    CONVERSATION ||--o{ CONVERSATION_PARTICIPANT : "participants (conversationId) [CASCADE]"
+    CONVERSATION ||--o{ MESSAGE : "messages (conversationId) [CASCADE]"
+    MESSAGE ||--o{ MESSAGE : "replies (replyToId) [SET NULL]"
 
     CLIENT ||--o{ PROJECT : "engages (clientId)"
     CLIENT ||--o{ REMINDER : "associated with (clientId) [SET NULL]"
@@ -329,7 +329,7 @@ erDiagram
         string details
     }
 
-    CHAT_CONVERSATION {
+    CONVERSATION {
         string id PK
         string type
         string title
@@ -338,7 +338,7 @@ erDiagram
         int messageSeq
     }
 
-    CHAT_PARTICIPANT {
+    CONVERSATION_PARTICIPANT {
         string id PK
         string conversationId FK
         string userId FK
@@ -347,7 +347,7 @@ erDiagram
         boolean isArchived
     }
 
-    CHAT_MESSAGE {
+    MESSAGE {
         string id PK
         string conversationId FK
         int seq
@@ -1021,14 +1021,14 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 
 ---
 
-### 4.24. `ChatConversation`
-*Direct, group, and contextual (e.g. project-scoped) chat conversations.*
+### 4.24. `Conversation`
+*Direct, group, and contextual (e.g. project-scoped) conversations.*
 
 | Field | Type | Modifiers | Constraints | Description |
 |---|---|---|---|---|
 | `id` | `String` | Required | `@id @default(uuid())` | Primary key |
-| `type` | `ChatType` | Required | `@default(DIRECT)` | `DIRECT`, `GROUP`, or `CONTEXTUAL` |
-| `title` | `String` | Optional | | Custom conversation title (group or contextual chats) |
+| `type` | `ConversationType` | Required | `@default(DIRECT)` | `DIRECT`, `GROUP`, or `CONTEXTUAL` |
+| `title` | `String` | Optional | | Custom conversation title (group or contextual discussions) |
 | `contextType` | `String` | Optional | | Context entity type (e.g. `"PROJECT"`) |
 | `contextId` | `String` | Optional | | Context entity UUID (e.g. `projectId`) |
 | `messageSeq` | `Int` | Required | `@default(0)` | Monotonically increasing sequence counter for messages |
@@ -1040,20 +1040,20 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `updatedAt` | `DateTime` | Required | `@updatedAt` | Last modification timestamp |
 
 **Indexes & Constraints:**
-- `@@unique([contextType, contextId])` — Ensures a single contextual chat per entity (e.g. per project)
+- `@@unique([contextType, contextId])` — Ensures a single contextual conversation per entity (e.g. per project)
 - `@@index([contextType, contextId])`
 - `@@index([lastMessageAt(sort: Desc)])` — Conversation list sorting
 - `@@index([updatedAt])`
 
 ---
 
-### 4.25. `ChatParticipant`
+### 4.25. `ConversationParticipant`
 *User membership, read sequence watermark, and archive/unread state per conversation.*
 
 | Field | Type | Modifiers | Constraints | Description |
 |---|---|---|---|---|
 | `id` | `String` | Required | `@id @default(uuid())` | Primary key |
-| `conversationId` | `String` | Required | FK to `ChatConversation.id` | Target conversation |
+| `conversationId` | `String` | Required | FK to `Conversation.id` | Target conversation |
 | `userId` | `String` | Required | FK to `User.id` | Participating user |
 | `lastReadSeq` | `Int` | Required | `@default(0)` | Highest message sequence number read by the user |
 | `lastReadAt` | `DateTime` | Required | `@default(now())` | Timestamp when the user last read the conversation |
@@ -1063,21 +1063,21 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 **Indexes & Constraints:**
 - `@@unique([conversationId, userId])` — One participant record per user per conversation
 - `@@index([userId])` — Fast lookup of user's active conversations
-- `onDelete: Cascade` to `ChatConversation` and `User`
+- `onDelete: Cascade` to `Conversation` and `User`
 
 ---
 
-### 4.26. `ChatMessage`
-*Sequential chat messages supporting reply threading, edits, and soft-delete tombstones.*
+### 4.26. `Message`
+*Sequential messages supporting reply threading, edits, and soft-delete tombstones.*
 
 | Field | Type | Modifiers | Constraints | Description |
 |---|---|---|---|---|
 | `id` | `String` | Required | `@id @default(uuid())` | Primary key |
-| `conversationId` | `String` | Required | FK to `ChatConversation.id` | Parent conversation |
+| `conversationId` | `String` | Required | FK to `Conversation.id` | Parent conversation |
 | `seq` | `Int` | Required | `@default(0)` | Sequential message number within the conversation |
 | `senderId` | `String` | Required | FK to `User.id` | Author user reference |
 | `content` | `String` | Required | `@db.Text` | Message text content (cleared on soft-delete) |
-| `replyToId` | `String` | Optional | FK to `ChatMessage.id` | Optional quoted parent message |
+| `replyToId` | `String` | Optional | FK to `Message.id` | Optional quoted parent message |
 | `isEdited` | `Boolean` | Required | `@default(false)` | Flag indicating message was edited |
 | `editedAt` | `DateTime` | Optional | | Timestamp of last edit |
 | `isDeleted` | `Boolean` | Required | `@default(false)` | Soft-delete tombstone flag for delta sync |
@@ -1088,8 +1088,8 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 - `@@unique([conversationId, seq])` — Deterministic sequence ordering and cursor pagination (`beforeSeq`, `afterSeq`)
 - `@@index([conversationId, updatedAt])` — Incremental delta sync of edited/deleted messages (`sinceUpdatedAt`)
 - `@@index([senderId])`
-- `onDelete: Cascade` to `ChatConversation` and `User`
-- `onDelete: SetNull` to `replyTo` (`ChatMessage`)
+- `onDelete: Cascade` to `Conversation` and `User`
+- `onDelete: SetNull` to `replyTo` (`Message`)
 
 ---
 
@@ -1125,11 +1125,11 @@ All four parent links are completely optional (`String?`), meaning a reminder ca
 | `ActivityLog` | `userId` | `User` | N:1 | **`Cascade`** |
 | `ActivityLogMonthlyStats` | `userId` | `User` | N:1 | **`Cascade`** |
 | `EntityVersion` | `changeSetId` | `ChangeSet` | N:1 | **`Cascade`** |
-| `ChatParticipant` | `conversationId` | `ChatConversation` | N:1 | **`Cascade`** |
-| `ChatParticipant` | `userId` | `User` | N:1 | **`Cascade`** |
-| `ChatMessage` | `conversationId` | `ChatConversation` | N:1 | **`Cascade`** |
-| `ChatMessage` | `senderId` | `User` | N:1 | **`Cascade`** |
-| `ChatMessage` | `replyToId` | `ChatMessage` | N:1 | **`SetNull`** |
+| `ConversationParticipant` | `conversationId` | `Conversation` | N:1 | **`Cascade`** |
+| `ConversationParticipant` | `userId` | `User` | N:1 | **`Cascade`** |
+| `Message` | `conversationId` | `Conversation` | N:1 | **`Cascade`** |
+| `Message` | `senderId` | `User` | N:1 | **`Cascade`** |
+| `Message` | `replyToId` | `Message` | N:1 | **`SetNull`** |
 
 ---
 
@@ -1182,9 +1182,9 @@ Indexes are optimized for foreign key lookups, frequent status filtering, and so
 | `ProjectNote` | `projectId` | UNIQUE | 1:1 project note lookup |
 | `ProjectNoteVersion` | `[noteId, version]` | UNIQUE | Sequential note version uniqueness |
 | `ProjectNoteVersion` | `[noteId, kind, version]`, `[noteId, createdAt]` | INDEX | Keyframe lookup & note timeline |
-| `ChatConversation` | `[contextType, contextId]` | UNIQUE | Single contextual chat per entity |
-| `ChatConversation` | `[lastMessageAt(sort: Desc)]`, `[updatedAt]` | INDEX | Conversation list ordering |
-| `ChatParticipant` | `[conversationId, userId]` | UNIQUE | Participant membership uniqueness |
-| `ChatParticipant` | `[userId]` | INDEX | User conversation membership lookup |
-| `ChatMessage` | `[conversationId, seq]` | UNIQUE | Message sequence ordering & cursor pagination |
-| `ChatMessage` | `[conversationId, updatedAt]`, `[senderId]` | INDEX | Message delta sync and sender lookup |
+| `Conversation` | `[contextType, contextId]` | UNIQUE | Single contextual conversation per entity |
+| `Conversation` | `[lastMessageAt(sort: Desc)]`, `[updatedAt]` | INDEX | Conversation list ordering |
+| `ConversationParticipant` | `[conversationId, userId]` | UNIQUE | Participant membership uniqueness |
+| `ConversationParticipant` | `[userId]` | INDEX | User conversation membership lookup |
+| `Message` | `[conversationId, seq]` | UNIQUE | Message sequence ordering & cursor pagination |
+| `Message` | `[conversationId, updatedAt]`, `[senderId]` | INDEX | Message delta sync and sender lookup |

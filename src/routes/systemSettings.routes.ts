@@ -2,13 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
-import { UserRole } from '../types';
+import { hasPermission } from '../types';
 import { SYSTEM_SETTING_KEYS } from '../constants/domain';
-
-function isUserAdmin(authUser: any): boolean {
-  if (!authUser) return false;
-  return authUser.role === UserRole.ADMINISTRATOR || Boolean(authUser.roleEntity?.isSystemAdmin);
-}
 
 const router = Router();
 
@@ -56,11 +51,11 @@ router.get('/:key', asyncHandler(async (req, res) => {
   res.json({ key: setting.key, value: parsedValue });
 }));
 
-// PUT /api/system-settings/:key (Admin only)
+// PUT /api/system-settings/:key
 router.put('/:key', asyncHandler(async (req, res) => {
   const authUser = req.authUser!;
-  if (!isUserAdmin(authUser)) {
-    res.status(403).json({ error: 'FORBIDDEN', message: 'Only administrators can update system settings.' });
+  if (!hasPermission(authUser, 'systemSettings', 'edit')) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Permission denied. Missing systemSettings edit permission.' });
     return;
   }
 

@@ -7,9 +7,10 @@ const API_PREFIX_TO_PAGE_ROUTE: Array<{ prefix: string; page: string }> = [
   { prefix: "/api/services", page: "/data-management/services" },
   { prefix: "/api/permits", page: "/data-management/permits" },
   { prefix: "/api/users", page: "/data-management/users" },
-  { prefix: "/api/roles", page: "/data-management/roles" },
+  { prefix: "/api/roles", page: "/system/roles" },
   { prefix: "/api/reminders", page: "/data-management/reminders" },
-  { prefix: "/api/activity-logs", page: "/data-management/activity-logs" },
+  { prefix: "/api/activity-logs", page: "/system/activity-logs" },
+  { prefix: "/api/system-settings", page: "/system/settings" },
 ];
 
 export function getCanonicalPagePath(rawPath?: string | null): string {

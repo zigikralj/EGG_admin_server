@@ -12,6 +12,7 @@ export const API_ROUTES = {
     REGISTER: '/api/auth/register',
   },
   ROLES: '/api/roles',
+  PERMISSIONS: '/api/permissions',
   USERS: '/api/users',
   PROJECTS: {
     BASE: '/api/projects',
@@ -34,7 +35,7 @@ export const API_ROUTES = {
   },
   HISTORY: '/api/history',
   IMPORT: '/api/import',
-  CHAT: '/api/chat',
+  MESSAGING: '/api/messaging',
 } as const;
 
 /**

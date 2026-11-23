@@ -4,7 +4,7 @@ import type { User } from '@prisma/client';
 import { prisma } from '../db';
 import { verifyToken } from '../authUtils';
 import { requestContext } from '../context';
-import { isUserSystemAdmin, getUserPermissions, type AuthenticatedUser } from '../types';
+import { isUserSystemAdmin, getUserPermissions, getUserRoleLevel, type AuthenticatedUser } from '../types';
 import { USER_STATUSES, ERROR_CODES } from '../constants';
 
 // ---------------------------------------------------------------------------
@@ -29,11 +29,11 @@ declare global {
 export const userForceLogoutMap = new Map<string, number>();
 
 interface CachedUser {
-  user: User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean };
+  user: User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean; roleLevel?: number };
   expiresAt: number;
 }
 const userAuthCache = new Map<string, CachedUser>();
-const USER_AUTH_CACHE_TTL_MS = 60_000; // 60 seconds
+const USER_AUTH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export function invalidateUserAuthCache(userId?: string): void {
   if (userId) {
@@ -55,7 +55,7 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref(); // .unref() so the interval doesn't block process exit
 
-async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean }) | null> {
+async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?: any; permissions?: Record<string, any>; isSystemAdmin?: boolean; roleLevel?: number }) | null> {
   const cached = userAuthCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.user;
@@ -68,6 +68,7 @@ async function fetchUserWithRole(userId: string): Promise<(User & { roleEntity?:
     const user = {
       ...dbUser,
       isSystemAdmin: isUserSystemAdmin(dbUser),
+      roleLevel: getUserRoleLevel(dbUser),
       permissions: getUserPermissions(dbUser) ?? {},
     };
     userAuthCache.set(userId, { user, expiresAt: Date.now() + USER_AUTH_CACHE_TTL_MS });

@@ -42,41 +42,44 @@ Every route file follows the same pattern:
 | File | Mount Path | Purpose |
 |---|---|---|
 | `auth.routes.ts` | `/api/auth` | Login, register, `/me`. Login/register are public. |
-| `roles.routes.ts` | `/api/roles` | Dynamic role CRUD and granular permissions management. Admin only. |
-| `users.routes.ts` | `/api/users` | Paginated user CRUD, lightweight `?fields=summary\|mention` directory queries, approve/reject, force-logout. Admin/Manager write. |
-| `projects.routes.ts` | `/api/projects` | Paginated project CRUD, SQL-aggregated `/statistics`, note revisions/diffs, `/updates` feed, delta sync. Owner or Admin/Manager write. |
-| `clients.routes.ts` | `/api/clients` | Paginated client CRUD with permit linking via `ClientExtraData`, summary mode, delta sync. Admin/Manager write. |
-| `invoices.routes.ts` | `/api/invoices` | Paginated invoice CRUD with line items (`InvoiceItem`), parent/child invoices, status transitions, delta sync. Admin/Manager/Accountant write. |
-| `services.routes.ts` | `/api/services` | Paginated/cached service type definitions and custom data models (`customDataModel`). Admin/Manager write. |
-| `categories.routes.ts` | `/api/categories` | Category CRUD with reference caching. Admin/Manager write. |
-| `providedServices.routes.ts` | `/api/provided-services` | Paginated service delivery records, waste disposal SQL statistics (`/statistics/waste` & `/statistics/waste/clients`), delta sync. Admin/Manager write. |
-| `reminders.routes.ts` | `/api/reminders` | Paginated reminders/tasks linked to project/client/permit, quick filters (including incomplete/active), delta sync. Owner or Admin/Manager write. |
-| `permits.routes.ts` | `/api/permits` | Paginated permit CRUD with waste catalog junction, summary mode, delta sync. Admin/Manager write. |
-| `wasteCatalog.routes.ts` | `/api/waste-catalog` | Serbian waste index catalog. Delta sync, reference cache, pagination, favorite toggling, and delete. Admin/Manager write. |
-| `history.routes.ts` | `/api/history` | Entity version timeline, diffs by version/date, snapshot inspection, and point-in-time restoration. |
-| `chat.routes.ts` | `/api/chat` | Real-time messaging & contextual project chat: SSE `/stream`, `/unread-summary`, direct/group/contextual conversations, sequence-numbered messages, delta sync, @mentions, replies, mute, and Do Not Disturb (DND). |
-| `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions and chat. Own notifications only. |
-| `systemSettings.routes.ts` | `/api/system-settings` | Global system settings (`waste_disposal_service_id`, etc.) with enriched waste disposal service lookup. Admin write. |
-| `companyInfo.routes.ts` | `/api/company-info` | Singleton company record with reference caching. Admin/Manager write. |
-| `preferences.routes.ts` | `/api/preferences` | Per-user key-value settings (theme, language, table columns, chat mute/DND). Own preferences only. |
-| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, `/summary`, `/monthly-stats`, lazy diff loading, purge, and `/analytics` endpoint. |
+| `roles.routes.ts` | `/api/roles` | Dynamic role CRUD, catalog ceiling validation, and `Role.level` hierarchy enforcement (`roles` permissions). |
+| `permissions.routes.ts` | `/api/permissions` | Serves server-owned `PERMISSION_CATALOG` (`GET /api/permissions/catalog`) with reference caching. |
+| `users.routes.ts` | `/api/users` | Paginated user CRUD, lightweight `?fields=summary\|mention` directory queries, approve/reject, force-logout with strict `Role.level` hierarchy. |
+| `projects.routes.ts` | `/api/projects` | Paginated project CRUD, SQL-aggregated `/statistics`, note revisions/diffs, `/updates` feed, delta sync. Owner or `projects` permission. |
+| `clients.routes.ts` | `/api/clients` | Paginated client CRUD with permit linking via `ClientExtraData`, summary mode, delta sync. |
+| `invoices.routes.ts` | `/api/invoices` | Paginated invoice CRUD with line items (`InvoiceItem`), parent/child invoices, status transitions, delta sync. |
+| `services.routes.ts` | `/api/services` | Paginated/cached service type definitions and custom data models (`customDataModel`). |
+| `categories.routes.ts` | `/api/categories` | Category CRUD with reference caching. |
+| `providedServices.routes.ts` | `/api/provided-services` | Paginated service delivery records, waste disposal SQL statistics (`/statistics/waste` & `/statistics/waste/clients`), delta sync. |
+| `reminders.routes.ts` | `/api/reminders` | Paginated reminders/tasks linked to project/client/permit, quick filters (including incomplete/active), delta sync. |
+| `permits.routes.ts` | `/api/permits` | Paginated permit CRUD with waste catalog junction, summary mode, delta sync. |
+| `wasteCatalog.routes.ts` | `/api/waste-catalog` | Serbian waste index catalog. Delta sync, reference cache, pagination, favorite toggling, and delete. |
+| `history.routes.ts` | `/api/history` | Entity version timeline, diffs by version/date, snapshot inspection, and point-in-time restoration (with `Role.level` check for `User` restore). |
+| `messaging.routes.ts` | `/api/messaging` | Real-time messaging & contextual project messaging: SSE `/stream`, `/unread-summary`, direct/group/contextual conversations, sequence-numbered messages, delta sync, @mentions, replies, mute, DND, and granular `messaging` (`delete`, `moderate`) checks. |
+| `notifications.routes.ts` | `/api/notifications` | User notifications from @mentions and messages. Own notifications only. |
+| `systemSettings.routes.ts` | `/api/system-settings` | Global system settings (`waste_disposal_service_id`, etc.) with enriched waste disposal service lookup (`systemSettings` permissions). |
+| `companyInfo.routes.ts` | `/api/company-info` | Singleton company record with reference caching. |
+| `preferences.routes.ts` | `/api/preferences` | Per-user key-value settings (theme, language, table columns, messaging mute/DND). Own preferences only. |
+| `activityLog.routes.ts` | `/api/activity-logs` | User session & audit activity logs. Batch ingestion, `/summary`, `/monthly-stats`, lazy diff loading, purge (`activityLogs`), and `/analytics` (`activityAnalytics`). |
 
-### Services & Helper Utilities (`src/services/`, `src/helpers/`)
+### Services & Helper Utilities (`src/services/`, `src/helpers/`, `src/constants/`)
 | File | Purpose |
 |---|---|
-| `src/services/chat/sseHub.ts` | `ChatSSEHub` managing per-user SSE connections, 25s heartbeat keepalives, online user presence broadcasting, and real-time chat/notification event delivery |
+| `src/constants/permissionCatalog.ts` | Server-owned `PERMISSION_CATALOG`, `sanitizeRolePermissions`, and `findUnauthorizedGrants` for apps, resources, actions, and `supportsOnlyOwn` |
+| `src/helpers/roleLevels.ts` | DB-backed role level resolution and generic comparison helpers (`isRoleGreaterThan`, `isRoleAtLeast`, `isRoleLessThan`, `isRoleAtMost`, `isRoleEqualTo`, `isRoleNameSystemAdmin`) |
+| `src/services/messaging/sseHub.ts` | `MessagingSSEHub` managing per-user SSE connections, 25s heartbeat keepalives, online user presence broadcasting, and real-time messaging/notification event delivery |
 | `src/services/projectStatistics.service.ts` | Raw SQL aggregation engine for Project Tracker statistics (status counts, per-user load, category distribution, 12-month completion mountain chart, top clients by paid invoices) |
 | `src/services/wasteStatistics.service.ts` | Raw SQL aggregation engine for Waste Disposal statistics (KPIs, dynamic `customDataModel` weight extraction in kg/tons, year-over-year monthly comparison series, and paginated client waste rankings) |
 | `src/services/versioning.service.ts` | Entity version resolution, timeline aggregation, field-level diff calculation, and point-in-time entity restoration |
 | `src/services/noteDelta.service.ts` | Delta-based note revision tracking, keyframe snapshots ('S') vs diff patches ('D'), character deltas, and note restoration |
 | `src/services/activityAnalytics.service.ts` | Activity Analytics aggregation engine (KPIs, timelines, top pages, actions by entity, user usage, heatmap, session duration distribution, transitions, stickiness) |
 | `src/helpers/pagination.ts` | Standardized server-side pagination parser (`parsePagination`) and response envelope builder (`buildPaginatedResponse`) |
-| `src/helpers/deltaSync.ts` | Delta sync utilities: `parseSince()`, `fetchDeletedIds()` via `EntityVersion` tombstones (`op: 'D'`), `buildDeltaResponse()`, and `purgeOldEntityVersions()` (also purges old soft-deleted `ChatMessage` tombstones) |
+| `src/helpers/deltaSync.ts` | Delta sync utilities: `parseSince()`, `fetchDeletedIds()` via `EntityVersion` tombstones (`op: 'D'`), `buildDeltaResponse()`, and `purgeOldEntityVersions()` (also purges old soft-deleted `Message` tombstones) |
 | `src/helpers/referenceCache.ts` | In-memory cache with 10m TTL for slowly changing reference data (Services, Categories, CompanyInfo, Roles, WasteCatalog) |
 | `src/helpers/analyticsCache.ts` | In-memory 60-second TTL cache for analytics queries with automatic invalidation on activity log deletions |
 | `src/helpers/activityLogger.ts` | Non-blocking batched in-memory activity log buffer with auto-flush (5s / 50 items), monthly rollup aggregation, and daily retention purge |
 | `src/helpers/dateUtils.ts` | `addMonths()`, `daysUntil()`, `isStale()` — date arithmetic for project scheduling |
-| `src/helpers/mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes and chat messages, creates Notification records |
+| `src/helpers/mentionHelper.ts` | `extractMentionedUserIds()`, `handleProjectNotesMentions()` — parses @mentions from HTML notes and direct/group/project messages, creates Notification records |
 | `src/helpers/htmlUtils.ts` | `stripHtmlToText()`, `cleanWordHtml()` — server-side HTML sanitization, entity decoding, and plain-text preview extraction |
 | `src/helpers/pathUtils.ts` | Canonical route normalization for activity logs and analytics |
 | `src/cleanWordNotes.ts` | Standalone maintenance script to sanitize and clean Microsoft Word metadata, XML, and non-breaking spaces from rich text notes |
@@ -94,7 +97,7 @@ Every route file follows the same pattern:
 ### Database Schema
 | File | Purpose |
 |---|---|
-| `prisma/schema.prisma` | **Source of truth** for all database models. **27 models + 1 enum (`ChatType`)**. PostgreSQL. Uses UUID primary keys. |
+| `prisma/schema.prisma` | **Source of truth** for all database models. **27 models + 1 enum (`ConversationType`)**. PostgreSQL. Uses UUID primary keys. |
 | `prisma.config.ts` | Prisma config — loads env vars for `DATABASE_URL` |
 
 ---
@@ -178,19 +181,19 @@ const where = search ? {
 - **PermitWaste** — junction table: which waste types a permit covers.
 - **ClientExtraData** — links a client to their permit.
 
-### User, Notification & Real-Time Chat System
-- **User** — roles: Administrator, Manager, User, Accountant (or custom dynamic `Role`).
-- **Role** — dynamic role definitions with `isSystemAdmin` flag and JSON `permissions` matrix.
-- **UserPreference** — KV store per user (unique `userId+key`), including UI settings, table preferences, `chat_mute_map`, and `chat_dnd_until`.
-- **Notification** — @mention and chat notifications.
-- **ChatConversation** — conversations of type `DIRECT`, `GROUP`, or `CONTEXTUAL` (e.g. `contextType: "PROJECT"`, `contextId: projectId`), tracking `messageSeq` and denormalized last-message preview.
-- **ChatParticipant** — links users to conversations with `lastReadSeq`, `lastReadAt`, `isManuallyUnread`, and `isArchived`.
-- **ChatMessage** — sequential (`seq`) messages within a conversation supporting reply threading (`replyToId`), edits (`isEdited`), and soft-delete tombstones (`isDeleted`).
+### User, Notification & Real-Time Messaging System
+- **User** — dynamic `Role` reference (`role` + `roleLevel` + `isSystemAdmin`).
+- **Role** — dynamic role definitions with `level Int`, `isSystemAdmin` flag, and JSON `permissions` matrix validated against `PERMISSION_CATALOG`.
+- **UserPreference** — KV store per user (unique `userId+key`), including UI settings, table preferences, `messaging_mute_map`, and `messaging_dnd_until`.
+- **Notification** — @mention and messaging notifications.
+- **Conversation** — conversations of type `DIRECT`, `GROUP`, or `CONTEXTUAL` (e.g. `contextType: "PROJECT"`, `contextId: projectId`), tracking `messageSeq` and denormalized last-message preview.
+- **ConversationParticipant** — links users to conversations with `lastReadSeq`, `lastReadAt`, `isManuallyUnread`, and `isArchived`.
+- **Message** — sequential (`seq`) messages within a conversation supporting reply threading (`replyToId`), edits (`isEdited`), and soft-delete tombstones (`isDeleted`).
 
 ### Audit, Analytics & Versioning
 - **ChangeSet** — transaction-level container grouping entity version changes by request, user, route, and method.
 - **EntityVersion** — field-level delta and snapshot tracking for entity modifications and deletion tombstones (`op: 'I'|'U'|'D'|'B'`).
-- **ActivityLog** — user audit and navigation logs (Administrator only).
+- **ActivityLog** — user audit and navigation logs (`activityLogs` & `activityAnalytics` permissions).
 - **ActivityLogMonthlyStats** — monthly rolled-up session and duration metrics per user and module.
 - **SystemSetting** — global key-value application settings (e.g. `waste_disposal_service_id`, `activity_logging_enabled`, `activity_log_retention_days`).
 - **Category** — project categories.
@@ -252,8 +255,9 @@ npm run db:purge-logs                  # Purge expired activity logs and entity 
 5. **Invoice items are replaced** — `PUT /api/invoices/:id` with `items` array deletes all existing items and re-creates them (inside a transaction).
 6. **Force logout is in-memory** — `userForceLogoutMap` is process-local. Resets on server restart. For multi-instance deployments, a shared store (e.g. Redis) is needed.
 7. **Password never returned** — All user endpoints destructure out the `password` field before responding.
-8. **Manager < Administrator** — Managers cannot create, modify, or delete Administrator accounts, nor assign the Administrator role.
+8. **Strict `Role.level` hierarchy & grant ceiling** — Non-system-admin users with user/role permissions can only manage/assign/restore roles and users strictly below their own `Role.level` (`isRoleLessThan`) and cannot grant permissions they do not hold or remove `onlyOwn` restrictions they are subject to.
 9. **ALWAYS use migrations, NEVER db push** — Render runs `npx prisma migrate deploy` on deployment. Every schema change must have a corresponding migration file in `prisma/migrations/`. Using `db push` skips migration tracking, causes schema drift, and breaks deployments.
 10. **Squash Pre-Production Migrations** — Always consolidate micro-migrations created during feature development into a single clean migration before deploying to staging/production. Do not ship intermediate iterations (e.g. creating a table, adding a column, dropping/re-creating indexes) if they all belong to the same initial feature release.
 11. **HARD RULE: No Hardcoded Names for Service Identification** — NEVER use hardcoded service names or string aliases (e.g., `'Zbrinjavanje otpada'`, `'Waste Disposal'`, `'Odlaganje otpada'`, etc.) to search, identify, or auto-fallback to services in backend routes, database queries, or server logic. The Waste Disposal service is configured exclusively by the Administrator in the UI and persisted to `SystemSetting` (`waste_disposal_service_id`). If not configured, it must remain unconfigured without guessing.
+12. **HARD RULE: NO ROLE NAMES IN AUTHORIZATION LOGIC** — NEVER branch on role display names (such as `'Manager'`, `'Accountant'`, or `isManagerPlus`) in routes or services. Always use `PERMISSION_CATALOG` / `hasPermission` + DB-backed `roleLevels.ts` comparison helpers (`Administrator` / `isSystemAdmin` and initial `'User'` default are the only special cases).
 

@@ -22,7 +22,7 @@ export interface AnalyticsTotals {
   avgPagesPerSession: number;
 }
 
-export interface ChatUsageAnalytics {
+export interface MessagingUsageAnalytics {
   directCount: number;
   projectCount: number;
   groupCount: number;
@@ -34,7 +34,7 @@ export interface ActivityAnalytics {
   range: { from: string; to: string; granularity: 'day' | 'week' | 'month'; tz: string };
   totals: AnalyticsTotals;
   previousTotals: AnalyticsTotals | null;
-  chatUsage: ChatUsageAnalytics;
+  messagingUsage: MessagingUsageAnalytics;
   timeline: Array<{
     bucket: string;
     activeUsers: number;
@@ -112,7 +112,7 @@ function buildWhereClause(
 
   if (excludeAdminPages) {
     conditions.push(
-      Prisma.sql`NOT ("type" = 'PAGE_VIEW' AND ("path" LIKE '/data-management/activity-logs%' OR "path" LIKE '/api/activity-logs%'))`
+      Prisma.sql`NOT ("type" = 'PAGE_VIEW' AND ("path" LIKE '/system/activity-logs%' OR "path" LIKE '/data-management/activity-logs%' OR "path" LIKE '/api/activity-logs%'))`
     );
   }
 
@@ -148,7 +148,7 @@ export async function getActivityAnalytics(
     dauRaw,
     wauRaw,
     mauRaw,
-    chatUsageRaw,
+    messagingUsageRaw,
   ] = await Promise.all([
     // 1. Totals
     prisma.$queryRaw<Array<{
@@ -489,13 +489,13 @@ export async function getActivityAnalytics(
       ${roles && roles.length > 0 ? Prisma.sql`AND "userId" IN (SELECT "id" FROM "User" WHERE "role"::text IN (${Prisma.join(roles)}))` : Prisma.empty}
     `,
 
-    // 19. Chat Usage breakdown (counts only, content-free)
-    prisma.$queryRaw<Array<{ chatType: string; count: number; uniqueUsers: number }>>`
-      SELECT "type" AS "chatType",
+    // 19. Messaging Usage breakdown (counts only, content-free)
+    prisma.$queryRaw<Array<{ messagingType: string; count: number; uniqueUsers: number }>>`
+      SELECT "type" AS "messagingType",
              COUNT(*)::int AS count,
              COUNT(DISTINCT "userId")::int AS "uniqueUsers"
       FROM "ActivityLog"
-      WHERE ${whereSql} AND "type" IN ('CHAT_MESSAGE_DIRECT', 'CHAT_MESSAGE_PROJECT', 'CHAT_MESSAGE_GROUP', 'PROJECT_CHAT_MESSAGE')
+      WHERE ${whereSql} AND "type" IN ('MESSAGE_DIRECT', 'MESSAGE_PROJECT', 'MESSAGE_GROUP')
       GROUP BY "type"
     `,
   ]);
@@ -503,21 +503,20 @@ export async function getActivityAnalytics(
   let directCount = 0;
   let projectCount = 0;
   let groupCount = 0;
-  const chatUniqueUsersSet = new Set<string>();
 
-  for (const row of (chatUsageRaw || [])) {
+  for (const row of (messagingUsageRaw || [])) {
     const c = Number(row.count) || 0;
-    if (row.chatType === 'CHAT_MESSAGE_DIRECT') directCount += c;
-    else if (row.chatType === 'CHAT_MESSAGE_PROJECT' || row.chatType === 'PROJECT_CHAT_MESSAGE') projectCount += c;
-    else if (row.chatType === 'CHAT_MESSAGE_GROUP') groupCount += c;
+    if (row.messagingType === 'MESSAGE_DIRECT') directCount += c;
+    else if (row.messagingType === 'MESSAGE_PROJECT') projectCount += c;
+    else if (row.messagingType === 'MESSAGE_GROUP') groupCount += c;
   }
 
-  const chatUsage: ChatUsageAnalytics = {
+  const messagingUsage: MessagingUsageAnalytics = {
     directCount,
     projectCount,
     groupCount,
     totalCount: directCount + projectCount + groupCount,
-    uniqueUsers: (chatUsageRaw || []).reduce((max, r) => Math.max(max, Number(r.uniqueUsers) || 0), 0),
+    uniqueUsers: (messagingUsageRaw || []).reduce((max, r) => Math.max(max, Number(r.uniqueUsers) || 0), 0),
   };
 
   // Process Totals
@@ -768,6 +767,6 @@ export async function getActivityAnalytics(
       mau,
     },
     totalRegisteredActiveUsers,
-    chatUsage,
+    messagingUsage,
   };
 }

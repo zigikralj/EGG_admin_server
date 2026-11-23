@@ -5,6 +5,7 @@
 export const APP_SECTIONS = {
   PROJECT_TRACKER: 'project-tracker',
   DATA_MANAGEMENT: 'data-management',
+  SYSTEM: 'system',
 } as const;
 
 export const RESOURCES = {
@@ -26,7 +27,11 @@ export const RESOURCES = {
   COMPANY_INFO: 'companyInfo',
   HISTORY: 'history',
   ACTIVITY_LOGS: 'activityLogs',
+  ACTIVITY_ANALYTICS: 'activityAnalytics',
+  SYSTEM_SETTINGS: 'systemSettings',
   STATISTICS: 'statistics',
+  MESSAGING: 'messaging',
+  MESSAGES: 'messages',
   APPS: 'apps',
 } as const;
 
@@ -36,4 +41,6 @@ export const PERMISSION_ACTIONS = {
   EDIT: 'edit',
   DELETE: 'delete',
   RESTORE: 'restore',
+  CONFIGURE: 'configure',
+  MODERATE: 'moderate',
 } as const;

@@ -68,15 +68,113 @@ export async function seed(force = false) {
     }
   }
 
+  // 1b. Seed Default Roles with Levels & Explicit Permissions
+  const initialRoles = [
+    {
+      name: UserRole.ADMINISTRATOR,
+      description: 'System Administrator',
+      level: 100,
+      isSystemAdmin: true,
+      permissions: {},
+    },
+    {
+      name: 'Manager',
+      description: 'Manager Role',
+      level: 50,
+      isSystemAdmin: false,
+      permissions: {
+        apps: ['project-tracker', 'data-management'],
+        tracker_projects: ['view', 'create', 'edit', 'delete'],
+        tracker_updates: ['view'],
+        tracker_reminders: ['view', 'create', 'edit', 'delete'],
+        tracker_invoices: ['view', 'create', 'edit', 'delete'],
+        wasteDisposal: ['view', 'create', 'edit', 'delete'],
+        statistics: ['view'],
+        messaging: ['delete', 'moderate'],
+        projects: ['view', 'create', 'edit', 'delete'],
+        clients: ['view', 'create', 'edit', 'delete'],
+        permits: ['view', 'create', 'edit', 'delete'],
+        users: ['view'],
+        services: ['view', 'create', 'edit', 'delete'],
+        providedServices: ['view', 'create', 'edit', 'delete'],
+        categories: ['view', 'create', 'edit', 'delete'],
+        reminders: ['view', 'create', 'edit', 'delete'],
+        invoices: ['view', 'create', 'edit', 'delete'],
+        companyInfo: ['view'],
+        history: ['view', 'restore'],
+      },
+    },
+    {
+      name: 'Accountant',
+      description: 'Accountant',
+      level: 20,
+      isSystemAdmin: false,
+      permissions: {
+        apps: ['project-tracker', 'data-management'],
+        tracker_projects: ['view'],
+        tracker_updates: ['view'],
+        tracker_reminders: ['view'],
+        tracker_invoices: ['view', 'create', 'edit', 'delete'],
+        wasteDisposal: ['view'],
+        messaging: [],
+        projects: ['view'],
+        clients: ['view'],
+        permits: ['view'],
+        users: [],
+        services: ['view'],
+        providedServices: ['view'],
+        categories: ['view'],
+        reminders: ['view'],
+        invoices: ['view', 'create', 'edit', 'delete'],
+      },
+    },
+    {
+      name: UserRole.USER,
+      description: 'Regular User',
+      level: 10,
+      isSystemAdmin: false,
+      permissions: {
+        apps: ['project-tracker'],
+        tracker_projects: ['view'],
+        tracker_updates: ['view'],
+        tracker_reminders: ['view', 'create', 'edit'],
+        tracker_invoices: ['view'],
+        wasteDisposal: ['view', 'create', 'edit'],
+        messaging: [],
+        projects: ['view'],
+        clients: ['view'],
+        permits: ['view'],
+        users: [],
+        services: ['view'],
+        providedServices: ['view', 'create', 'edit'],
+        categories: ['view'],
+        reminders: ['view', 'create', 'edit'],
+        invoices: ['view'],
+      },
+    },
+  ];
+
+  for (const r of initialRoles) {
+    const existingRole = await prisma.role.findUnique({ where: { name: r.name } });
+    if (!existingRole) {
+      await prisma.role.create({ data: r });
+    } else if (existingRole.level !== r.level) {
+      await prisma.role.update({
+        where: { name: r.name },
+        data: { level: r.level },
+      });
+    }
+  }
+
   // 2. Seed Users / Staff
   const defaultPasswordHash = hashPassword('password123');
   const initialUsers = [
     { name: 'Zigi', email: 'zigi@ekosgreen.rs', role: UserRole.ADMINISTRATOR, phone: '+381 36 311 099', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
-    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
-    { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: UserRole.MANAGER, phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Aleksandar Stanković', email: 'aleksandar@ekosgreen.rs', role: 'Manager', phone: '+381 36 311 100', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Nenad Jovanović', email: 'nenad@ekosgreen.rs', role: 'Manager', phone: '+381 36 311 101', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
     { name: 'Marija Petrović', email: 'marija@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 102', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
     { name: 'Petar Marković', email: 'petar@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 103', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
-    { name: 'Katarina Popović', email: 'katarina@ekosgreen.rs', role: UserRole.ACCOUNTANT, phone: '+381 36 311 106', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
+    { name: 'Katarina Popović', email: 'katarina@ekosgreen.rs', role: 'Accountant', phone: '+381 36 311 106', password: defaultPasswordHash, isApproved: true, status: USER_STATUSES.APPROVED },
     { name: 'Jovana Nikolić', email: 'jovana@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 104', password: defaultPasswordHash, isApproved: false, status: USER_STATUSES.BLOCKED },
     { name: 'Marko Simić', email: 'marko@ekosgreen.rs', role: UserRole.USER, phone: '+381 36 311 105', password: defaultPasswordHash, isApproved: false, status: USER_STATUSES.PENDING },
   ];

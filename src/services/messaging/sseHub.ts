@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 
-export interface ChatSSEEvent {
+export interface MessagingSSEEvent {
   type:
     | 'USER_PRESENCE'
     | 'MESSAGE_CREATED'
@@ -17,7 +17,7 @@ export interface ChatSSEEvent {
   payload: any;
 }
 
-class ChatSSEHub {
+class MessagingSSEHub {
   private userSockets = new Map<string, Set<Response>>();
   private heartbeatInterval: NodeJS.Timeout | null = null;
 
@@ -66,7 +66,7 @@ class ChatSSEHub {
     return Array.from(this.userSockets.keys());
   }
 
-  public sendToUser(userId: string, event: ChatSSEEvent): void {
+  public sendToUser(userId: string, event: MessagingSSEEvent): void {
     const sockets = this.userSockets.get(userId);
     if (!sockets || sockets.size === 0) return;
 
@@ -81,13 +81,13 @@ class ChatSSEHub {
     }
   }
 
-  public sendToUsers(userIds: string[], event: ChatSSEEvent): void {
+  public sendToUsers(userIds: string[], event: MessagingSSEEvent): void {
     for (const userId of userIds) {
       this.sendToUser(userId, event);
     }
   }
 
-  public broadcastAll(event: ChatSSEEvent): void {
+  public broadcastAll(event: MessagingSSEEvent): void {
     const data = `event: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`;
     for (const [, sockets] of this.userSockets) {
       for (const res of sockets) {
@@ -124,4 +124,4 @@ class ChatSSEHub {
   }
 }
 
-export const chatSSEHub = new ChatSSEHub();
+export const messagingSSEHub = new MessagingSSEHub();

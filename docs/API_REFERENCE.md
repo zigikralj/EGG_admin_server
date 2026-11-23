@@ -119,7 +119,7 @@ List users with server-side pagination, search, role/status filtering, or lightw
   - `?page=1&limit=25` — pagination parameters (`PaginatedResponse<User>`)
   - `?search=` — filter by name, email, or phone
   - `?role=` / `?status=` — filter by role name or approval status
-  - `?fields=summary` or `?fields=mention` — returns lightweight `{ id, name, role, avatarUrl }` entries for directory pickers, chat, and `@mention` autocompletes.
+  - `?fields=summary` or `?fields=mention` — returns lightweight `{ id, name, role, avatarUrl }` entries for directory pickers, messaging, and `@mention` autocompletes.
 
 **Response 200:** `PaginatedResponse<User>` or array of user objects (without `password`).
 
@@ -1016,18 +1016,18 @@ Create or update a system setting. **Administrator only.**
 
 ---
 
-## Real-Time Chat & Contextual Messaging (`/api/chat`)
+## Real-Time & Contextual Messaging (`/api/messaging`)
 
 **All routes require auth.** Supports Direct (`DIRECT`), Group (`GROUP`), and Contextual Project (`CONTEXTUAL`, `contextType: "PROJECT"`) conversations, sequence-numbered messages, live SSE streaming, muting, and Do Not Disturb (DND).
 
-### `GET /api/chat/stream`
+### `GET /api/messaging/stream`
 Server-Sent Events (SSE) endpoint (`text/event-stream`). Accepts JWT via `Authorization: Bearer <token>` header or `?token=<jwt>` query parameter.
 - Immediately emits `CONNECTED` with `{ onlineUserIds: string[] }`.
 - Sends `: keepalive` heartbeats every 25 seconds.
 - Broadcasts `USER_PRESENCE` (`{ userId, status: "ONLINE" | "OFFLINE" }`) on connection/disconnection.
 - Pushes real-time events to participants: `MESSAGE_CREATED`, `MESSAGE_UPDATED`, `MESSAGE_DELETED`, `READ_RECEIPT`, `UNREAD_STATUS`, `CONVERSATION_UPDATED`, `REMOVED_FROM_CONVERSATION`, `CONVERSATION_CLEARED`, `MUTE_UPDATED`, `DND_UPDATED`, `NOTIFICATION`.
 
-### `GET /api/chat/unread-summary`
+### `GET /api/messaging/unread-summary`
 Lightweight unread message summary and DND status for the authenticated user.
 
 **Response 200:**
@@ -1040,12 +1040,12 @@ Lightweight unread message summary and DND status for the authenticated user.
 }
 ```
 
-### `GET /api/chat/conversations`
+### `GET /api/messaging/conversations`
 List all active (non-archived) conversations for the current user, ordered by `lastMessageAt DESC`, including unread counts, mute status, and participant list.
 
-**Response 200:** `ChatConversationItem[]`
+**Response 200:** `MessagingConversationItem[]`
 
-### `POST /api/chat/conversations`
+### `POST /api/messaging/conversations`
 Create or retrieve a `DIRECT` (1-on-1) or `GROUP` conversation.
 - For `DIRECT`, returns the existing conversation if one already exists between the two users (unarchiving if previously hidden).
 
@@ -1058,68 +1058,68 @@ Create or retrieve a `DIRECT` (1-on-1) or `GROUP` conversation.
 }
 ```
 
-**Response 200 / 201:** `ChatConversationItem`
+**Response 200 / 201:** `MessagingConversationItem`
 
-### `GET /api/chat/conversations/context/:type/:id`
-Get or initialize a contextual conversation (e.g. `/api/chat/conversations/context/PROJECT/:projectId`). Automatically adds the project's responsible user as a participant.
+### `GET /api/messaging/conversations/context/:type/:id`
+Get or initialize a contextual conversation (e.g. `/api/messaging/conversations/context/PROJECT/:projectId`). Automatically adds the project's responsible user as a participant.
 
-**Response 200:** `ChatConversationItem`
+**Response 200:** `MessagingConversationItem`
 
-### `GET /api/chat/conversations/:id`
+### `GET /api/messaging/conversations/:id`
 Get details of a single conversation by ID.
 
-### `PATCH /api/chat/conversations/:id`
+### `PATCH /api/messaging/conversations/:id`
 Rename a group or contextual conversation title. Broadcasts `CONVERSATION_UPDATED`.
 
 **Body:** `{ "title": "New Title" }`
 
-### `POST /api/chat/conversations/:id/participants`
+### `POST /api/messaging/conversations/:id/participants`
 Add one or more users (`userIds: string[]` or `userId: string`) to a `GROUP` or `CONTEXTUAL` conversation. Broadcasts `CONVERSATION_UPDATED`.
 
-### `DELETE /api/chat/conversations/:id/participants/:targetUserId`
+### `DELETE /api/messaging/conversations/:id/participants/:targetUserId`
 Remove a participant from a conversation or leave the conversation (`targetUserId === currentUser.id`). Emits `REMOVED_FROM_CONVERSATION` to the removed user and `CONVERSATION_UPDATED` to remaining members.
 
-### `DELETE /api/chat/conversations/:id`
+### `DELETE /api/messaging/conversations/:id`
 Delete or clear/archive a conversation:
-- Administrators or group creators can permanently delete conversations (or archive/hide for themselves in `DIRECT` chats).
+- Administrators or group creators can permanently delete conversations (or archive/hide for themselves in `DIRECT` conversations).
 
-### `POST /api/chat/conversations/:id/mute`
-Mute or unmute notifications for a specific conversation. Persisted in `UserPreference` (`chat_mute_map`) and synced across tabs via `MUTE_UPDATED`.
+### `POST /api/messaging/conversations/:id/mute`
+Mute or unmute notifications for a specific conversation. Persisted in `UserPreference` (`messaging_mute_map`) and synced across tabs via `MUTE_UPDATED`.
 
 **Body:** `{ "durationMinutes": 60, "forever": false, "unmute": false }`
 
-### `POST /api/chat/dnd`
-Configure global Do Not Disturb (DND) for chat notifications. Persisted in `UserPreference` (`chat_dnd_until`) and synced via `DND_UPDATED`.
+### `POST /api/messaging/dnd`
+Configure global Do Not Disturb (DND) for messaging notifications. Persisted in `UserPreference` (`messaging_dnd_until`) and synced via `DND_UPDATED`.
 
 **Body:** `{ "durationMinutes": 120, "forever": false, "off": false }`
 
-### `GET /api/chat/conversations/:id/messages`
+### `GET /api/messaging/conversations/:id/messages`
 Fetch messages for a conversation. Supports two modes:
 1. **Cursor Pagination (History):** `?beforeSeq=<seq>&limit=50` — returns messages in ascending `seq` order prior to `beforeSeq`.
 2. **Sequence Delta Sync:** `?afterSeq=<seq>&sinceUpdatedAt=<ISO_TIMESTAMP>` — returns `{ delta: true, newMessages: [...], updatedMessages: [...], currentSeq, syncedAt }` containing newly sent messages (`seq > afterSeq`) and recently edited/deleted messages (`updatedAt > sinceUpdatedAt`).
 
-### `POST /api/chat/conversations/:id/messages`
+### `POST /api/messaging/conversations/:id/messages`
 Send a new message in a conversation.
-- Atomically increments `ChatConversation.messageSeq` and assigns sequential `seq` to the message.
-- Supports reply threading (`replyToId`) and `@mention` detection (creates `Notification` records and auto-adds mentioned users to project chats).
+- Atomically increments `Conversation.messageSeq` and assigns sequential `seq` to the message.
+- Supports reply threading (`replyToId`) and `@mention` detection (creates `Notification` records and auto-adds mentioned users to project conversations).
 - Broadcasts `MESSAGE_CREATED` over SSE to all participants.
 
 **Body:** `{ "content": "Hello @Petar", "replyToId": "optional-msg-uuid" }`
 
-**Response 201:** Created `ChatMessageItem`
+**Response 201:** Created `MessagingMessageItem`
 
-### `PATCH /api/chat/messages/:id`
+### `PATCH /api/messaging/messages/:id`
 Edit an existing message (sender only). Sets `isEdited: true` and `editedAt`, and broadcasts `MESSAGE_UPDATED`.
 
 **Body:** `{ "content": "Updated text" }`
 
-### `DELETE /api/chat/messages/:id`
+### `DELETE /api/messaging/messages/:id`
 Soft-delete a message (sender or Administrator). Marks `isDeleted: true`, clears `content`, updates conversation preview if needed, and broadcasts `MESSAGE_DELETED`.
 
-### `POST /api/chat/conversations/:id/read`
+### `POST /api/messaging/conversations/:id/read`
 Mark all messages in a conversation as read up to the latest `messageSeq` (`lastReadSeq = messageSeq`, `isManuallyUnread = false`). Broadcasts `READ_RECEIPT`.
 
-### `POST /api/chat/conversations/:id/unread`
+### `POST /api/messaging/conversations/:id/unread`
 Explicitly mark a conversation as unread (`isManuallyUnread = true`). Broadcasts `UNREAD_STATUS`.
 
 ---

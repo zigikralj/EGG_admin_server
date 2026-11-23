@@ -167,8 +167,8 @@ export async function purgeOldEntityVersions(days: number = 30): Promise<number>
       if (deletedChangeSets < CHUNK_SIZE) break;
     }
 
-    // 3. Purge soft-deleted ChatMessage tombstones older than cutoff that have no remaining replies
-    await basePrisma.chatMessage.deleteMany({
+    // 3. Purge soft-deleted Message tombstones older than cutoff that have no remaining replies
+    await basePrisma.message.deleteMany({
       where: {
         isDeleted: true,
         updatedAt: { lt: cutoff },

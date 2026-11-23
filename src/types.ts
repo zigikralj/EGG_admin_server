@@ -1,8 +1,6 @@
 export enum UserRole {
   ADMINISTRATOR = 'Administrator',
-  MANAGER = 'Manager',
   USER = 'User',
-  ACCOUNTANT = 'Accountant',
 }
 
 export interface AuthenticatedUser {
@@ -10,30 +8,18 @@ export interface AuthenticatedUser {
   name: string;
   email: string | null;
   role: string;
+  roleLevel?: number;
   isApproved?: boolean;
   status?: string;
   isSystemAdmin?: boolean;
   permissions?: Record<string, any>;
   roleEntity?: {
     name?: string;
+    level?: number;
     isSystemAdmin?: boolean;
     permissions?: any;
   } | null;
   [key: string]: any;
-}
-
-export function getDefaultResourcePermission(role?: string | null, resource?: string, action?: string): boolean {
-  if (resource === 'activityLogs' || resource === 'activity_logs') {
-    return role === UserRole.ADMINISTRATOR;
-  }
-  if (resource === 'history') {
-    if (action === 'restore') {
-      return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-    }
-    return role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER;
-  }
-  if (role === UserRole.ADMINISTRATOR || role === UserRole.MANAGER) return true;
-  return false;
 }
 
 export function getUserPermissions(user: any): Record<string, any> | undefined {
@@ -56,14 +42,44 @@ export function isUserSystemAdmin(user: any): boolean {
   );
 }
 
-export function formatUserWithPermissions<T extends Record<string, any>>(user: T) {
-  const { password: _, ...userWithoutPassword } = user;
+export function getUserRoleLevel(user: any): number {
+  if (!user) return 0;
+  if (typeof user.roleEntity?.level === 'number') {
+    return user.roleEntity.level;
+  }
+  if (typeof user.roleLevel === 'number') {
+    return user.roleLevel;
+  }
+  return 0;
+}
+
+export function hasMinRoleLevel(user: any, minLevel: number): boolean {
+  return getUserRoleLevel(user) >= minLevel;
+}
+
+export function formatUserWithPermissions<T extends Record<string, any>>(
+  user: T,
+  options?: { includePermissions?: boolean }
+) {
+  const { password: _, roleEntity, permissions: _perms, ...userWithoutPassword } = user;
   const isSystemAdmin = isUserSystemAdmin(user);
-  const permissions = getUserPermissions(user) ?? {};
+  const roleLevel = getUserRoleLevel(user);
+  const includePermissions = options?.includePermissions !== false;
+
+  const leanRoleEntity = roleEntity
+    ? {
+        name: roleEntity.name,
+        level: roleEntity.level,
+        isSystemAdmin: roleEntity.isSystemAdmin,
+      }
+    : roleEntity;
+
   return {
     ...userWithoutPassword,
+    ...(leanRoleEntity !== undefined ? { roleEntity: leanRoleEntity } : {}),
     isSystemAdmin,
-    permissions,
+    roleLevel,
+    ...(includePermissions ? { permissions: getUserPermissions(user) ?? {} } : {}),
   };
 }
 
@@ -73,26 +89,12 @@ export function hasPermission(user: any, resource: string, action: string): bool
     return true;
   }
   const perms = getUserPermissions(user);
-  if (perms && typeof perms === 'object' && Array.isArray(perms[resource])) {
-    return perms[resource].includes(action);
-  }
-  // Legacy fallback ONLY if the key is undefined in perms (e.g. older role schema before separation)
   if (perms && typeof perms === 'object') {
-    if (resource === 'tracker_updates') {
-      if (Array.isArray(perms.tracker_projects)) return perms.tracker_projects.includes(action);
-      if (Array.isArray(perms.projects)) return perms.projects.includes(action);
-    } else if (resource.startsWith('tracker_')) {
-      const base = resource.replace('tracker_', '');
-      if (Array.isArray(perms[base])) {
-        return perms[base].includes(action);
-      }
-    } else if (resource === 'wasteDisposal') {
-      if (Array.isArray(perms.providedServices)) {
-        return perms.providedServices.includes(action);
-      }
+    if (Array.isArray(perms[resource]) && perms[resource].includes(action)) {
+      return true;
     }
   }
-  return getDefaultResourcePermission(user.role, resource, action);
+  return false;
 }
 
 export function isRestrictedToOwn(user: any, resource: string): boolean {
@@ -100,33 +102,15 @@ export function isRestrictedToOwn(user: any, resource: string): boolean {
   if (isUserSystemAdmin(user)) return false;
 
   const perms = getUserPermissions(user);
-  if (!perms || typeof perms !== "object") return false;
-
-  const checkOnlyOwn = (key: string) => {
-    const val = perms[key];
-    if (val === true) return true;
-    if (Array.isArray(val) && val.length > 0) return true;
-    return false;
-  };
+  if (!perms || typeof perms !== 'object') return false;
 
   const directKey = `${resource}_onlyOwn`;
-  if (typeof perms[directKey] === 'boolean') {
-    return perms[directKey];
+  const val = perms[directKey];
+  if (typeof val === 'boolean') {
+    return val;
   }
-  if (checkOnlyOwn(directKey)) return true;
-
-  // Legacy fallback ONLY if tracker_* is not configured
-  if (resource === 'tracker_updates') {
-    if (typeof perms.tracker_projects_onlyOwn === 'boolean') return perms.tracker_projects_onlyOwn;
-    if (checkOnlyOwn('tracker_projects_onlyOwn')) return true;
-    if (typeof perms.projects_onlyOwn === 'boolean') return perms.projects_onlyOwn;
-    if (checkOnlyOwn('projects_onlyOwn')) return true;
-  } else if (resource.startsWith("tracker_")) {
-    const base = resource.replace("tracker_", "");
-    if (typeof perms[`${base}_onlyOwn`] === 'boolean') {
-      return perms[`${base}_onlyOwn`];
-    }
-    if (checkOnlyOwn(`${base}_onlyOwn`)) return true;
+  if (Array.isArray(val) && val.length > 0) {
+    return true;
   }
 
   return false;
