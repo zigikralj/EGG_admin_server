@@ -4,6 +4,7 @@ import { createApp } from '../../app';
 import { mockPrisma } from '../helpers/prismaMock';
 import { createTestUser, createAuthHeader } from '../helpers/testAuth';
 import { UserRole } from '../../types';
+import { USER_STATUSES } from '../../constants';
 import { clearReferenceCache } from '../../helpers/referenceCache';
 import { invalidateUserAuthCache } from '../../middleware/auth';
 
@@ -22,11 +23,18 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
   });
 
   describe('GET /api/users', () => {
-    it('returns paginated users list and strips password', async () => {
+    it('returns paginated users list and strips password and granular permissions', async () => {
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValue(admin);
       mockPrisma.user.findMany.mockResolvedValueOnce([
-        { id: 'u1', name: 'User 1', email: 'u1@ekos.rs', role: 'User', password: 'hashed' },
+        {
+          id: 'u1',
+          name: 'User 1',
+          email: 'u1@ekos.rs',
+          role: 'User',
+          password: 'hashed',
+          roleEntity: { name: 'User', level: 10, isSystemAdmin: false, permissions: { projects: ['view'] } },
+        },
       ]);
       mockPrisma.user.count.mockResolvedValueOnce(1);
 
@@ -37,6 +45,8 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('items');
       expect(res.body.items[0]).not.toHaveProperty('password');
+      expect(res.body.items[0]).not.toHaveProperty('permissions');
+      expect(res.body.items[0].roleEntity).toEqual({ name: 'User', level: 10, isSystemAdmin: false });
       expect(res.body.total).toBe(1);
     });
   });
@@ -178,12 +188,21 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
   describe('POST /api/users/:id/approve and /reject', () => {
     it('approves a pending user for Administrator', async () => {
       const admin = createTestUser();
-      mockPrisma.user.findUnique.mockResolvedValue(admin);
+      const pendingTarget = createTestUser({
+        id: 'target-u',
+        name: 'Pending User',
+        email: 'pending@ekos.rs',
+        status: USER_STATUSES.PENDING,
+        isApproved: false,
+        role: 'User',
+      });
+      mockPrisma.user.findUnique.mockResolvedValueOnce(admin);
+      mockPrisma.user.findUnique.mockResolvedValueOnce(pendingTarget);
       mockPrisma.user.update.mockResolvedValueOnce({
         id: 'target-u',
         name: 'Pending User',
         email: 'pending@ekos.rs',
-        status: 'Approved',
+        status: USER_STATUSES.APPROVED,
         isApproved: true,
         role: 'User',
       });
@@ -193,28 +212,89 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
         .set('Authorization', createAuthHeader(admin));
 
       expect(res.status).toBe(200);
-      expect(res.body.status).toBe('Approved');
+      expect(res.body.status).toBe(USER_STATUSES.APPROVED);
     });
 
-    it('blocks non-admin from approving peer role or rejecting peer user', async () => {
+    it('rejects non-pending users on approve and reject endpoints', async () => {
+      const admin = createTestUser();
+      const approvedTarget = createTestUser({
+        id: 'approved-u',
+        role: 'User',
+        status: USER_STATUSES.APPROVED,
+        isApproved: true,
+      });
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }: any) => {
+        if (where.id === admin.id) return admin;
+        if (where.id === 'approved-u') return approvedTarget;
+        return null;
+      });
+
+      const resApprove = await request(app)
+        .post('/api/users/approved-u/approve')
+        .set('Authorization', createAuthHeader(admin));
+      expect(resApprove.status).toBe(400);
+      expect(resApprove.body.error).toContain('Only pending users');
+
+      const resReject = await request(app)
+        .post('/api/users/approved-u/reject')
+        .set('Authorization', createAuthHeader(admin));
+      expect(resReject.status).toBe(400);
+      expect(resReject.body.error).toContain('Only pending registrations');
+    });
+
+    it('blocks non-admin from approving admin/peer targets, assigning peer role, or rejecting peer user', async () => {
       const supervisor = createTestUser({
         id: 'sup-2',
         role: 'Supervisor',
         roleLevel: 50,
         permissions: { users: ['edit'] },
       });
-      const peerPending = createTestUser({ id: 'peer-pending', role: 'Supervisor', roleLevel: 50 });
+      const pendingLower = createTestUser({
+        id: 'pending-1',
+        role: 'User',
+        roleLevel: 10,
+        status: USER_STATUSES.PENDING,
+        isApproved: false,
+      });
+      const peerPending = createTestUser({
+        id: 'peer-pending',
+        role: 'Supervisor',
+        roleLevel: 50,
+        status: USER_STATUSES.PENDING,
+        isApproved: false,
+      });
+      const adminTarget = createTestUser({
+        id: 'admin-target',
+        role: UserRole.ADMINISTRATOR,
+        status: USER_STATUSES.PENDING,
+        isApproved: false,
+      });
 
       const userMap: Record<string, any> = {
         'sup-2': supervisor,
+        'pending-1': pendingLower,
         'peer-pending': peerPending,
+        'admin-target': adminTarget,
       };
       mockPrisma.user.findUnique.mockImplementation(async ({ where }: any) => userMap[where.id] ?? null);
 
       mockPrisma.role.findMany.mockResolvedValueOnce([
         { name: 'Supervisor', level: 50, isSystemAdmin: false },
         { name: 'Junior', level: 20, isSystemAdmin: false },
+        { name: 'User', level: 10, isSystemAdmin: false },
       ]);
+
+      const resApproveAdminTarget = await request(app)
+        .post('/api/users/admin-target/approve')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({ role: 'Junior' });
+      expect(resApproveAdminTarget.status).toBe(403);
+
+      const resApprovePeerTarget = await request(app)
+        .post('/api/users/peer-pending/approve')
+        .set('Authorization', createAuthHeader(supervisor))
+        .send({ role: 'Junior' });
+      expect(resApprovePeerTarget.status).toBe(403);
 
       const resApprovePeer = await request(app)
         .post('/api/users/pending-1/approve')

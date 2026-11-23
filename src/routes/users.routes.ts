@@ -163,11 +163,11 @@ router.get('/', asyncHandler(async (req, res) => {
       skip: pagination.skip,
       take: pagination.take,
       orderBy: { [sortField]: pagination.sortOrder },
-      include: { roleEntity: true },
+      include: { roleEntity: { select: { name: true, level: true, isSystemAdmin: true } } },
     }),
   ]);
 
-  const sanitizedUsers = users.map((u) => formatUserWithPermissions(u));
+  const sanitizedUsers = users.map((u) => formatUserWithPermissions(u, { includePermissions: false }));
   res.json(buildPaginatedResponse(sanitizedUsers, total, pagination));
 }));
 
@@ -417,6 +417,22 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
   }
 
   const id = req.params.id as string;
+  const existingUser = await prisma.user.findUnique({ where: { id }, include: { roleEntity: true } });
+  if (!existingUser) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  if (!isUserSystemAdmin(authUser) && (isUserSystemAdmin(existingUser) || !(await isRoleLessThan(existingUser, authUser)))) {
+    res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  if (existingUser.status !== USER_STATUSES.PENDING) {
+    res.status(400).json({ error: 'Only pending users can be approved.' });
+    return;
+  }
+
   const { role } = req.body || {};
   const targetRole = role || UserRole.USER;
 
@@ -462,6 +478,11 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
 
   if (!isUserSystemAdmin(authUser) && (isUserSystemAdmin(existingUser) || !(await isRoleLessThan(existingUser, authUser)))) {
     res.status(403).json({ error: 'Permission denied.' });
+    return;
+  }
+
+  if (existingUser.status !== USER_STATUSES.PENDING) {
+    res.status(400).json({ error: 'Only pending registrations can be rejected.' });
     return;
   }
 

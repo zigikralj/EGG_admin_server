@@ -33,7 +33,7 @@ interface CachedUser {
   expiresAt: number;
 }
 const userAuthCache = new Map<string, CachedUser>();
-const USER_AUTH_CACHE_TTL_MS = 60_000; // 60 seconds
+const USER_AUTH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export function invalidateUserAuthCache(userId?: string): void {
   if (userId) {

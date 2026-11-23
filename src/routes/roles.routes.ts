@@ -11,8 +11,12 @@ const router = Router();
 
 router.use(requireAuth);
 
-router.get('/', asyncHandler(async (_req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const roles = await getRolesFromDb();
+  if (!isUserSystemAdmin(req.authUser) && !hasPermission(req.authUser, 'roles', 'view')) {
+    res.json(roles.map(({ permissions: _permissions, ...rest }) => rest));
+    return;
+  }
   res.json(roles);
 }));
 

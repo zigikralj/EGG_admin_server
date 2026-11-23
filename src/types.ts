@@ -57,16 +57,29 @@ export function hasMinRoleLevel(user: any, minLevel: number): boolean {
   return getUserRoleLevel(user) >= minLevel;
 }
 
-export function formatUserWithPermissions<T extends Record<string, any>>(user: T) {
-  const { password: _, ...userWithoutPassword } = user;
+export function formatUserWithPermissions<T extends Record<string, any>>(
+  user: T,
+  options?: { includePermissions?: boolean }
+) {
+  const { password: _, roleEntity, permissions: _perms, ...userWithoutPassword } = user;
   const isSystemAdmin = isUserSystemAdmin(user);
   const roleLevel = getUserRoleLevel(user);
-  const permissions = getUserPermissions(user) ?? {};
+  const includePermissions = options?.includePermissions !== false;
+
+  const leanRoleEntity = roleEntity
+    ? {
+        name: roleEntity.name,
+        level: roleEntity.level,
+        isSystemAdmin: roleEntity.isSystemAdmin,
+      }
+    : roleEntity;
+
   return {
     ...userWithoutPassword,
+    ...(leanRoleEntity !== undefined ? { roleEntity: leanRoleEntity } : {}),
     isSystemAdmin,
     roleLevel,
-    permissions,
+    ...(includePermissions ? { permissions: getUserPermissions(user) ?? {} } : {}),
   };
 }
 

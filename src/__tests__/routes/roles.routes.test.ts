@@ -15,7 +15,7 @@ describe('Roles Routes & Permissions Catalog (GET, POST, PUT, DELETE)', () => {
   });
 
   describe('GET /api/permissions/catalog', () => {
-    it('returns the server-owned granular permission catalog for authenticated users', async () => {
+    it('returns the server-owned granular permission catalog with private cache header for authenticated users', async () => {
       const user = createTestUser({ role: 'User', roleLevel: 10 });
       mockPrisma.user.findUnique.mockResolvedValue(user);
 
@@ -24,6 +24,7 @@ describe('Roles Routes & Permissions Catalog (GET, POST, PUT, DELETE)', () => {
         .set('Authorization', createAuthHeader(user));
 
       expect(res.status).toBe(200);
+      expect(res.headers['cache-control']).toBe('private, max-age=3600');
       expect(Array.isArray(res.body.apps)).toBe(true);
       expect(res.body.apps.map((a: any) => a.id)).toEqual(['project-tracker', 'data-management', 'system']);
       const systemApp = res.body.apps.find((a: any) => a.id === 'system');
@@ -37,12 +38,12 @@ describe('Roles Routes & Permissions Catalog (GET, POST, PUT, DELETE)', () => {
   });
 
   describe('GET /api/roles', () => {
-    it('returns all roles for Administrator', async () => {
+    it('returns all roles including permissions for Administrator or roles:view holders', async () => {
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValue(admin);
       mockPrisma.role.findMany.mockResolvedValueOnce([
-        { id: 'r1', name: 'Administrator', level: 100, permissions: {} },
-        { id: 'r2', name: 'Supervisor', level: 50, permissions: {} },
+        { id: 'r1', name: 'Administrator', level: 100, permissions: { roles: ['view'] } },
+        { id: 'r2', name: 'Supervisor', level: 50, permissions: { projects: ['view'] } },
       ]);
 
       const res = await request(app)
@@ -52,20 +53,48 @@ describe('Roles Routes & Permissions Catalog (GET, POST, PUT, DELETE)', () => {
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body).toHaveLength(2);
+      expect(res.body[1]).toHaveProperty('permissions');
+
+      clearReferenceCache();
+      const roleViewer = createTestUser({
+        role: 'RoleViewer',
+        roleLevel: 40,
+        permissions: { roles: ['view'] },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue(roleViewer);
+      mockPrisma.role.findMany.mockResolvedValueOnce([
+        { id: 'r1', name: 'Administrator', level: 100, permissions: { roles: ['view'] } },
+        { id: 'r2', name: 'Supervisor', level: 50, permissions: { projects: ['view'] } },
+      ]);
+
+      const resViewer = await request(app)
+        .get('/api/roles')
+        .set('Authorization', createAuthHeader(roleViewer));
+
+      expect(resViewer.status).toBe(200);
+      expect(resViewer.body[1]).toHaveProperty('permissions');
     });
 
-    it('returns roles for regular User to resolve level labels', async () => {
+    it('returns roles without permissions matrix for regular User lacking roles:view', async () => {
       const regularUser = createTestUser({
         role: 'User',
       });
       mockPrisma.user.findUnique.mockResolvedValue(regularUser);
-      mockPrisma.role.findMany.mockResolvedValueOnce([]);
+      mockPrisma.role.findMany.mockResolvedValueOnce([
+        { id: 'r1', name: 'Administrator', level: 100, isSystemAdmin: true, permissions: { roles: ['view'] } },
+        { id: 'r2', name: 'User', level: 10, isSystemAdmin: false, permissions: { projects: ['view'] } },
+      ]);
 
       const res = await request(app)
         .get('/api/roles')
         .set('Authorization', createAuthHeader(regularUser));
 
       expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(2);
+      expect(res.body[0]).toHaveProperty('name', 'Administrator');
+      expect(res.body[0]).toHaveProperty('level', 100);
+      expect(res.body[0]).not.toHaveProperty('permissions');
+      expect(res.body[1]).not.toHaveProperty('permissions');
     });
   });
 
