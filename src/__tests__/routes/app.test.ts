@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { mockPrisma } from '../helpers/prismaMock';
@@ -63,5 +63,102 @@ describe('App & Global Handlers (GET, Error, 404, Rate Limit)', () => {
       .set('Authorization', header);
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe('CORS_ORIGIN configuration', () => {
+  const originalCorsOrigin = process.env.CORS_ORIGIN;
+
+  afterEach(() => {
+    if (originalCorsOrigin === undefined) {
+      delete process.env.CORS_ORIGIN;
+    } else {
+      process.env.CORS_ORIGIN = originalCorsOrigin;
+    }
+  });
+
+  it('allows all origins when CORS_ORIGIN is unset', async () => {
+    delete process.env.CORS_ORIGIN;
+    const app = createApp();
+
+    const res = await request(app)
+      .get('/health')
+      .set('Origin', 'https://example.com');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('allows only configured origins when CORS_ORIGIN is set', async () => {
+    process.env.CORS_ORIGIN = 'https://app.example.com,https://staging.example.com';
+    const app = createApp();
+
+    const allowedPrimary = await request(app)
+      .get('/health')
+      .set('Origin', 'https://app.example.com');
+    expect(allowedPrimary.status).toBe(200);
+    expect(allowedPrimary.headers['access-control-allow-origin']).toBe('https://app.example.com');
+
+    const allowedSecondary = await request(app)
+      .get('/health')
+      .set('Origin', 'https://staging.example.com');
+    expect(allowedSecondary.status).toBe(200);
+    expect(allowedSecondary.headers['access-control-allow-origin']).toBe('https://staging.example.com');
+
+    const disallowed = await request(app)
+      .get('/health')
+      .set('Origin', 'https://evil.example.com');
+    expect(disallowed.status).toBe(200);
+    expect(disallowed.headers['access-control-allow-origin']).toBeUndefined();
+
+    const noOrigin = await request(app).get('/health');
+    expect(noOrigin.status).toBe(200);
+  });
+
+  it('trims whitespace and trailing slashes in CORS_ORIGIN entries', async () => {
+    process.env.CORS_ORIGIN = ' https://app.example.com/ , https://staging.example.com ';
+    const app = createApp();
+
+    const res = await request(app)
+      .get('/health')
+      .set('Origin', 'https://app.example.com');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example.com');
+  });
+
+  it('supports wildcard subdomain entries in CORS_ORIGIN', async () => {
+    process.env.CORS_ORIGIN = '*.example.com,https://*.example.org';
+    const app = createApp();
+
+    const allowedSub = await request(app)
+      .get('/health')
+      .set('Origin', 'https://sub.example.com');
+    expect(allowedSub.status).toBe(200);
+    expect(allowedSub.headers['access-control-allow-origin']).toBe('https://sub.example.com');
+
+    const allowedDeepSub = await request(app)
+      .get('/health')
+      .set('Origin', 'https://deep.sub.example.org');
+    expect(allowedDeepSub.status).toBe(200);
+    expect(allowedDeepSub.headers['access-control-allow-origin']).toBe('https://deep.sub.example.org');
+
+    const blockedHttp = await request(app)
+      .get('/health')
+      .set('Origin', 'http://sub.example.com');
+    expect(blockedHttp.status).toBe(200);
+    expect(blockedHttp.headers['access-control-allow-origin']).toBeUndefined();
+
+    const blockedSimilarDomain = await request(app)
+      .get('/health')
+      .set('Origin', 'https://evil-example.com');
+    expect(blockedSimilarDomain.status).toBe(200);
+    expect(blockedSimilarDomain.headers['access-control-allow-origin']).toBeUndefined();
+
+    const blockedApex = await request(app)
+      .get('/health')
+      .set('Origin', 'https://example.com');
+    expect(blockedApex.status).toBe(200);
+    expect(blockedApex.headers['access-control-allow-origin']).toBeUndefined();
   });
 });
