@@ -1,5 +1,5 @@
 import express from 'express';
-import cors from 'cors';
+import cors, { type CorsOptions } from 'cors';
 import compression from 'compression';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -43,11 +43,83 @@ const globalLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === 'test' && process.env.ENABLE_RATE_LIMIT_IN_TEST !== 'true',
 });
 
+function isOriginAllowed(origin: string, allowedPatterns: string[]): boolean {
+  if (allowedPatterns.includes(origin)) {
+    return true;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const originProtocol = parsed.protocol.toLowerCase();
+  const originHost = parsed.hostname.toLowerCase();
+
+  for (const pattern of allowedPatterns) {
+    const lowerPattern = pattern.toLowerCase();
+    let expectedProtocol: string;
+    let suffix: string;
+
+    if (lowerPattern.startsWith('https://*.')) {
+      expectedProtocol = 'https:';
+      suffix = lowerPattern.slice('https://*'.length);
+    } else if (lowerPattern.startsWith('http://*.')) {
+      expectedProtocol = 'http:';
+      suffix = lowerPattern.slice('http://*'.length);
+    } else if (lowerPattern.startsWith('*.')) {
+      expectedProtocol = 'https:';
+      suffix = lowerPattern.slice(1);
+    } else {
+      continue;
+    }
+
+    if (
+      originProtocol === expectedProtocol &&
+      !parsed.port &&
+      originHost.endsWith(suffix) &&
+      originHost.length > suffix.length
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getCorsOptions(): CorsOptions {
+  const rawOrigins = process.env.CORS_ORIGIN?.trim();
+  if (!rawOrigins || rawOrigins === '*') {
+    return {};
+  }
+
+  const allowedOrigins = rawOrigins
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+
+  if (allowedOrigins.length === 0) {
+    return {};
+  }
+
+  return {
+    origin(origin, callback) {
+      if (!origin || isOriginAllowed(origin, allowedOrigins)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+  };
+}
+
 export function createApp() {
   const app = express();
 
   // Middleware
-  app.use(cors());
+  app.use(cors(getCorsOptions()));
   app.use(compression({ threshold: 1024 }));
   
   // Override for import endpoints (applied before the import route handlers)
