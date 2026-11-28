@@ -1021,7 +1021,7 @@ Create or update a system setting. **Administrator only.**
 **All routes require auth.** Supports Direct (`DIRECT`), Group (`GROUP`), and Contextual Project (`CONTEXTUAL`, `contextType: "PROJECT"`) conversations, sequence-numbered messages, live SSE streaming, muting, and Do Not Disturb (DND).
 
 ### `GET /api/messaging/stream`
-Server-Sent Events (SSE) endpoint (`text/event-stream`). Accepts JWT via `Authorization: Bearer <token>` header or `?token=<jwt>` query parameter.
+Server-Sent Events (SSE) endpoint (`text/event-stream`). Accepts JWT exclusively via the `Authorization: Bearer <token>` header (query-string tokens are rejected).
 - Immediately emits `CONNECTED` with `{ onlineUserIds: string[] }`.
 - Sends `: keepalive` heartbeats every 25 seconds.
 - Broadcasts `USER_PRESENCE` (`{ userId, status: "ONLINE" | "OFFLINE" }`) on connection/disconnection.

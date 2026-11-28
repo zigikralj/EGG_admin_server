@@ -8,6 +8,7 @@ import { UserRole, hasPermission, isUserSystemAdmin, formatUserWithPermissions }
 import { isRoleLessThan, isRoleNameSystemAdmin } from '../helpers/roleLevels';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination';
 import { USER_STATUSES, ERROR_CODES } from '../constants';
+import { messagingSSEHub } from '../services/messaging/sseHub';
 
 const router = Router();
 
@@ -199,6 +200,7 @@ router.post('/:id/force-logout', asyncHandler(async (req, res) => {
 
   userForceLogoutMap.set(targetId, Date.now());
   invalidateUserAuthCache(targetId);
+  messagingSSEHub.disconnectUser(targetId);
 
   res.json({ success: true, message: `User ${targetUser.name} has been forced to log out.` });
 }));
@@ -405,6 +407,9 @@ router.put('/:id', asyncHandler(async (req, res) => {
     include: { roleEntity: true },
   });
   invalidateUserAuthCache(id);
+  if (updated.status !== USER_STATUSES.APPROVED || !updated.isApproved) {
+    messagingSSEHub.disconnectUser(id);
+  }
   res.json(formatUserWithPermissions(updated));
 }));
 
@@ -524,6 +529,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 
   await prisma.user.delete({ where: { id } });
   invalidateUserAuthCache(id);
+  messagingSSEHub.disconnectUser(id);
   res.json({ message: 'User deleted successfully' });
 }));
 

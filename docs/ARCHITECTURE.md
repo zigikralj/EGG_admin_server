@@ -233,7 +233,7 @@ The app factory performs, in order:
 
 ### Middleware (`src/middleware/auth.ts`)
 
-- **`requireAuth`**: Extracts JWT from `Authorization: Bearer <token>` header (or `?token=<jwt>` query param for SSE `EventSource` connections). Resolves user and `Role` entity from the database (with 60s in-memory auth cache), attaches `req.authUser`, and initializes `requestContext` (`AsyncLocalStorage`). Returns 401 if invalid.
+- **`requireAuth`**: Extracts JWT from `Authorization: Bearer <token>` header. Resolves user and `Role` entity from the database (with 60s in-memory auth cache), attaches `req.authUser`, and initializes `requestContext` (`AsyncLocalStorage`). Returns 401 if invalid.
 - **Force logout**: In-memory `userForceLogoutMap` stores force-logout timestamps. Tokens issued before the timestamp are rejected.
 
 ### Role-Based Access Control (RBAC)

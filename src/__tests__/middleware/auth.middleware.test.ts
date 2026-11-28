@@ -59,6 +59,16 @@ describe('Auth Middleware (requireAuth)', () => {
     expect(res.body.error).toBe('UNAUTHORIZED');
   });
 
+  it('rejects JWT passed via ?token= query parameter with 401', async () => {
+    const user = createTestUser({ id: 'query-token-user' });
+    mockPrisma.user.findUnique.mockResolvedValue(user);
+    const token = generateToken({ id: user.id, role: user.role });
+
+    const res = await request(app).get(`/protected?token=${encodeURIComponent(token)}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('UNAUTHORIZED');
+  });
+
   it('returns 403 when user is not approved or is blocked', async () => {
     const blockedUser = createTestUser({ id: 'blocked-1', isApproved: false, status: 'Blocked' });
     mockPrisma.user.findUnique.mockResolvedValueOnce(blockedUser);

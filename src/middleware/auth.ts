@@ -91,9 +91,6 @@ export async function getAuthUser(req: Request): Promise<User | null> {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7).trim();
-  } else if (req.query && typeof req.query.token === 'string') {
-    // Support EventSource (SSE) which cannot send custom Authorization headers
-    token = req.query.token.trim();
   }
 
   if (token) {

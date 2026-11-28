@@ -57,6 +57,24 @@ class MessagingSSEHub {
     }
   }
 
+  public disconnectUser(userId: string): void {
+    const sockets = this.userSockets.get(userId);
+    if (!sockets || sockets.size === 0) return;
+
+    this.userSockets.delete(userId);
+    for (const res of sockets) {
+      try {
+        res.end();
+      } catch {
+        // Ignore already closed streams
+      }
+    }
+    this.broadcastAll({
+      type: 'USER_PRESENCE',
+      payload: { userId, status: 'OFFLINE' },
+    });
+  }
+
   public isUserOnline(userId: string): boolean {
     const sockets = this.userSockets.get(userId);
     return Boolean(sockets && sockets.size > 0);

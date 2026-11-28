@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { mockPrisma } from '../helpers/prismaMock';
@@ -310,7 +310,9 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
   });
 
   describe('POST /api/users/:id/force-logout', () => {
-    it('records timestamp in userForceLogoutMap', async () => {
+    it('records timestamp in userForceLogoutMap and disconnects active SSE streams', async () => {
+      const { messagingSSEHub } = await import('../../services/messaging/sseHub');
+      const disconnectSpy = vi.spyOn(messagingSSEHub, 'disconnectUser');
       const admin = createTestUser();
       mockPrisma.user.findUnique.mockResolvedValueOnce(admin);
       mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'target-fl', name: 'Target User', role: 'User' });
@@ -321,6 +323,8 @@ describe('Users Routes (GET, POST, PUT, DELETE, APPROVE, REJECT, FORCE-LOGOUT)',
 
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('forced to log out');
+      expect(disconnectSpy).toHaveBeenCalledWith('target-fl');
+      disconnectSpy.mockRestore();
     });
 
     it('blocks non-admin from force-logging out peer or higher user', async () => {

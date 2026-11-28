@@ -3,6 +3,8 @@ import request from 'supertest';
 import { createApp } from '../../app';
 import { mockPrisma } from '../helpers/prismaMock';
 import { createTestUser, createAuthHeader } from '../helpers/testAuth';
+import { generateToken } from '../../authUtils';
+import { messagingSSEHub } from '../../services/messaging/sseHub';
 
 describe('Messaging Routes (GET, POST, PATCH, DELETE)', () => {
   const app = createApp();
@@ -946,6 +948,43 @@ describe('Messaging Routes (GET, POST, PATCH, DELETE)', () => {
 
       expect(res.status).toBe(400);
       expect(mockPrisma.conversation.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/messaging/stream', () => {
+    it('rejects ?token= query parameter with 401', async () => {
+      const user = createTestUser({ id: 'u1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+      const token = generateToken({ id: user.id, role: user.role });
+
+      const res = await request(app).get(`/api/messaging/stream?token=${encodeURIComponent(token)}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('UNAUTHORIZED');
+    });
+
+    it('accepts Authorization Bearer header and emits CONNECTED event', async () => {
+      const user = createTestUser({ id: 'u-stream-1', name: 'Alice' });
+      mockPrisma.user.findUnique.mockResolvedValue(user);
+
+      const originalAddClient = messagingSSEHub.addClient.bind(messagingSSEHub);
+      const addClientSpy = vi
+        .spyOn(messagingSSEHub, 'addClient')
+        .mockImplementationOnce((userId, res) => {
+          originalAddClient(userId, res);
+          setImmediate(() => messagingSSEHub.disconnectUser(userId));
+        });
+
+      const res = await request(app)
+        .get('/api/messaging/stream')
+        .set('Authorization', createAuthHeader(user));
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('text/event-stream');
+      expect(res.text).toContain('event: CONNECTED');
+      expect(res.text).toContain('"onlineUserIds"');
+      expect(messagingSSEHub.isUserOnline(user.id)).toBe(false);
+      addClientSpy.mockRestore();
     });
   });
 });
